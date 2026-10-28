@@ -1,0 +1,56 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+    <!-- Background Circle -->
+    <path
+        android:fillColor="#E8F5E9"
+        android:pathData="M60,60m-56,0a56,56 0,1 1,112 0a56,56 0,1 1,-112 0" />
+    <!-- Scout Gold Ring -->
+    <path
+        android:strokeColor="#C8A951"
+        android:strokeWidth="3"
+        android:pathData="M60,60m-52,0a52,52 0,1 1,104 0a52,52 0,1 1,-104 0" />
+
+    <!-- Central Scout Lily (Fleur-de-lis) Blade -->
+    <path
+        android:fillColor="#2E7D32"
+        android:pathData="M60,18 C63,32 72,42 74,58 C75,67 72,76 60,82 C48,76 45,67 46,58 C48,42 57,32 60,18 Z" />
+
+    <!-- Center Line highlight -->
+    <path
+        android:strokeColor="#C8A951"
+        android:strokeWidth="1.5"
+        android:pathData="M60,20 L60,80" />
+
+    <!-- Left Petal of Fleur-de-lis -->
+    <path
+        android:fillColor="#2E7D32"
+        android:pathData="M52,56 C42,42 26,45 25,60 C24,72 37,76 49,74 C51,68 52,62 52,56 Z" />
+
+    <!-- Right Petal of Fleur-de-lis -->
+    <path
+        android:fillColor="#2E7D32"
+        android:pathData="M68,56 C78,42 94,45 95,60 C96,72 83,76 71,74 C69,68 68,62 68,56 Z" />
+
+    <!-- Scout Tie Ring (Band) -->
+    <path
+        android:fillColor="#C8A951"
+        android:pathData="M44,72 L76,72 L74,78 L46,78 Z" />
+
+    <!-- Lower Stem / Knot -->
+    <path
+        android:fillColor="#2E7D32"
+        android:pathData="M54,78 L66,78 C65,88 63,94 60,98 C57,94 55,88 54,78 Z" />
+
+    <!-- Left Star (Scout Law & Promise) -->
+    <path
+        android:fillColor="#C8A951"
+        android:pathData="M37,58 L38.5,62 L42,62 L39,64.5 L40,68 L37,66 L34,68 L35,64.5 L32,62 L35.5,62 Z" />
+
+    <!-- Right Star -->
+    <path
+        android:fillColor="#C8A951"
+        android:pathData="M83,58 L84.5,62 L88,62 L85,64.5 L86,68 L83,66 L80,68 L81,64.5 L78,62 L81.5,62 Z" />
+</vector>

@@ -1,0 +1,6 @@
+{
+  "name": "سرب النُّجُب — فوج محمد رحال",
+  "description": "تطبيق إدارة كشافة سرب النُّجُب - فوج محمد رحال للقادة الكشفيين",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
