@@ -19,15 +19,17 @@ jobs:
     - name: Setup Gradle
       uses: gradle/gradle-build-action@v2
       
-    - name: Generate Gradle Wrapper (if missing)
+    - name: Create google-services.json
+      run: |
+        echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > app/google-services.json
+      
+    - name: Build Release APK
       run: |
         if [ ! -f "gradlew" ]; then
           gradle wrapper
         fi
         chmod +x gradlew
-        
-    - name: Build Release APK
-      run: ./gradlew assembleRelease
+        ./gradlew assembleRelease
       
     - name: Authenticate to Google Cloud
       uses: google-github-actions/auth@v1
