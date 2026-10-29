@@ -25,6 +25,12 @@ jobs:
       run: |
         echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > app/google-services.json
       
+    - name: Extract Version
+      id: get_version
+      run: |
+        VERSION_NAME=$(grep 'versionName' app/build.gradle.kts | head -1 | awk -F'"' '{print $2}')
+        echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
+
     - name: Build Release APK
       run: |
         if [ ! -f "gradlew" ]; then
@@ -38,7 +44,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: app/build/outputs/apk/release/app-release.apk
-        tag_name: v1.0.${{ github.run_number }}
-        name: Release v1.0.${{ github.run_number }}
+        tag_name: v${{ env.VERSION_NAME }}
+        name: Release v${{ env.VERSION_NAME }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
