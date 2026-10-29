@@ -53,11 +53,6 @@
     <string name="home_activities_card_desc">تخطيط ومتابعة المخيمات والرحلات والاجتماعات التدريبية</string>
     <string name="home_activities_count_format">%1$d نشاط قادم</string>
 
-    <string name="phase1_complete_badge">نظام متكامل لقادة السرب</string>
-    <string name="phase1_complete_desc">يدعم Jetpack Compose، معمارية Clean Architecture، مكتبة Firebase Auth، وFirestore مع المزامنة دون اتصال (Offline-first)، وخط Cairo العربي.</string>
-    <string name="phase3_badge_title">المرحلة الثالثة: وحدة الأنشطة الكشفية</string>
-    <string name="phase3_badge_desc">تتيح برمجة الأنشطة، الجدولة الذكية، تحديد المسؤولين، والأهداف التربوية والأدوات.</string>
-
     <!-- وحدة إدارة الأشبال (Scouts Module) -->
     <string name="scouts_title">الأشبال</string>
     <string name="scouts_subtitle">إدارة أفراد سرب النُّجُب</string>
