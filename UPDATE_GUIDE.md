@@ -1,49 +1,73 @@
-# دليل التحديث التلقائي للتطبيق عبر الهواء (OTA Update Guide)
+# دليل التحديث التلقائي للتطبيق عبر Firebase Storage (OTA Update Guide)
 
-يوضح هذا الدليل الخطوات البسيطة لإطلاق تحديث جديد للتطبيق وتوزيعه تلقائياً على هواتف القادة دون أي تدخل يدوي معقد.
-
----
-
-## 1. رفع الكود إلى GitHub من Google AI Studio
-1. من واجهة **Google AI Studio**، اضغط على زر الإعدادات أو أيقونة المشاركة/التحكم في الإصدارات في الزاوية العلوية.
-2. اختر **Export to GitHub** أو **Push to GitHub**.
-3. تأكد من تحديد المستودع الخاص بك والفرع الرئيسي (`main`).
-4. بمجرد إتمام الرفع (Push) إلى فرع `main`، سيبدأ تلقائياً سير العمل **GitHub Actions** في بناء التطبيق وإنشاء الإصدار.
+نظراً لأن مستودع GitHub خاص (Private Repository)، يتم رفع ملف الـ APK تلقائياً عبر **GitHub Actions** مباشرة إلى **Firebase Storage** لتمكين التطبيق من تحميله وتثبيته فورياً دون الحاجة لجعل المستودع عاماً.
 
 ---
 
-## 2. الحصول على رابط ملف الـ APK من GitHub Releases
-1. توجه إلى صفحة المستودع الخاص بك على GitHub في المتصفح.
-2. في القائمة الجانبية اليمنى، اضغط على **Releases** (أو توجه إلى الرابط: `https://github.com/{username}/{repo}/releases`).
-3. ستجد أحدث إصدار تم إنشاؤه تلقائياً (مثال: `Release v1.0.1` أو أحدث رقم تشغيل).
-4. تحت قسم **Assets**، ستجد ملفاً باسم `app-release.apk`.
-5. انقر بزر الفأرة الأيمن على `app-release.apk` واختر **نسخ عنوان الرابط (Copy link address)**.
+## 1. إعداد مفتاح الخدمة (GCP_SA_KEY) لمرة واحدة فقط
+
+لكي يتمكن GitHub Actions من رفع ملف الـ APK إلى Firebase Storage في مشروعك، يجب تزويده بمفتاح حساب خدمة:
+
+### أ) استخراج المفتاح من Firebase Console:
+1. افتح [Firebase Console](https://console.firebase.google.com/) واختر مشروعك (`sirb-ennujub`).
+2. انقر على أيقونة الترس ⚙️ بجوار "Project Overview" واختر **Project settings** (إعدادات المشروع).
+3. انتقل إلى علامة التبويب **Service accounts** (حسابات الخدمة).
+4. اضغط على زر **Generate new private key** (إنشاء مفتاح خاص جديد)، ثم أكد بالضغط على **Generate key**.
+5. سيتم تحميل ملف بصيغة `.json` على حاسوبك يحتوي على مفتاح المصادقة.
+
+### ب) إضافة المفتاح إلى أسرار GitHub (GitHub Secrets):
+1. افتح مستودع المشروع على **GitHub**.
+2. انتقل إلى تبويب **Settings** في المستودع.
+3. في القائمة الجانبية اليسرى، اختر **Secrets and variables** ثم اضغط على **Actions**.
+4. اضغط على زر **New repository secret**.
+5. املأ البيانات كالتالي:
+   - **Name**: `GCP_SA_KEY`
+   - **Secret**: افتح ملف الـ `.json` الذي قمت بتحميله وانسخ كامل محتواه وألصقه هنا.
+6. اضغط على **Add secret**.
 
 ---
 
-## 3. تفعيل التحديث في قاعدة بيانات Firestore
-لكي يظهر إشعار التحديث تلقائياً في هواتف جميع القادة عند فتح التطبيق:
-1. افتح وحدة تحكم **Firebase Console** وتوجه إلى قاعدة بيانات **Firestore Database**.
-2. انتقل إلى المجموعة: `settings`.
-3. افتح (أو أنشئ) المستند بالمعرّف: `app_update`.
-4. أضف أو عدّل الحقول التالية بدقة:
-   - **`latestVersionCode`** (نوع `number` / `integer`): رقم الإصدار الجديد (مثلاً: `2` أو رقم الـ versionCode الحالي في التطبيق الجديد).
-   - **`latestVersionName`** (نوع `string`): اسم الإصدار الظاهر للمستخدم (مثلاً: `"1.1.0"` أو `"1.0.2"`).
-   - **`apkUrl`** (نوع `string`): الرابط المباشر لملف الـ APK الذي نسخته من GitHub Releases.
-   - **`changelog`** (نوع `string`): تفاصيل وما الجديد في هذا التحديث ليقرأها القادة في نافذة التحديث.
-5. بمجرد الحفظ في Firestore، سيتلقى أي تطبيق مثبت ومفتوح إشعاراً فورياً بتوفر الإصدار الجديد، وسيقوم بتحميله وتثبيته مباشرة عند الضغط على "تحديث الآن".
+## 2. رفع الكود من Google AI Studio إلى GitHub
+1. من واجهة **Google AI Studio**، اضغط على زر الإعدادات / المزامنة مع GitHub.
+2. اختر **Export to GitHub** أو **Push to GitHub** إلى فرع `main`.
+3. سيبدأ تلقائياً سير العمل **GitHub Actions** في بناء نسخة الإنتاج `assembleRelease` ورفع ملف الـ APK مباشرة إلى Firebase Storage تحت المسار:
+   `gs://sirb-ennujub.firebasestorage.app/apk/app-release.apk`
 
 ---
 
-## 4. زيادة رقم الإصدار (versionCode) للتحديثات القادمة
-قبل كل عملية دفع جديدة تتضمن تحديثاً:
-1. افتح ملف `app/build.gradle.kts`.
-2. في قسم `defaultConfig`:
-   ```kotlin
-   defaultConfig {
-       ...
-       versionCode = 2 // زِد هذا الرقم بمقدار 1 في كل تحديث (مثلاً: 2 ثم 3 ثم 4)
-       versionName = "1.1" // حدّث اسم الإصدار بحسب رغبتك
-   }
-   ```
-3. احفظ الملف وارفعه إلى GitHub عبر Push ليتكرر سير العمل التلقائي بسلاسة.
+## 3. رابط التحميل المباشر للـ APK
+بفضل إعداد `predefinedAcl: publicRead`، يصبح ملف الـ APK متاحاً للتحميل المباشر عبر الرابط الثابت التالي:
+
+```text
+https://storage.googleapis.com/sirb-ennujub.firebasestorage.app/apk/app-release.apk
+```
+
+*(أو يمكن نسخه يدوياً من Firebase Console > Storage > apk > app-release.apk).*
+
+---
+
+## 4. إطلاق التحديث في Firestore (settings/app_update)
+لكي تظهر رسالة التحديث لجميع القادة عند فتح التطبيق:
+1. افتح [Firebase Console](https://console.firebase.google.com/) > **Firestore Database**.
+2. ادخل إلى المجموعة: `settings`.
+3. افتح المستند: `app_update`.
+4. حدّث الحقول التالية:
+   - **`latestVersionCode`** (نوع `number`): رقم الإصدار الجديد (مثلاً `2`).
+   - **`latestVersionName`** (نوع `string`): اسم الإصدار الظاهر للمستخدم (مثلاً `"1.1"`).
+   - **`apkUrl`** (نوع `string`):
+     `https://storage.googleapis.com/sirb-ennujub.firebasestorage.app/apk/app-release.apk`
+   - **`changelog`** (نوع `string`): ملخص ما تم إضافته أو إصلاحه في هذا التحديث.
+5. احفظ التعديلات. بمجرد فتح التطبيق، سيظهر حوار التحديث التلقائي للقادة ويبدأ التحميل والتثبيت بضغطة زر.
+
+---
+
+## 5. زيادة رقم الإصدار للتحديثات اللاحقة
+قبل كل تحديث قادم، افتح `app/build.gradle.kts`:
+```kotlin
+defaultConfig {
+    ...
+    versionCode = 2 // زِد الرقم في كل تحديث (2 ثم 3 ثم 4...)
+    versionName = "1.1" // اسم الإصدار الجديد
+}
+```
+ثم قم بالدفع (Push) إلى GitHub ليتولى سير العمل كل شيء تلقائياً!
