@@ -6,10 +6,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
+import com.example.data.firestore.safeBoolean
+import com.example.data.firestore.safeNullableString
 import com.example.data.update.UpdateRepositoryImpl
 import com.example.domain.auth.AuthRepository
+import com.example.domain.evaluation.EvaluationRepository
 import com.example.domain.update.AppUpdateInfo
 import com.example.domain.update.UpdateRepository
+import com.example.presentation.common.StageTerms
 import com.example.presentation.update.AppUpdater
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
@@ -22,13 +26,15 @@ import kotlinx.coroutines.launch
 /**
  * نموذج العرض للشاشة الرئيسية (HomeViewModel)
  * يراقب بيانات القائد الكشفي الحالي من مجموعة "leaders/{uid}" في Firestore بشكل لحظي (Realtime).
- * ويفحص توفر تحديثات جديدة للتطبيق عبر OTA.
+ * ويفحص توفر تحديثات جديدة للتطبيق عبر OTA وصلاحيات القائد الرئيسي.
  */
 class HomeViewModel(
     private val authRepository: AuthRepository,
     private val firestore: FirebaseFirestore,
     private val financeRepository: com.example.domain.finance.FinanceRepository? = null,
-    private val updateRepository: UpdateRepository = UpdateRepositoryImpl(firestore)
+    private val updateRepository: UpdateRepository = UpdateRepositoryImpl(firestore),
+    private val context: Context? = null,
+    private val evaluationRepository: EvaluationRepository? = null
 ) : ViewModel() {
 
     private val _leaderFullName = MutableStateFlow(
@@ -57,12 +63,49 @@ class HomeViewModel(
     private val _isDownloadingUpdate = MutableStateFlow(false)
     val isDownloadingUpdate: StateFlow<Boolean> = _isDownloadingUpdate.asStateFlow()
 
+    private val _isMainLeader = MutableStateFlow(false)
+    val isMainLeader: StateFlow<Boolean> = _isMainLeader.asStateFlow()
+
+    val stageTerms: StateFlow<StageTerms> = MutableStateFlow(StageTerms()).asStateFlow()
+
     private var leaderListenerRegistration: ListenerRegistration? = null
 
     init {
         observeLeaderProfile()
         observeFinanceData()
         observeAppUpdate()
+        cleanupLegacyActivityEvaluationsOnce()
+    }
+
+    private fun cleanupLegacyActivityEvaluationsOnce() {
+        try {
+            val appContext = context?.applicationContext ?: return
+            val repo = evaluationRepository ?: return
+            if (authRepository.currentUser == null) return
+
+            val prefs = appContext.getSharedPreferences(PREFS_MIGRATIONS, Context.MODE_PRIVATE)
+            if (prefs.getBoolean(KEY_HAS_DELETED_LEGACY_EVALS, false)) return
+
+            viewModelScope.launch {
+                try {
+                    val result = repo.deleteAllActivityEvaluations()
+                    if (result.isSuccess) {
+                        prefs.edit().putBoolean(KEY_HAS_DELETED_LEGACY_EVALS, true).apply()
+                        Log.i("HomeViewModel", "One-time cleanup of legacy activity evaluations succeeded")
+                    } else {
+                        Log.w(
+                            "HomeViewModel",
+                            "One-time cleanup of legacy activity evaluations failed",
+                            result.exceptionOrNull()
+                        )
+                    }
+                } catch (t: Throwable) {
+                    Log.w("HomeViewModel", "Exception during legacy activity evaluations cleanup", t)
+                }
+            }
+        } catch (t: Throwable) {
+            Log.w("HomeViewModel", "Failed to schedule legacy activity evaluations cleanup", t)
+        }
     }
 
     private fun observeAppUpdate() {
@@ -137,30 +180,38 @@ class HomeViewModel(
                     }
 
                     if (snapshot != null && snapshot.exists()) {
-                        val name = snapshot.getString("name")?.trim()
-                        val surname = snapshot.getString("surname")?.trim()
-                        val docFullName = if (!name.isNullOrBlank() && !surname.isNullOrBlank()) {
-                            "$name $surname".trim()
-                        } else {
-                            snapshot.getString("fullName")?.trim()
-                        }
+                        try {
+                            val name = snapshot.safeNullableString("name")?.trim()
+                            val surname = snapshot.safeNullableString("surname")?.trim()
+                            val docFullName = if (!name.isNullOrBlank() && !surname.isNullOrBlank()) {
+                                "$name $surname".trim()
+                            } else {
+                                snapshot.safeNullableString("fullName")?.trim()
+                            }
 
-                        val displayName = user.displayName?.trim()
-                        val resolvedName: String = when {
-                            !docFullName.isNullOrBlank() -> docFullName
-                            !displayName.isNullOrBlank() -> displayName
-                            else -> "قائد كشفي"
-                        }
-                        _leaderFullName.value = resolvedName
+                            val displayName = user.displayName?.trim()
+                            val resolvedName: String = when {
+                                !docFullName.isNullOrBlank() -> docFullName
+                                !displayName.isNullOrBlank() -> displayName
+                                else -> "قائد كشفي"
+                            }
+                            _leaderFullName.value = resolvedName
 
-                        val photo = snapshot.getString("photoUrl")
-                            ?: snapshot.getString("photo_url")
-                            ?: user.photoUrl?.toString()
-                        _leaderPhotoUrl.value = photo
+                            val photo = snapshot.safeNullableString("photoUrl")
+                                ?: snapshot.safeNullableString("photo_url")
+                                ?: user.photoUrl?.toString()
+                            _leaderPhotoUrl.value = photo
+
+                            val isMain = snapshot.safeBoolean("isMainLeader", false)
+                            _isMainLeader.value = isMain
+                        } catch (e: Exception) {
+                            Log.w("HomeViewModel", "Error parsing leader snapshot for $uid", e)
+                        }
                     } else {
                         val fallbackName: String = user.displayName?.trim()?.takeIf { it.isNotBlank() } ?: "قائد كشفي"
                         _leaderFullName.value = fallbackName
                         _leaderPhotoUrl.value = user.photoUrl?.toString()
+                        _isMainLeader.value = false
                     }
                 }
         } catch (e: Exception) {
@@ -178,12 +229,26 @@ class HomeViewModel(
         private val authRepository: AuthRepository,
         private val firestore: FirebaseFirestore,
         private val financeRepository: com.example.domain.finance.FinanceRepository? = null,
-        private val updateRepository: UpdateRepository? = null
+        private val updateRepository: UpdateRepository? = null,
+        private val context: Context? = null,
+        private val evaluationRepository: EvaluationRepository? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             val updateRepo = updateRepository ?: UpdateRepositoryImpl(firestore)
-            return HomeViewModel(authRepository, firestore, financeRepository, updateRepo) as T
+            return HomeViewModel(
+                authRepository = authRepository,
+                firestore = firestore,
+                financeRepository = financeRepository,
+                updateRepository = updateRepo,
+                context = context,
+                evaluationRepository = evaluationRepository
+            ) as T
         }
+    }
+
+    private companion object {
+        const val PREFS_MIGRATIONS = "scout_app_migrations"
+        const val KEY_HAS_DELETED_LEGACY_EVALS = "has_deleted_legacy_evals"
     }
 }

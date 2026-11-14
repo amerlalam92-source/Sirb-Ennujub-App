@@ -57,6 +57,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
+import com.example.presentation.common.replaceCustomWords
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -91,8 +93,10 @@ fun ScoutFormScreen(
     scoutId: String?,
     viewModel: ScoutViewModel,
     onNavigateBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    stageTerms: com.example.presentation.common.StageTerms = com.example.presentation.common.LocalStageTerms.current
 ) {
+    val terms = LocalAppTerms.current
     val formState by viewModel.formUiState.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
 
@@ -122,9 +126,9 @@ fun ScoutFormScreen(
         topBar = {
             CustomTopAppBar(
                 title = if (scoutId.isNullOrBlank()) {
-                    stringResource(id = R.string.add_scout_button)
+                    replaceCustomWords("إضافة ${terms.scoutSingular} جديد", terms)
                 } else {
-                    stringResource(id = R.string.edit_scout_title)
+                    replaceCustomWords("تعديل بيانات ${terms.scoutSingularDefinite}", terms)
                 },
                 navigationIcon = {
                     IconButton(
@@ -214,7 +218,7 @@ fun ScoutFormScreen(
                     }
 
                     // قسم 1: المعلومات الشخصية والكشفية
-                    FormSectionCard(title = stringResource(id = R.string.section_personal_info)) {
+                    FormSectionCard(title = replaceCustomWords(stringResource(id = R.string.section_personal_info), terms)) {
                         // الاسم واللقب جنباً إلى جنب (Row)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -398,7 +402,7 @@ fun ScoutFormScreen(
                     }
 
                     // قسم 2: معلومات ولي الأمر والاتصال
-                    FormSectionCard(title = stringResource(id = R.string.section_guardian_info)) {
+                    FormSectionCard(title = replaceCustomWords(stringResource(id = R.string.section_guardian_info), terms)) {
                         // اسم الولي
                         OutlinedTextField(
                             value = formState.guardianName,
@@ -588,7 +592,7 @@ fun ScoutFormScreen(
                     }
 
                     // قسم 3: معلومات إضافية والملاحظات
-                    FormSectionCard(title = stringResource(id = R.string.section_additional_info)) {
+                    FormSectionCard(title = replaceCustomWords(stringResource(id = R.string.section_additional_info), terms)) {
                         // العنوان السكني
                         OutlinedTextField(
                             value = formState.address,

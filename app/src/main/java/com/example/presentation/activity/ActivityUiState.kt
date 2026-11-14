@@ -62,6 +62,7 @@ data class ActivityFormUiState(
     val meetingTopics: List<String> = emptyList(),
     val finalReport: String = "",
     val collectSubscriptions: Boolean = true,
+    val customSubscriptionAmountInput: String = "",
     val isLoading: Boolean = false,
     val isSaving: Boolean = false,
     val isSavedSuccess: Boolean = false,

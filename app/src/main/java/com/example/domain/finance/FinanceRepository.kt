@@ -13,6 +13,7 @@ interface FinanceRepository {
     fun observeTransactionsByType(type: FinanceTransactionType): Flow<List<FinanceTransaction>>
     suspend fun addTransaction(tx: FinanceTransaction): Result<String>
     suspend fun updateTransaction(tx: FinanceTransaction): Result<Unit>
+    suspend fun upsertTransaction(transaction: FinanceTransaction): Result<Unit>
     suspend fun deleteTransaction(id: String): Result<Unit>
 
     // === Subscriptions (اشتراكات الأشبال) ===
@@ -30,21 +31,9 @@ interface FinanceRepository {
         activityDate: Long,
         attendanceStatus: SubscriptionStatus
     ): Result<Unit>
-
-    // === Contributions (مساهمات الأنشطة الكبرى) ===
-    fun observeContributionsForActivity(activityId: String): Flow<List<FinanceContribution>>
-    fun observeContributionsForScout(scoutId: String): Flow<List<FinanceContribution>>
-    fun observeAllContributions(): Flow<List<FinanceContribution>>
-    suspend fun getContribution(activityId: String, scoutId: String): FinanceContribution?
-    suspend fun upsertContribution(contribution: FinanceContribution): Result<Unit>
-    suspend fun upsertContributionsBatch(contributions: List<FinanceContribution>): Result<Unit>
-    suspend fun deleteContribution(activityId: String, scoutId: String): Result<Unit>
-    suspend fun recordContributionPayment(
-        activityId: String,
-        scoutId: String,
-        amountPaidNow: Int,
-        notes: String? = null
-    ): Result<Unit>
+    suspend fun payScoutDebts(scoutId: String, amountToPay: Int): Result<Unit>
+    suspend fun rollbackScoutDebts(scoutId: String, amountToRollback: Int): Result<Unit>
+    suspend fun updateSubscriptionDebtManually(subscriptionId: String, newDebtAmount: Int): Result<Unit>
 
     // === Settings (إعدادات المالية) ===
     fun observeSettings(): Flow<FinanceSettings>

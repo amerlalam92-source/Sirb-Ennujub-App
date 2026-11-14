@@ -29,6 +29,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.presentation.common.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import com.example.presentation.common.CustomTopAppBar
 import com.example.presentation.quran.schools.QuranSchoolsListScreen
 import com.example.presentation.quran.schools.QuranSchoolsViewModel
@@ -49,10 +51,11 @@ fun QuranTrackingScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val tabTitles = listOf(
-        stringResource(R.string.quran_tracking_tab_schools),
-        stringResource(R.string.quran_tracking_tab_scouts)
+    val tabTitles: List<String> = listOf(
+        replaceCustomWords(stringResource(R.string.quran_tracking_tab_schools), terms),
+        replaceCustomWords("متابعة ${terms.scoutPluralDefinite}", terms)
     )
 
     Scaffold(

@@ -1,6 +1,8 @@
 package com.example.data.update
 
 import android.util.Log
+import com.example.data.firestore.safeInt
+import com.example.data.firestore.safeString
 import com.example.domain.update.AppUpdateInfo
 import com.example.domain.update.UpdateRepository
 import com.google.firebase.firestore.FirebaseFirestore
@@ -26,15 +28,20 @@ class UpdateRepositoryImpl(
                 return@addSnapshotListener
             }
 
-            if (snapshot != null && snapshot.exists()) {
-                val info = AppUpdateInfo(
-                    latestVersionCode = (snapshot.getLong("latestVersionCode") ?: 0L).toInt(),
-                    latestVersionName = snapshot.getString("latestVersionName") ?: "",
-                    apkUrl = snapshot.getString("apkUrl") ?: "",
-                    changelog = snapshot.getString("changelog") ?: ""
-                )
-                trySend(info)
-            } else {
+            try {
+                if (snapshot != null && snapshot.exists()) {
+                    val info = AppUpdateInfo(
+                        latestVersionCode = snapshot.safeInt("latestVersionCode", 0),
+                        latestVersionName = snapshot.safeString("latestVersionName"),
+                        apkUrl = snapshot.safeString("apkUrl"),
+                        changelog = snapshot.safeString("changelog")
+                    )
+                    trySend(info)
+                } else {
+                    trySend(null)
+                }
+            } catch (e: Exception) {
+                Log.w("UpdateRepository", "Error mapping settings/app_update", e)
                 trySend(null)
             }
         }
@@ -47,10 +54,10 @@ class UpdateRepositoryImpl(
             val snapshot = updateDocRef.get().await()
             if (snapshot.exists()) {
                 AppUpdateInfo(
-                    latestVersionCode = (snapshot.getLong("latestVersionCode") ?: 0L).toInt(),
-                    latestVersionName = snapshot.getString("latestVersionName") ?: "",
-                    apkUrl = snapshot.getString("apkUrl") ?: "",
-                    changelog = snapshot.getString("changelog") ?: ""
+                    latestVersionCode = snapshot.safeInt("latestVersionCode", 0),
+                    latestVersionName = snapshot.safeString("latestVersionName"),
+                    apkUrl = snapshot.safeString("apkUrl"),
+                    changelog = snapshot.safeString("changelog")
                 )
             } else {
                 null

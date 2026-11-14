@@ -13,7 +13,9 @@ enum class FinanceTransactionType(
     EXPENSE("expense", "مصروف", R.string.finance_type_expense),
     DONATION("donation", "تبرع", R.string.finance_type_donation),
     CONTRIBUTION("contribution", "مساهمة", R.string.finance_type_contribution),
-    OPENING_BALANCE("opening_balance", "رصيد افتتاحي", R.string.finance_type_opening_balance);
+    OPENING_BALANCE("opening_balance", "رصيد افتتاحي", R.string.finance_type_opening_balance),
+    DEBT_PAYMENT("debt_payment", "سداد دين", R.string.finance_type_debt_payment),
+    ADVANCE_PAYMENT("advance_payment", "دفعة مقدمة", R.string.finance_type_advance_payment);
 
     val isIncome: Boolean
         get() = this != EXPENSE

@@ -52,6 +52,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.domain.quran.QuranSchool
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 
 /**
  * بطاقة عرض بيانات المدرسة القرآنية
@@ -64,6 +66,7 @@ fun QuranSchoolCard(
     onToggleArchive: (QuranSchool) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val school = schoolItem.school
     val enrolledCount = schoolItem.enrolledScoutsCount
     val context = LocalContext.current
@@ -306,7 +309,7 @@ fun QuranSchoolCard(
                     onClick = { /* Informational chip */ },
                     label = {
                         Text(
-                            text = stringResource(R.string.quran_schools_enrolled_scouts_chip, enrolledCount),
+                            text = replaceCustomWords("$enrolledCount ${terms.scoutSingular}", terms),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Medium
                         )

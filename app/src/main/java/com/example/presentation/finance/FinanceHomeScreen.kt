@@ -63,8 +63,7 @@ fun FinanceHomeScreen(
     onNavigateToDonations: () -> Unit,
     onNavigateToReports: () -> Unit,
     modifier: Modifier = Modifier,
-    onNavigateToSubscriptions: () -> Unit = onNavigateToCollections,
-    onNavigateToContributions: () -> Unit = onNavigateToCollections
+    onNavigateToSubscriptions: () -> Unit = onNavigateToCollections
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isDark = isSystemInDarkTheme()

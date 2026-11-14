@@ -43,6 +43,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -85,6 +86,7 @@ fun ScoutProgressDetailScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val terms = LocalAppTerms.current
     val scope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val errorMessage by viewModel.message.collectAsStateWithLifecycle()
@@ -133,12 +135,14 @@ fun ScoutProgressDetailScreen(
                                     val file = PdfExporter.exportProgressCardPdf(
                                         scout = success.scout,
                                         badgeProgressList = success.badgeProgressList,
-                                        context = context
+                                        context = context,
+                                        terms = terms
                                     )
                                     PdfExporter.shareProgressCardPdf(
                                         file = file,
                                         scoutName = success.scout.fullName,
-                                        context = context
+                                        context = context,
+                                        terms = terms
                                     )
                                 } catch (e: Exception) {
                                     scope.launch {

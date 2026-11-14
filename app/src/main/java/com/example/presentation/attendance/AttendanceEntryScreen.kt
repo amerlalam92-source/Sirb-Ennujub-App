@@ -17,9 +17,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,15 +31,26 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.HourglassBottom
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import com.example.domain.activity.ActivityType
 import com.example.presentation.common.AppAlertDialog
+import com.example.presentation.common.AppDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -43,10 +58,12 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -92,10 +109,13 @@ fun AttendanceEntryScreen(
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.entryUiState.collectAsStateWithLifecycle()
+    val currentScoutTotalPaid by viewModel.currentScoutTotalPaid.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
     var showFinishDialog by remember { mutableStateOf(false) }
+    var showSearchDialog by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
     var pendingStatusChange by remember { mutableStateOf<AttendanceStatus?>(null) }
     var showAbsentToPresentWarning by remember { mutableStateOf(false) }
 
@@ -104,6 +124,20 @@ fun AttendanceEntryScreen(
     }
 
     val skippedMessage = stringResource(id = R.string.scout_skipped_readded_message)
+    val selectStatusFirstMessage = stringResource(id = R.string.error_select_status_first)
+
+    LaunchedEffect(state.snackbarMessage) {
+        val msgKey = state.snackbarMessage
+        if (msgKey != null) {
+            val displayMsg = if (msgKey == "error_select_status_first") {
+                selectStatusFirstMessage
+            } else {
+                msgKey
+            }
+            snackbarHostState.showSnackbar(displayMsg)
+            viewModel.onSnackbarDismissed()
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -131,6 +165,21 @@ fun AttendanceEntryScreen(
                 actions = {
                     val editWindow = state.activity?.let { ActivityFormatters.attendanceEditWindow(it.startDate) } ?: AttendanceEditWindow.EDITABLE
                     val isEditable = editWindow == AttendanceEditWindow.EDITABLE
+                    if (!state.isLoading && state.scoutsQueue.isNotEmpty()) {
+                        IconButton(
+                            onClick = {
+                                searchQuery = ""
+                                showSearchDialog = true
+                            },
+                            modifier = Modifier.testTag("attendance_search_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = stringResource(id = R.string.attendance_search_scout_desc),
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                     TextButton(
                         onClick = { if (isEditable) showFinishDialog = true },
                         enabled = isEditable,
@@ -244,15 +293,23 @@ fun AttendanceEntryScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .imePadding()
                                     .verticalScroll(rememberScrollState()),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center
                             ) {
+                                val isTrainingMeeting = state.activity?.let {
+                                    it.activityType == ActivityType.TRAINING_MEETING ||
+                                    it.type == ActivityType.TRAINING_MEETING.key ||
+                                    it.type == "اجتماع تدريبي"
+                                } ?: false
+
                                 ScoutWizardCard(
                                     scout = currentScout,
                                     selectedStatus = state.currentStatus,
                                     usesPoints = state.activity?.activityType?.usesPointsSystem() == true,
                                     pointsSettings = state.pointsSettings,
+                                    isTrainingMeeting = isTrainingMeeting,
                                     onStatusSelected = { newStatus ->
                                         if (isEditable) {
                                             val existing = state.currentStatus
@@ -265,6 +322,19 @@ fun AttendanceEntryScreen(
                                         }
                                     }
                                 )
+
+                                if (state.isFinanceSectionVisible) {
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                    AttendanceFinanceCard(
+                                        uiState = state,
+                                        currentScoutTotalPaid = currentScoutTotalPaid,
+                                        onAmountInputChanged = viewModel::onAmountInputChanged,
+                                        onApplyQuickInput = viewModel::onApplyQuickInput,
+                                        onTotalPaidChanged = viewModel::onTotalPaidChanged,
+                                        onPaymentFieldClickedWithoutStatus = viewModel::onPaymentFieldClickedWithoutStatus,
+                                        isEditable = isEditable
+                                    )
+                                }
                             }
                         }
                     }
@@ -281,7 +351,7 @@ fun AttendanceEntryScreen(
                     ) {
                         OutlinedButton(
                             onClick = { viewModel.onPrevious() },
-                            enabled = !state.isFirst,
+                            enabled = !state.isFirst && !state.isSaving,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(52.dp)
@@ -299,8 +369,8 @@ fun AttendanceEntryScreen(
 
                         if (state.isLast) {
                             Button(
-                                onClick = { if (isEditable) showFinishDialog = true },
-                                enabled = isEditable,
+                                onClick = { if (isEditable && !state.isSaving) showFinishDialog = true },
+                                enabled = isEditable && !state.isSaving,
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(52.dp)
@@ -322,18 +392,20 @@ fun AttendanceEntryScreen(
                         } else {
                             Button(
                                 onClick = {
-                                    viewModel.onNext {
+                                    viewModel.onNextClicked {
                                         scope.launch {
                                             snackbarHostState.showSnackbar(skippedMessage)
                                         }
                                     }
                                 },
+                                enabled = isEditable && !state.isSaving,
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(52.dp)
                                     .testTag("wizard_next_btn"),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
                                 ),
                                 shape = RoundedCornerShape(14.dp)
                             ) {
@@ -345,6 +417,42 @@ fun AttendanceEntryScreen(
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
+                        }
+                    }
+                }
+            }
+
+            // شاشة التحميل المعتمة أثناء الحفظ لتفادي النقر المزدوج
+            if (state.isSaving) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.35f))
+                        .clickable(enabled = true, onClick = {})
+                        .testTag("attendance_saving_overlay"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 6.dp,
+                        shadowElevation = 8.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(28.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                strokeWidth = 3.dp
+                            )
+                            Text(
+                                text = stringResource(id = R.string.saving),
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         }
                     }
                 }
@@ -417,7 +525,7 @@ fun AttendanceEntryScreen(
                 Button(
                     onClick = {
                         showFinishDialog = false
-                        viewModel.saveAttendance {
+                        viewModel.onFinishClicked {
                             onNavigateBack()
                         }
                     },
@@ -443,6 +551,250 @@ fun AttendanceEntryScreen(
             shape = RoundedCornerShape(16.dp)
         )
     }
+
+    // حوار البحث عن شبل للانتقال السريع إليه
+    if (showSearchDialog) {
+        val editWindow = state.activity?.let { ActivityFormatters.attendanceEditWindow(it.startDate) } ?: AttendanceEditWindow.EDITABLE
+        val isEditable = editWindow == AttendanceEditWindow.EDITABLE
+        ScoutSearchDialog(
+            scoutsQueue = state.scoutsQueue,
+            recordedStatuses = state.recordedStatuses,
+            currentScoutId = state.currentScout?.id,
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+            onSelectScout = { scout ->
+                showSearchDialog = false
+                searchQuery = ""
+                viewModel.jumpToScout(scout.id, saveCurrent = isEditable)
+            },
+            onDismiss = {
+                showSearchDialog = false
+                searchQuery = ""
+            }
+        )
+    }
+}
+
+/**
+ * حوار البحث عن شبل للقفز السريع إلى صفحته في معالج الحضور
+ */
+@Composable
+private fun ScoutSearchDialog(
+    scoutsQueue: List<Scout>,
+    recordedStatuses: Map<String, AttendanceStatus>,
+    currentScoutId: String?,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onSelectScout: (Scout) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val indexedMatches = remember(query, scoutsQueue) {
+        val trimmed = query.trim().lowercase()
+        scoutsQueue.mapIndexedNotNull { index, scout ->
+            if (trimmed.isEmpty() ||
+                scout.fullName.lowercase().contains(trimmed) ||
+                scout.name.lowercase().contains(trimmed) ||
+                scout.surname.lowercase().contains(trimmed)
+            ) {
+                index to scout
+            } else {
+                null
+            }
+        }
+    }
+
+    AppDialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 520.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = stringResource(id = R.string.attendance_search_scout_title),
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.testTag("attendance_search_close_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = stringResource(id = R.string.attendance_search_close_desc),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    placeholder = { Text(stringResource(id = R.string.evaluation_search_scouts_hint)) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null
+                        )
+                    },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { onQueryChange("") }) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = stringResource(id = R.string.cancel_action)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("attendance_search_input")
+                )
+
+                if (indexedMatches.isEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SearchOff,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.size(40.dp)
+                        )
+                        Text(
+                            text = stringResource(id = R.string.empty_search_title),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(
+                            items = indexedMatches,
+                            key = { (_, scout) -> scout.id }
+                        ) { (index, scout) ->
+                            val isCurrent = scout.id == currentScoutId
+                            val recordedStatus = recordedStatuses[scout.id]
+                            Surface(
+                                onClick = { onSelectScout(scout) },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isCurrent) {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                },
+                                border = if (isCurrent) {
+                                    androidx.compose.foundation.BorderStroke(
+                                        1.5.dp,
+                                        MaterialTheme.colorScheme.primary
+                                    )
+                                } else null,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 52.dp)
+                                    .testTag("attendance_search_item_${scout.id}")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = "${index + 1}",
+                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = scout.fullName,
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        if (isCurrent) {
+                                            Text(
+                                                text = stringResource(id = R.string.attendance_search_current_badge),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+
+                                    if (recordedStatus != null) {
+                                        val statusColor = when (recordedStatus) {
+                                            AttendanceStatus.PRESENT -> Color(0xFF2E7D32)
+                                            AttendanceStatus.LATE -> Color(0xFFF57F17)
+                                            AttendanceStatus.VERY_LATE -> Color(0xFFE64A19)
+                                            AttendanceStatus.ABSENT_EXCUSED -> Color(0xFFE65100)
+                                            AttendanceStatus.ABSENT_UNEXCUSED -> Color(0xFFC62828)
+                                        }
+                                        Surface(
+                                            color = statusColor.copy(alpha = 0.14f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text(
+                                                text = recordedStatus.arabicLabel,
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = statusColor,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -454,6 +806,7 @@ private fun ScoutWizardCard(
     selectedStatus: AttendanceStatus?,
     usesPoints: Boolean,
     pointsSettings: com.example.domain.attendance.AttendancePointsSettings,
+    isTrainingMeeting: Boolean,
     onStatusSelected: (AttendanceStatus) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -538,12 +891,87 @@ private fun ScoutWizardCard(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 5 أزرار لاختيار الحالة
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // الصف الأول: حاضر + متأخر
+            // أزرار اختيار الحالة: 5 أزرار للاجتماع التدريبي، وزران فقط للأنشطة غير التدريبية
+            if (isTrainingMeeting) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // الصف الأول: حاضر + متأخر
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        AttendanceOptionButton(
+                            status = AttendanceStatus.PRESENT,
+                            icon = Icons.Default.CheckCircle,
+                            isSelected = selectedStatus == AttendanceStatus.PRESENT,
+                            pointsText = if (usesPoints) "+${pointsSettings.presentPoints}" else null,
+                            baseColor = Color(0xFF2E7D32),
+                            containerColor = Color(0xFFE8F5E9),
+                            onClick = { onStatusSelected(AttendanceStatus.PRESENT) },
+                            testTag = "status_present_btn",
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        AttendanceOptionButton(
+                            status = AttendanceStatus.LATE,
+                            icon = Icons.Default.Schedule,
+                            isSelected = selectedStatus == AttendanceStatus.LATE,
+                            pointsText = if (usesPoints) "+${pointsSettings.latePoints}" else null,
+                            baseColor = Color(0xFFF57F17),
+                            containerColor = Color(0xFFFFFDE7),
+                            onClick = { onStatusSelected(AttendanceStatus.LATE) },
+                            testTag = "status_late_btn",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    // الصف الثاني: متأخر جداً + غائب بعذر
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        AttendanceOptionButton(
+                            status = AttendanceStatus.VERY_LATE,
+                            icon = Icons.Default.HourglassBottom,
+                            isSelected = selectedStatus == AttendanceStatus.VERY_LATE,
+                            pointsText = if (usesPoints) "+${pointsSettings.veryLatePoints}" else null,
+                            baseColor = Color(0xFFE64A19),
+                            containerColor = Color(0xFFFBE9E7),
+                            onClick = { onStatusSelected(AttendanceStatus.VERY_LATE) },
+                            testTag = "status_very_late_btn",
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        AttendanceOptionButton(
+                            status = AttendanceStatus.ABSENT_EXCUSED,
+                            icon = Icons.Default.Warning,
+                            isSelected = selectedStatus == AttendanceStatus.ABSENT_EXCUSED,
+                            pointsText = if (usesPoints) "+${pointsSettings.absentExcusedPoints}" else null,
+                            baseColor = Color(0xFFE65100),
+                            containerColor = Color(0xFFFFF3E0),
+                            onClick = { onStatusSelected(AttendanceStatus.ABSENT_EXCUSED) },
+                            testTag = "status_absent_excused_btn",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    // الصف الثالث: غائب بدون عذر (عرض كامل)
+                    AttendanceOptionButton(
+                        status = AttendanceStatus.ABSENT_UNEXCUSED,
+                        icon = Icons.Default.Cancel,
+                        isSelected = selectedStatus == AttendanceStatus.ABSENT_UNEXCUSED,
+                        pointsText = if (usesPoints) "+${pointsSettings.absentUnexcusedPoints}" else null,
+                        baseColor = Color(0xFFC62828),
+                        containerColor = Color(0xFFFFEBEE),
+                        onClick = { onStatusSelected(AttendanceStatus.ABSENT_UNEXCUSED) },
+                        testTag = "status_absent_unexcused_btn",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            } else {
+                // الأنشطة غير التدريبية: زران فقط (حاضر / غائب)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -561,60 +989,18 @@ private fun ScoutWizardCard(
                     )
 
                     AttendanceOptionButton(
-                        status = AttendanceStatus.LATE,
-                        icon = Icons.Default.Schedule,
-                        isSelected = selectedStatus == AttendanceStatus.LATE,
-                        pointsText = if (usesPoints) "+${pointsSettings.latePoints}" else null,
-                        baseColor = Color(0xFFF57F17),
-                        containerColor = Color(0xFFFFFDE7),
-                        onClick = { onStatusSelected(AttendanceStatus.LATE) },
-                        testTag = "status_late_btn",
-                        modifier = Modifier.weight(1f)
+                        status = AttendanceStatus.ABSENT_UNEXCUSED,
+                        icon = Icons.Default.Cancel,
+                        isSelected = selectedStatus == AttendanceStatus.ABSENT_UNEXCUSED,
+                        pointsText = if (usesPoints) "+${pointsSettings.absentUnexcusedPoints}" else null,
+                        baseColor = Color(0xFFC62828),
+                        containerColor = Color(0xFFFFEBEE),
+                        onClick = { onStatusSelected(AttendanceStatus.ABSENT_UNEXCUSED) },
+                        testTag = "status_absent_unexcused_btn",
+                        modifier = Modifier.weight(1f),
+                        customLabel = stringResource(id = R.string.status_absent_simple)
                     )
                 }
-
-                // الصف الثاني: متأخر جداً + غائب بعذر
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    AttendanceOptionButton(
-                        status = AttendanceStatus.VERY_LATE,
-                        icon = Icons.Default.HourglassBottom,
-                        isSelected = selectedStatus == AttendanceStatus.VERY_LATE,
-                        pointsText = if (usesPoints) "+${pointsSettings.veryLatePoints}" else null,
-                        baseColor = Color(0xFFE64A19),
-                        containerColor = Color(0xFFFBE9E7),
-                        onClick = { onStatusSelected(AttendanceStatus.VERY_LATE) },
-                        testTag = "status_very_late_btn",
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    AttendanceOptionButton(
-                        status = AttendanceStatus.ABSENT_EXCUSED,
-                        icon = Icons.Default.Warning,
-                        isSelected = selectedStatus == AttendanceStatus.ABSENT_EXCUSED,
-                        pointsText = if (usesPoints) "+${pointsSettings.absentExcusedPoints}" else null,
-                        baseColor = Color(0xFFE65100),
-                        containerColor = Color(0xFFFFF3E0),
-                        onClick = { onStatusSelected(AttendanceStatus.ABSENT_EXCUSED) },
-                        testTag = "status_absent_excused_btn",
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                // الصف الثالث: غائب بدون عذر (عرض كامل)
-                AttendanceOptionButton(
-                    status = AttendanceStatus.ABSENT_UNEXCUSED,
-                    icon = Icons.Default.Cancel,
-                    isSelected = selectedStatus == AttendanceStatus.ABSENT_UNEXCUSED,
-                    pointsText = if (usesPoints) "+${pointsSettings.absentUnexcusedPoints}" else null,
-                    baseColor = Color(0xFFC62828),
-                    containerColor = Color(0xFFFFEBEE),
-                    onClick = { onStatusSelected(AttendanceStatus.ABSENT_UNEXCUSED) },
-                    testTag = "status_absent_unexcused_btn",
-                    modifier = Modifier.fillMaxWidth()
-                )
             }
         }
     }
@@ -633,7 +1019,8 @@ private fun AttendanceOptionButton(
     containerColor: Color,
     onClick: () -> Unit,
     testTag: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    customLabel: String? = null
 ) {
     Surface(
         onClick = onClick,
@@ -664,7 +1051,7 @@ private fun AttendanceOptionButton(
             Spacer(modifier = Modifier.width(8.dp))
 
             Text(
-                text = status.arabicLabel,
+                text = customLabel ?: status.arabicLabel,
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                 color = if (isSelected) Color.White else Color.Black.copy(alpha = 0.85f),
                 maxLines = 1,
@@ -685,5 +1072,347 @@ private fun AttendanceOptionButton(
                 }
             }
         }
+    }
+}
+
+/**
+ * بطاقة التحصيل المالي المصاحبة لبطاقة الشبل في معالج تسجيل الحضور
+ */
+@Composable
+private fun AttendanceFinanceCard(
+    uiState: AttendanceEntryUiState,
+    currentScoutTotalPaid: Int,
+    onAmountInputChanged: (String) -> Unit,
+    onApplyQuickInput: () -> Unit,
+    onTotalPaidChanged: (String) -> Unit,
+    onPaymentFieldClickedWithoutStatus: () -> Unit,
+    isEditable: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val isStatusSelected = uiState.selectedStatus != null
+    val canPay = uiState.canPay
+    var isEditingTotal by remember { mutableStateOf(false) }
+    var editedTotal by remember { mutableStateOf("") }
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(uiState.currentIndex) {
+        isEditingTotal = false
+        showConfirmDialog = false
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // العنوان مع إجمالي المدفوع وقابلية التعديل
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Right: Text "التحصيل المالي" + Wallet Icon
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AccountBalanceWallet,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Text(
+                        text = stringResource(id = R.string.finance_section_title),
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Left: إجمالي المدفوع أو حقل التعديل
+                if (!isEditingTotal) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "${stringResource(id = R.string.finance_total_paid_label)} $currentScoutTotalPaid دج",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("attendance_scout_total_paid_text")
+                        )
+                        IconButton(
+                            onClick = {
+                                editedTotal = uiState.totalPaidToday.toString()
+                                isEditingTotal = true
+                            },
+                            enabled = isEditable && isStatusSelected && canPay,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("attendance_edit_total_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = stringResource(id = R.string.action_edit),
+                                tint = if (isEditable && isStatusSelected && canPay) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    Color.Gray
+                                },
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = editedTotal,
+                            onValueChange = { input ->
+                                editedTotal = input.filter { it.isDigit() }
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier
+                                .width(90.dp)
+                                .testTag("attendance_edit_total_input"),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        IconButton(
+                            onClick = { showConfirmDialog = true },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("attendance_confirm_total_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = stringResource(id = R.string.action_confirm),
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = { isEditingTotal = false },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("attendance_cancel_total_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = stringResource(id = R.string.action_cancel),
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
+                thickness = 1.dp
+            )
+
+            // Row 1 (الديون السابقة)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(id = R.string.label_previous_debt),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = stringResource(id = R.string.label_required_format, uiState.previousDebtRequired),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+                val prevPaidColor = if (uiState.previousDebtPaid > 0) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                }
+                Text(
+                    text = stringResource(id = R.string.label_paid_format, uiState.previousDebtPaid),
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = if (uiState.previousDebtPaid > 0) FontWeight.Bold else FontWeight.Normal
+                    ),
+                    color = prevPaidColor
+                )
+            }
+
+            // Row 2 (اشتراك اليوم)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(id = R.string.label_today_sub),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = if (isStatusSelected) {
+                        stringResource(id = R.string.label_required_format, uiState.todaySubRequired)
+                    } else {
+                        "- -"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+                val todayPaidColor = if (uiState.todaySubPaid > 0) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                }
+                Text(
+                    text = stringResource(id = R.string.label_paid_format, uiState.todaySubPaid),
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = if (uiState.todaySubPaid > 0) FontWeight.Bold else FontWeight.Normal
+                    ),
+                    color = todayPaidColor
+                )
+            }
+
+            // Row 3 (الديون المتبقية)
+            val remainingDebt = (uiState.previousDebtRequired - uiState.previousDebtPaid).coerceAtLeast(0)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(id = R.string.label_remaining_debt),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val remainingDebtColor = if (remainingDebt > 0) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    Color(0xFF2E7D32)
+                }
+                Text(
+                    text = "$remainingDebt دج",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    color = remainingDebtColor
+                )
+            }
+
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
+                thickness = 1.dp
+            )
+
+            // Row 4 (حقل إدخال مبلغ سريع مع زر التطبيق ✅)
+            val isValid = canPay && isStatusSelected && uiState.quickInputAmount.isNotBlank() && uiState.quickInputAmount.toIntOrNull() != null
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !isStatusSelected) {
+                            onPaymentFieldClickedWithoutStatus()
+                        }
+                ) {
+                    OutlinedTextField(
+                        value = uiState.quickInputAmount,
+                        onValueChange = { text -> onAmountInputChanged(text) },
+                        label = { Text(stringResource(id = R.string.finance_paid_amount_hint)) },
+                        placeholder = { Text("0") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        enabled = isEditable && isStatusSelected && canPay,
+                        trailingIcon = {
+                            IconButton(
+                                onClick = onApplyQuickInput,
+                                enabled = isEditable && isValid,
+                                modifier = Modifier.testTag("attendance_apply_quick_input_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = stringResource(id = R.string.action_confirm),
+                                    tint = if (isValid && isEditable) {
+                                        Color(0xFF2E7D32)
+                                    } else {
+                                        Color.Gray
+                                    }
+                                )
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("attendance_quick_input_field")
+                    )
+
+                    // Overlay to capture clicks when status is not selected yet
+                    if (!isStatusSelected) {
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { onPaymentFieldClickedWithoutStatus() }
+                        )
+                    }
+                }
+
+                if (isStatusSelected && !canPay) {
+                    Text(
+                        text = stringResource(id = R.string.msg_absent_cannot_pay),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 8.dp, top = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    // Confirmation Dialog for editing total paid
+    if (showConfirmDialog) {
+        AppAlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            title = {
+                Text(
+                    text = stringResource(id = R.string.confirm_update_total_title),
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(text = stringResource(id = R.string.confirm_update_total_body))
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onTotalPaidChanged(editedTotal)
+                        isEditingTotal = false
+                        showConfirmDialog = false
+                    }
+                ) {
+                    Text(stringResource(id = R.string.action_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showConfirmDialog = false }
+                ) {
+                    Text(stringResource(id = R.string.action_cancel))
+                }
+            }
+        )
     }
 }

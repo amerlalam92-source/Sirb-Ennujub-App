@@ -47,6 +47,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.domain.quran.ScoutQuranEnrollment
 import com.example.domain.scout.Scout
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 
 /**
  * المحتوى التفاعلي لتبويب متابعة الأشبال وحفظهم
@@ -56,6 +58,7 @@ fun QuranScoutsTrackingContent(
     viewModel: QuranScoutsViewModel,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -123,14 +126,14 @@ fun QuranScoutsTrackingContent(
                         FilterChip(
                             selected = state.selectedFilter == QuranScoutsFilter.ALL,
                             onClick = { viewModel.setFilter(QuranScoutsFilter.ALL) },
-                            label = { Text("${stringResource(R.string.quran_scouts_filter_all)} (${state.totalScoutsCount})") },
+                            label = { Text("${replaceCustomWords(stringResource(R.string.quran_scouts_filter_all), terms)} (${state.totalScoutsCount})") },
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.testTag("filter_all_scouts")
                         )
                         FilterChip(
                             selected = state.selectedFilter == QuranScoutsFilter.ENROLLED,
                             onClick = { viewModel.setFilter(QuranScoutsFilter.ENROLLED) },
-                            label = { Text("${stringResource(R.string.quran_scouts_filter_enrolled)} (${state.enrolledCount})") },
+                            label = { Text("${replaceCustomWords(stringResource(R.string.quran_scouts_filter_enrolled), terms)} (${state.enrolledCount})") },
                             shape = RoundedCornerShape(12.dp),
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -141,7 +144,7 @@ fun QuranScoutsTrackingContent(
                         FilterChip(
                             selected = state.selectedFilter == QuranScoutsFilter.NOT_ENROLLED,
                             onClick = { viewModel.setFilter(QuranScoutsFilter.NOT_ENROLLED) },
-                            label = { Text("${stringResource(R.string.quran_scouts_filter_not_enrolled)} (${state.totalScoutsCount - state.enrolledCount})") },
+                            label = { Text("${replaceCustomWords(stringResource(R.string.quran_scouts_filter_not_enrolled), terms)} (${state.totalScoutsCount - state.enrolledCount})") },
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.testTag("filter_not_enrolled_scouts")
                         )
@@ -150,10 +153,10 @@ fun QuranScoutsTrackingContent(
                     if (state.filteredScoutItems.isEmpty()) {
                         // حالات القائمة الفارغة حسب الفلتر المختار
                         val emptyMessage = when {
-                            state.allScoutItems.isEmpty() -> stringResource(R.string.quran_scouts_empty_no_scouts)
-                            state.selectedFilter == QuranScoutsFilter.ENROLLED -> stringResource(R.string.quran_scouts_empty_none_enrolled)
-                            state.selectedFilter == QuranScoutsFilter.NOT_ENROLLED -> stringResource(R.string.quran_scouts_empty_all_enrolled)
-                            else -> stringResource(R.string.quran_scouts_empty_no_scouts)
+                            state.allScoutItems.isEmpty() -> replaceCustomWords(stringResource(R.string.quran_scouts_empty_no_scouts), terms)
+                            state.selectedFilter == QuranScoutsFilter.ENROLLED -> replaceCustomWords(stringResource(R.string.quran_scouts_empty_none_enrolled), terms)
+                            state.selectedFilter == QuranScoutsFilter.NOT_ENROLLED -> replaceCustomWords(stringResource(R.string.quran_scouts_empty_all_enrolled), terms)
+                            else -> replaceCustomWords(stringResource(R.string.quran_scouts_empty_no_scouts), terms)
                         }
 
                         Box(
@@ -268,13 +271,13 @@ fun QuranScoutsTrackingContent(
                         },
                         title = {
                             Text(
-                                text = stringResource(R.string.quran_scout_delete_enrollment_confirm_title),
+                                text = replaceCustomWords(stringResource(R.string.quran_scout_delete_enrollment_confirm_title), terms),
                                 fontWeight = FontWeight.Bold
                             )
                         },
                         text = {
                             Text(
-                                text = "${stringResource(R.string.quran_scout_delete_enrollment_confirm_msg)}\n\n(${scout.fullName})"
+                                text = "${replaceCustomWords(stringResource(R.string.quran_scout_delete_enrollment_confirm_msg), terms)}\n\n(${scout.fullName})"
                             )
                         },
                         confirmButton = {

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.domain.attendance.AttendancePointsSettings
 import com.example.domain.attendance.usecases.ObservePointsSettingsUseCase
 import com.example.domain.attendance.usecases.UpdatePointsSettingsUseCase
+import com.example.domain.auth.AuthRepository
 import com.example.domain.evaluation.CriteriaType
 import com.example.domain.evaluation.EvaluationCriteria
 import com.example.domain.evaluation.usecases.AddCriteriaUseCase
@@ -21,6 +22,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import com.example.domain.settings.BrandingRepository
+import com.example.domain.settings.CustomTerms
+import com.example.domain.settings.TermsRepository
+import android.graphics.Bitmap
+import android.util.Base64
+import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(
@@ -30,8 +37,17 @@ class SettingsViewModel(
     private val observeCriteriaUseCase: ObserveCriteriaUseCase,
     private val addCriteriaUseCase: AddCriteriaUseCase,
     private val archiveCriteriaUseCase: ArchiveCriteriaUseCase,
-    private val deleteCriteriaUseCase: DeleteCriteriaUseCase
+    private val deleteCriteriaUseCase: DeleteCriteriaUseCase,
+    private val authRepository: AuthRepository,
+    private val brandingRepository: BrandingRepository,
+    private val termsRepository: TermsRepository
 ) : ViewModel() {
+
+    private val _isMainLeader = MutableStateFlow(false)
+    val isMainLeader: StateFlow<Boolean> = _isMainLeader.asStateFlow()
+
+    private val _currentTerms = MutableStateFlow(CustomTerms())
+    val currentTerms: StateFlow<CustomTerms> = _currentTerms.asStateFlow()
 
     private val _uiState = MutableStateFlow(
         SettingsUiState(
@@ -47,6 +63,18 @@ class SettingsViewModel(
     val events: SharedFlow<SettingsEvent> = _events.asSharedFlow()
 
     init {
+        // مراقبة حالة القائد الحالي (هل هو قائد رئيسي)
+        viewModelScope.launch {
+            authRepository.observeCurrentLeader().collect { leader ->
+                _isMainLeader.value = leader?.isMainLeader == true
+            }
+        }
+        // مراقبة الكلمات والمصطلحات المخصصة
+        viewModelScope.launch {
+            termsRepository.observeTerms().collect { terms ->
+                _currentTerms.value = terms
+            }
+        }
         // مراقبة إعدادات سلم التنقيط الكشفي (Base 10 + Modifiers)
         viewModelScope.launch {
             observePointsSettingsUseCase().collect { settings ->
@@ -349,6 +377,128 @@ class SettingsViewModel(
         }
     }
 
+    fun onDismissDeleteAccountDialog() {
+        _uiState.update { it.copy(showDeleteAccountDialog = false) }
+    }
+
+    fun onDismissTransferLeadershipDialog() {
+        _uiState.update { it.copy(showTransferLeadershipDialog = false) }
+    }
+
+    fun onDeleteAccountClicked() {
+        val currentUser = authRepository.currentUser
+        if (currentUser == null) {
+            viewModelScope.launch {
+                _events.emit(SettingsEvent.ShowMessage("المستخدم غير مسجل"))
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true) }
+            val leader = authRepository.getCurrentLeader()
+            _uiState.update { it.copy(isLoading = false) }
+
+            if (leader?.isMainLeader == true) {
+                _uiState.update { it.copy(isLoading = true) }
+                val allLeadersResult = authRepository.getAllLeaders(currentUser.uid)
+                _uiState.update { it.copy(isLoading = false) }
+                val leaders = allLeadersResult.getOrDefault(emptyList())
+                if (leaders.isEmpty()) {
+                    _events.emit(SettingsEvent.ShowMessage("يجب أن ينضم قائد آخر أولاً لتتمكن من نقل الرئاسة."))
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            availableLeadersForTransfer = leaders,
+                            showTransferLeadershipDialog = true
+                        )
+                    }
+                }
+            } else {
+                _uiState.update { it.copy(showDeleteAccountDialog = true) }
+            }
+        }
+    }
+
+    fun onConfirmDelete(newLeaderId: String? = null) {
+        val currentUser = authRepository.currentUser ?: return
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isDeletingAccount = true,
+                    showDeleteAccountDialog = false,
+                    showTransferLeadershipDialog = false
+                )
+            }
+
+            if (newLeaderId != null) {
+                val updateResult = authRepository.updateMainLeader(newLeaderId)
+                if (updateResult.isFailure) {
+                    _uiState.update { it.copy(isDeletingAccount = false) }
+                    _events.emit(
+                        SettingsEvent.ShowMessage(
+                            updateResult.exceptionOrNull()?.message ?: "فشل نقل الرئاسة"
+                        )
+                    )
+                    return@launch
+                }
+            }
+
+            val deleteResult = authRepository.deleteAccount(currentUser)
+            _uiState.update { it.copy(isDeletingAccount = false) }
+
+            deleteResult.onSuccess {
+                _events.emit(SettingsEvent.AccountDeleted("تم حذف الحساب بنجاح"))
+            }.onFailure { e ->
+                val errorMsg = e.message?.takeIf { it.isNotBlank() }
+                    ?: "يرجى تسجيل الخروج والدخول مرة أخرى قبل الحذف."
+                _events.emit(SettingsEvent.ShowMessage(errorMsg))
+            }
+        }
+    }
+
+    fun resizeBitmap(bitmap: Bitmap, maxWidth: Int = 600, maxHeight: Int = 600): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        if (width <= maxWidth && height <= maxHeight) return bitmap
+        val ratio = minOf(maxWidth.toFloat() / width, maxHeight.toFloat() / height)
+        val newWidth = (width * ratio).toInt().coerceAtLeast(1)
+        val newHeight = (height * ratio).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+    }
+
+    fun processLogoImage(bitmap: Bitmap): String {
+        val scaledBitmap = resizeBitmap(bitmap, 600, 600)
+        val outputStream = ByteArrayOutputStream()
+        scaledBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+        val byteArray = outputStream.toByteArray()
+        return Base64.encodeToString(byteArray, Base64.NO_WRAP)
+    }
+
+    suspend fun processAndUploadLogo(bitmap: Bitmap): Result<Unit> {
+        val base64 = processLogoImage(bitmap)
+        return updateLogo(base64)
+    }
+
+    suspend fun updateLogo(base64: String): Result<Unit> {
+        if (!_isMainLeader.value) {
+            return Result.failure(Exception("غير مصرح"))
+        }
+        return brandingRepository.updateLogo(base64)
+    }
+
+    fun updateCustomTerms(newTerms: CustomTerms) {
+        if (!_isMainLeader.value) return
+        viewModelScope.launch {
+            val result = termsRepository.updateTerms(newTerms)
+            if (result.isSuccess) {
+                _events.emit(SettingsEvent.ShowMessage("تم حفظ الكلمات بنجاح"))
+            } else {
+                _events.emit(SettingsEvent.ShowMessage("فشل حفظ الكلمات، يرجى المحاولة لاحقاً"))
+            }
+        }
+    }
+
     class Factory(
         private val observePointsSettingsUseCase: ObservePointsSettingsUseCase,
         private val updatePointsSettingsUseCase: UpdatePointsSettingsUseCase,
@@ -356,7 +506,10 @@ class SettingsViewModel(
         private val observeCriteriaUseCase: ObserveCriteriaUseCase,
         private val addCriteriaUseCase: AddCriteriaUseCase,
         private val archiveCriteriaUseCase: ArchiveCriteriaUseCase,
-        private val deleteCriteriaUseCase: DeleteCriteriaUseCase
+        private val deleteCriteriaUseCase: DeleteCriteriaUseCase,
+        private val authRepository: AuthRepository,
+        private val brandingRepository: BrandingRepository,
+        private val termsRepository: TermsRepository
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -367,7 +520,10 @@ class SettingsViewModel(
                 observeCriteriaUseCase,
                 addCriteriaUseCase,
                 archiveCriteriaUseCase,
-                deleteCriteriaUseCase
+                deleteCriteriaUseCase,
+                authRepository,
+                brandingRepository,
+                termsRepository
             ) as T
         }
     }

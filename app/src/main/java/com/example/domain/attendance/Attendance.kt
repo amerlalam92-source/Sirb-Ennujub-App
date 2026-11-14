@@ -10,6 +10,7 @@ data class Attendance(
     val status: String = AttendanceStatus.PRESENT.key,
     val points: Int = 0,
     val activityDate: Long = System.currentTimeMillis(),
+    val unitId: String? = null,
     val recordedBy: String = "",
     val recordedByName: String = "",
     val recordedAt: Long = System.currentTimeMillis(),

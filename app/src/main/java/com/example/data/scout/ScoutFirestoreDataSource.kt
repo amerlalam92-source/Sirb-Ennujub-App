@@ -1,5 +1,12 @@
 package com.example.data.scout
 
+import android.util.Log
+import com.example.data.firestore.safeInt
+import com.example.data.firestore.safeLong
+import com.example.data.firestore.safeNullableLong
+import com.example.data.firestore.safeNullableString
+import com.example.data.firestore.safeString
+import com.example.data.firestore.safeStringList
 import com.example.domain.scout.Scout
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
@@ -26,10 +33,11 @@ class ScoutFirestoreDataSource(
     /**
      * الاستماع المباشر لقائمة الأشبال مع التحديث الفوري
      */
-    fun observeScouts(): Flow<List<Scout>> = callbackFlow {
+    fun observeScouts(@Suppress("UNUSED_PARAMETER") unitId: String? = null): Flow<List<Scout>> = callbackFlow {
         val listenerRegistration = collection.addSnapshotListener { snapshot, error ->
             if (error != null) {
-                close(error)
+                Log.w("ScoutFirestoreDS", "Error observing scouts", error)
+                trySend(emptyList())
                 return@addSnapshotListener
             }
             val scouts = snapshot?.documents?.mapNotNull { doc ->
@@ -44,8 +52,13 @@ class ScoutFirestoreDataSource(
      * جلب شبل محدد بالمعرف
      */
     suspend fun getScoutById(id: String): Scout? {
-        val doc = collection.document(id).get().await()
-        return if (doc.exists()) mapDocumentToScout(doc) else null
+        return try {
+            val doc = collection.document(id).get().await()
+            if (doc.exists()) mapDocumentToScout(doc) else null
+        } catch (e: Exception) {
+            Log.w("ScoutFirestoreDS", "Error getting scout $id", e)
+            null
+        }
     }
 
     /**
@@ -138,12 +151,56 @@ class ScoutFirestoreDataSource(
     }
 
     /**
-     * حذف شبل نهائياً
+     * حذف شبل نهائياً مع تنظيف سجلات التقدم والشارات المرتبطة به
      */
     suspend fun deleteScout(id: String): Result<Unit> {
         if (id.isBlank()) return Result.failure(IllegalArgumentException("معرف الشبل مفقود"))
         return try {
+            val relatedCollections = listOf(
+                "scout_progress",
+                "scout_hobby_progress",
+                "scout_badges",
+                "scout_hobby_badges"
+            )
+
+            val refsToDelete = mutableListOf<com.google.firebase.firestore.DocumentReference>()
+            for (collectionName in relatedCollections) {
+                val snapshot = firestore.collection(collectionName)
+                    .whereEqualTo("scoutId", id)
+                    .get()
+                    .await()
+                snapshot.documents.forEach { refsToDelete.add(it.reference) }
+            }
+
+            if (refsToDelete.isNotEmpty()) {
+                refsToDelete.distinctBy { it.path }.chunked(450).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { ref -> batch.delete(ref) }
+                    batch.commit().await()
+                }
+            }
+
             collection.document(id).delete().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * تحديث الرصيد المقدم للشبل (Credit Balance)
+     */
+    suspend fun updateCreditBalance(id: String, newBalance: Int, updatedBy: String = ""): Result<Unit> {
+        if (id.isBlank()) return Result.failure(IllegalArgumentException("معرف الشبل مفقود"))
+        return try {
+            val updates = mutableMapOf<String, Any>(
+                "creditBalance" to newBalance,
+                "updatedAt" to System.currentTimeMillis()
+            )
+            if (updatedBy.isNotBlank()) {
+                updates["updatedBy"] = updatedBy
+            }
+            collection.document(id).update(updates).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -200,61 +257,63 @@ class ScoutFirestoreDataSource(
     /**
      * قراءة وثيقة الشبل مع الترحيل التسامحي للملفات القديمة (Tolerant Migration)
      */
-    private fun mapDocumentToScout(doc: DocumentSnapshot): Scout {
-        // قراءة الاسم واللقب مع التوافق التراجعي لـ fullName السابق
-        var rawName = doc.getString("name") ?: ""
-        var rawSurname = doc.getString("surname") ?: ""
+    private fun mapDocumentToScout(doc: DocumentSnapshot): Scout? {
+        return try {
+            // قراءة الاسم واللقب مع التوافق التراجعي لـ fullName السابق
+            var rawName = doc.safeString("name")
+            var rawSurname = doc.safeString("surname")
 
-        if (rawName.isBlank() && rawSurname.isBlank()) {
-            val legacyFullName = doc.getString("fullName")?.trim() ?: ""
-            if (legacyFullName.isNotBlank()) {
-                val parts = legacyFullName.split("\\s+".toRegex(), limit = 2)
-                rawName = parts.getOrNull(0) ?: ""
-                rawSurname = parts.getOrNull(1) ?: ""
+            if (rawName.isBlank() && rawSurname.isBlank()) {
+                val legacyFullName = doc.safeString("fullName").trim()
+                if (legacyFullName.isNotBlank()) {
+                    val parts = legacyFullName.split("\\s+".toRegex(), limit = 2)
+                    rawName = parts.getOrNull(0) ?: ""
+                    rawSurname = parts.getOrNull(1) ?: ""
+                }
             }
-        }
 
-        // قراءة سنة الالتحاق مع التوافق التراجعي لـ joinDate السابق
-        val rawJoinYearLong = doc.getLong("joinYear")
-        val joinYear: Int = if (rawJoinYearLong != null && rawJoinYearLong > 0) {
-            rawJoinYearLong.toInt()
-        } else {
-            val legacyJoinDate = doc.getLong("joinDate") ?: 0L
-            if (legacyJoinDate > 0) {
-                val cal = Calendar.getInstance().apply { timeInMillis = legacyJoinDate }
-                cal.get(Calendar.YEAR)
+            // قراءة سنة الالتحاق مع التوافق التراجعي لـ joinDate السابق
+            val rawJoinYearLong = doc.safeNullableLong("joinYear")
+            val joinYear: Int = if (rawJoinYearLong != null && rawJoinYearLong > 0) {
+                rawJoinYearLong.toInt()
             } else {
-                Calendar.getInstance().get(Calendar.YEAR)
+                val legacyJoinDate = doc.safeLong("joinDate", 0L)
+                if (legacyJoinDate > 0) {
+                    val cal = Calendar.getInstance().apply { timeInMillis = legacyJoinDate }
+                    cal.get(Calendar.YEAR)
+                } else {
+                    Calendar.getInstance().get(Calendar.YEAR)
+                }
             }
+
+            val relation = doc.safeString("guardianRelation", Scout.RELATION_FATHER)
+            val additionalList = doc.safeStringList("additionalPhones")
+
+            Scout(
+                id = doc.id,
+                name = rawName,
+                surname = rawSurname,
+                birthDate = doc.safeLong("birthDate", 0L),
+                guardianName = doc.safeString("guardianName"),
+                guardianPhone = doc.safeString("guardianPhone"),
+                additionalPhones = additionalList,
+                guardianRelation = if (relation in Scout.GUARDIAN_RELATIONS) relation else Scout.RELATION_FATHER,
+                address = doc.safeString("address"),
+                school = doc.safeString("school"),
+                joinYear = joinYear,
+                status = doc.safeString("status", Scout.STATUS_ACTIVE),
+                notes = doc.safeString("notes"),
+                creditBalance = doc.safeInt("creditBalance", 0),
+                unitId = doc.safeNullableString("unitId"),
+                createdAt = doc.safeLong("createdAt", System.currentTimeMillis()),
+                updatedAt = doc.safeLong("updatedAt", System.currentTimeMillis()),
+                createdBy = doc.safeString("createdBy"),
+                updatedBy = doc.safeString("updatedBy")
+            )
+        } catch (e: Exception) {
+            Log.w("ScoutFirestoreDS", "Failed to map scout document ${doc.id}", e)
+            null
         }
-
-        val relation = doc.getString("guardianRelation") ?: Scout.RELATION_FATHER
-
-        @Suppress("UNCHECKED_CAST")
-        val additionalList = (doc.get("additionalPhones") as? List<*>)
-            ?.mapNotNull { it?.toString()?.trim() }
-            ?.filter { it.isNotBlank() }
-            ?: emptyList()
-
-        return Scout(
-            id = doc.id,
-            name = rawName,
-            surname = rawSurname,
-            birthDate = doc.getLong("birthDate") ?: 0L,
-            guardianName = doc.getString("guardianName") ?: "",
-            guardianPhone = doc.getString("guardianPhone") ?: "",
-            additionalPhones = additionalList,
-            guardianRelation = if (relation in Scout.GUARDIAN_RELATIONS) relation else Scout.RELATION_FATHER,
-            address = doc.getString("address") ?: "",
-            school = doc.getString("school") ?: "",
-            joinYear = joinYear,
-            status = doc.getString("status") ?: Scout.STATUS_ACTIVE,
-            notes = doc.getString("notes") ?: "",
-            createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis(),
-            updatedAt = doc.getLong("updatedAt") ?: System.currentTimeMillis(),
-            createdBy = doc.getString("createdBy") ?: "",
-            updatedBy = doc.getString("updatedBy") ?: ""
-        )
     }
 
     /**
@@ -276,6 +335,8 @@ class ScoutFirestoreDataSource(
             "joinYear" to scout.joinYear,
             "status" to scout.status,
             "notes" to scout.notes.trim(),
+            "creditBalance" to scout.creditBalance,
+            "unitId" to scout.unitId,
             "createdAt" to scout.createdAt,
             "updatedAt" to scout.updatedAt,
             "createdBy" to scout.createdBy,

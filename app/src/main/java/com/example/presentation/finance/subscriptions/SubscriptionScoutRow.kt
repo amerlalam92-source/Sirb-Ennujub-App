@@ -40,6 +40,8 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.domain.finance.FinanceSubscription
 import com.example.domain.finance.SubscriptionStatus
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 
 /**
  * عنصر صف اشتراك الشبل في تفاصيل النشاط (SubscriptionScoutRow)
@@ -52,6 +54,7 @@ fun SubscriptionScoutRow(
     isSaving: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     var textValue by remember(subscription.paidAmount) {
         mutableStateOf(subscription.paidAmount.toString())
     }
@@ -106,7 +109,7 @@ fun SubscriptionScoutRow(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = subscription.scoutFullName.ifBlank { "شبل كشفي" },
+                    text = subscription.scoutFullName.ifBlank { replaceCustomWords("${terms.scoutSingular} كشفي", terms) },
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f)

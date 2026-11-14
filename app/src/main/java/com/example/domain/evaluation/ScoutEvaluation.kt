@@ -13,5 +13,6 @@ data class ScoutEvaluation(
     val penaltyAmount: Int = 0,
     val penaltyReason: String? = null,
     val testedAmount: String? = null, // المقدار المطلوب اختباره في التقييم الفصلي
+    val unitId: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )

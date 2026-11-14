@@ -18,5 +18,6 @@ interface AttendanceRepository {
     fun getAttendanceRowsForActivity(activityId: String): Flow<List<AttendanceRow>>
     fun getTrainingMeetingsRegister(): Flow<List<MeetingWithAttendance>>
     suspend fun getTrainingMeetingNumber(activityId: String): Int
+    fun observeAllAttendance(): Flow<List<Attendance>>
 }
 

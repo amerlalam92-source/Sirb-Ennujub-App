@@ -1,5 +1,7 @@
 package com.example.data.evaluation
 
+import android.util.Log
+import com.example.domain.evaluation.CriteriaType
 import com.example.domain.evaluation.EvaluationCriteria
 import com.example.domain.evaluation.ScoutEvaluation
 import com.google.firebase.firestore.DocumentSnapshot
@@ -34,10 +36,23 @@ class EvaluationFirestoreDataSource(
                 return@addSnapshotListener
             }
 
-            // هجرة سريعة لتحديث "تقييم الحفظ" إلى "تقييم حفظ القرآن" في فايرستور
+            // هجرة سريعة لتحديث المعايير القديمة في فايرستور إلى النظام الفصلي من 20
             snapshot.documents.forEach { doc ->
-                if (doc.getString("name") == "تقييم الحفظ") {
+                val rawName = doc.getString("name")
+                val rawType = doc.getString("type")
+                val rawMaxScore = doc.getLong("maxScore")
+                if (rawName == "تقييم الحفظ") {
                     criteriaCollection.document(doc.id).update("name", "تقييم حفظ القرآن")
+                }
+                if (rawName == "الحيوية") {
+                    criteriaCollection.document(doc.id).update("name", "الاهتمام")
+                }
+                val isLeaderType = rawType == null ||
+                    rawType == EvaluationCriteria.TYPE_LEADER_CRITERIA ||
+                    rawType == CriteriaType.LEADER_CRITERIA.name ||
+                    rawType == CriteriaType.LEADER_CRITERIA.value
+                if (isLeaderType && rawMaxScore == 10L) {
+                    criteriaCollection.document(doc.id).update("maxScore", 20)
                 }
             }
 
@@ -54,10 +69,10 @@ class EvaluationFirestoreDataSource(
 
     private fun seedDefaultCriteria() {
         val defaultList = listOf(
-            EvaluationCriteria(name = "الانضباط", maxScore = 10, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 1),
-            EvaluationCriteria(name = "الأخلاق", maxScore = 10, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 2),
-            EvaluationCriteria(name = "المشاركة", maxScore = 10, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 3),
-            EvaluationCriteria(name = "الحيوية", maxScore = 10, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 4),
+            EvaluationCriteria(name = "الأخلاق", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 1),
+            EvaluationCriteria(name = "المشاركة", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 2),
+            EvaluationCriteria(name = "الاهتمام", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 3),
+            EvaluationCriteria(name = "الانضباط", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 4),
             EvaluationCriteria(name = "تقييم حفظ القرآن", maxScore = 20, type = EvaluationCriteria.TYPE_QURAN, order = 5),
             EvaluationCriteria(name = "تقييم الكراس", maxScore = 20, type = EvaluationCriteria.TYPE_NOTEBOOK, order = 6)
         )
@@ -114,15 +129,122 @@ class EvaluationFirestoreDataSource(
 
     suspend fun saveEvaluation(evaluation: ScoutEvaluation): Result<Unit> {
         return try {
-            val docId = evaluation.id.ifBlank {
-                if (evaluation.activityId.startsWith("TERM_")) {
-                    "${evaluation.scoutId}_${evaluation.activityId}"
-                } else {
-                    "${evaluation.scoutId}_${evaluation.activityId}_${evaluation.leaderId}"
+            val docId = "${evaluation.scoutId}_${evaluation.activityId}_${evaluation.leaderId}"
+            val toSave = evaluation.copy(id = docId)
+
+            var quranId: String? = null
+            var notebookId: String? = null
+            var oldQuranScore: Int? = null
+            var oldNotebookScore: Int? = null
+
+            try {
+                val criteriaSnapshot = criteriaCollection.get().await()
+                val criteriaList = criteriaSnapshot.documents.mapNotNull { mapDocumentToCriteria(it) }
+                val quranCriteria = criteriaList.firstOrNull {
+                    it.type == EvaluationCriteria.TYPE_QURAN ||
+                        it.type == CriteriaType.QURAN.name ||
+                        it.type == CriteriaType.QURAN.value ||
+                        it.name.contains("قرآن") ||
+                        it.name.contains("حفظ")
+                }
+                val notebookCriteria = criteriaList.firstOrNull {
+                    it.type == EvaluationCriteria.TYPE_NOTEBOOK ||
+                        it.type == CriteriaType.NOTEBOOK.name ||
+                        it.type == CriteriaType.NOTEBOOK.value ||
+                        it.name.contains("كراس")
+                }
+                quranId = quranCriteria?.id
+                notebookId = notebookCriteria?.id
+
+                if (quranId != null || notebookId != null) {
+                    val existingSnapshot = evaluationsCollection
+                        .whereEqualTo("scoutId", evaluation.scoutId)
+                        .whereEqualTo("activityId", evaluation.activityId)
+                        .get()
+                        .await()
+                    val existingEvals = existingSnapshot.documents.mapNotNull { mapDocumentToEvaluation(it) }
+
+                    oldQuranScore = if (quranId != null) {
+                        existingEvals
+                            .filter { it.criteriaScores.containsKey(quranId) }
+                            .maxByOrNull { it.createdAt }
+                            ?.criteriaScores?.get(quranId)
+                    } else null
+
+                    oldNotebookScore = if (notebookId != null) {
+                        existingEvals
+                            .filter { it.criteriaScores.containsKey(notebookId) }
+                            .maxByOrNull { it.createdAt }
+                            ?.criteriaScores?.get(notebookId)
+                    } else null
+                }
+            } catch (e: Exception) {
+                Log.w("EvaluationDataSource", "Failed to read previous Quran/Notebook scores for audit log: ${e.message}")
+            }
+
+            evaluationsCollection.document(docId).set(mapEvaluationToMap(toSave)).await()
+
+            val newQuranScore = if (quranId != null) evaluation.criteriaScores[quranId] else null
+            val newNotebookScore = if (notebookId != null) evaluation.criteriaScores[notebookId] else null
+
+            val changes = mutableListOf<String>()
+            val meta = hashMapOf<String, Any?>(
+                "scoutId" to evaluation.scoutId,
+                "activityId" to evaluation.activityId
+            )
+
+            if (newQuranScore != null && newQuranScore != oldQuranScore) {
+                changes.add("تقييم حفظ القرآن: من ${oldQuranScore?.toString() ?: "غير مسجل"} إلى $newQuranScore")
+                meta["oldQuranScore"] = oldQuranScore
+                meta["newQuranScore"] = newQuranScore
+            }
+
+            if (newNotebookScore != null && newNotebookScore != oldNotebookScore) {
+                changes.add("تقييم الكراس: من ${oldNotebookScore?.toString() ?: "غير مسجل"} إلى $newNotebookScore")
+                meta["oldNotebookScore"] = oldNotebookScore
+                meta["newNotebookScore"] = newNotebookScore
+            }
+
+            if (changes.isNotEmpty()) {
+                try {
+                    val logEntry = hashMapOf<String, Any?>(
+                        "timestamp" to System.currentTimeMillis(),
+                        "userId" to evaluation.leaderId,
+                        "userName" to evaluation.leaderName.ifBlank { "قائد كشفي" },
+                        "action" to "update",
+                        "targetType" to "evaluation",
+                        "targetId" to docId,
+                        "targetName" to "تقييم القرآن والكراس (${evaluation.activityId})",
+                        "details" to changes.joinToString(" | "),
+                        "meta" to meta
+                    )
+                    if (!evaluation.unitId.isNullOrBlank()) {
+                        logEntry["unitId"] = evaluation.unitId
+                    }
+                    firestore.collection("activity_log").add(logEntry).await()
+                } catch (e: Exception) {
+                    Log.w("EvaluationDataSource", "Failed to write Quran/Notebook audit log: ${e.message}")
                 }
             }
-            val toSave = evaluation.copy(id = docId)
-            evaluationsCollection.document(docId).set(mapEvaluationToMap(toSave)).await()
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteAllActivityEvaluations(): Result<Unit> {
+        return try {
+            val snapshot = evaluationsCollection.get().await()
+            val docsToDelete = snapshot.documents.filter { doc ->
+                val activityId = doc.getString("activityId") ?: ""
+                !activityId.startsWith("TERM_")
+            }
+            docsToDelete.chunked(400).forEach { chunk ->
+                val batch = firestore.batch()
+                chunk.forEach { doc -> batch.delete(doc.reference) }
+                batch.commit().await()
+            }
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -152,6 +274,23 @@ class EvaluationFirestoreDataSource(
         awaitClose { listenerRegistration.remove() }
     }
 
+    fun getEvaluationsForActivityByLeader(activityId: String, leaderId: String): Flow<List<ScoutEvaluation>> = callbackFlow {
+        val listenerRegistration = evaluationsCollection
+            .whereEqualTo("leaderId", leaderId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val list = snapshot?.documents
+                    ?.mapNotNull { mapDocumentToEvaluation(it) }
+                    ?.filter { it.activityId == activityId }
+                    ?: emptyList()
+                trySend(list)
+            }
+        awaitClose { listenerRegistration.remove() }
+    }
+
     fun getEvaluationsForScout(scoutId: String): Flow<List<ScoutEvaluation>> = callbackFlow {
         val listenerRegistration = evaluationsCollection
             .whereEqualTo("scoutId", scoutId)
@@ -166,7 +305,7 @@ class EvaluationFirestoreDataSource(
         awaitClose { listenerRegistration.remove() }
     }
 
-    fun observeAllEvaluations(): Flow<List<ScoutEvaluation>> = callbackFlow {
+    fun observeAllEvaluations(@Suppress("UNUSED_PARAMETER") unitId: String? = null): Flow<List<ScoutEvaluation>> = callbackFlow {
         val listenerRegistration = evaluationsCollection
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -226,6 +365,7 @@ class EvaluationFirestoreDataSource(
                 penaltyAmount = doc.getLong("penaltyAmount")?.toInt() ?: 0,
                 penaltyReason = doc.getString("penaltyReason"),
                 testedAmount = doc.getString("testedAmount"),
+                unitId = doc.getString("unitId"),
                 createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
             )
         } catch (e: Exception) {
@@ -244,6 +384,7 @@ class EvaluationFirestoreDataSource(
             "penaltyAmount" to evaluation.penaltyAmount,
             "penaltyReason" to evaluation.penaltyReason,
             "testedAmount" to evaluation.testedAmount,
+            "unitId" to evaluation.unitId,
             "createdAt" to evaluation.createdAt
         )
     }

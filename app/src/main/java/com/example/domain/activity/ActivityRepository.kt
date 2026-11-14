@@ -17,5 +17,4 @@ interface ActivityRepository {
     suspend fun cancelActivity(id: String): Result<Unit>
     suspend fun deleteActivity(id: String): Result<Unit>
     suspend fun updateSubscriptionOverride(activityId: String, override: Map<String, Int>?): Result<Unit>
-    suspend fun updateContributionSettings(activityId: String, required: Boolean, defaultAmount: Int?): Result<Unit>
 }

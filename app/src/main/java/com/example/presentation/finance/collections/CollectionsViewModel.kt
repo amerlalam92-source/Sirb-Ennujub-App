@@ -22,52 +22,34 @@ class CollectionsViewModel(
 
     val uiState: StateFlow<CollectionsUiState> = combine(
         repository.observeAllSubscriptions(),
-        repository.observeAllContributions(),
         _selectedFilter
-    ) { subscriptions, contributions, filter ->
+    ) { subscriptions, filter ->
         // تجميع الاشتراكات حسب النشاط
-        val subsItems = subscriptions.groupBy { it.activityId }.map { (actId, list) ->
-            val first = list.first()
-            val totalReq = list.sumOf { it.requiredAmount }
-            val totalPaid = list.sumOf { it.paidAmount }
-            val totalDebt = list.sumOf { it.debtAmount }
-            CollectionActivityItem(
-                activityId = actId,
-                activityTitle = first.activityTitle,
-                activityDate = first.activityDate,
-                type = "subscriptions",
-                participantsCount = list.size,
-                totalRequired = totalReq,
-                totalPaid = totalPaid,
-                totalDebt = totalDebt,
-                isFullyCollected = totalDebt == 0
-            )
-        }
+        val subsItems = subscriptions
+            .filter { it.activityId.isNotBlank() }
+            .groupBy { it.activityId }
+            .map { (actId, list) ->
+                val first = list.first()
+                val totalReq = list.sumOf { it.requiredAmount }
+                val totalPaid = list.sumOf { it.paidAmount }
+                val totalDebt = list.sumOf { it.debtAmount }
+                CollectionActivityItem(
+                    activityId = actId,
+                    activityTitle = first.activityTitle.ifBlank { "نشاط كشفي" },
+                    activityDate = first.activityDate,
+                    type = "subscriptions",
+                    participantsCount = list.size,
+                    totalRequired = totalReq,
+                    totalPaid = totalPaid,
+                    totalDebt = totalDebt,
+                    isFullyCollected = totalDebt == 0
+                )
+            }
 
-        // تجميع المساهمات حسب النشاط
-        val contribsItems = contributions.groupBy { it.activityId }.map { (actId, list) ->
-            val first = list.first()
-            val totalReq = list.sumOf { it.requiredAmount }
-            val totalPaid = list.sumOf { it.paidAmount }
-            val totalDebt = list.sumOf { it.debtAmount }
-            CollectionActivityItem(
-                activityId = actId,
-                activityTitle = first.activityTitle,
-                activityDate = first.activityDate,
-                type = "contributions",
-                participantsCount = list.size,
-                totalRequired = totalReq,
-                totalPaid = totalPaid,
-                totalDebt = totalDebt,
-                isFullyCollected = totalDebt == 0
-            )
-        }
-
-        val allItems = (subsItems + contribsItems).sortedByDescending { it.activityDate }
+        val allItems = subsItems.sortedByDescending { it.activityDate }
         val filtered = when (filter) {
             CollectionsFilter.ALL -> allItems
             CollectionsFilter.SUBSCRIPTIONS -> allItems.filter { it.type == "subscriptions" }
-            CollectionsFilter.CONTRIBUTIONS -> allItems.filter { it.type == "contributions" }
         }
 
         CollectionsUiState(
@@ -76,7 +58,6 @@ class CollectionsViewModel(
             selectedFilter = filter,
             allCount = allItems.size,
             subsCount = subsItems.size,
-            contribsCount = contribsItems.size,
             totalRequired = allItems.sumOf { it.totalRequired },
             totalPaid = allItems.sumOf { it.totalPaid },
             totalDebt = allItems.sumOf { it.totalDebt },

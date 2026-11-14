@@ -1,6 +1,12 @@
 package com.example.data.quran
 
 import android.util.Log
+import com.example.data.firestore.safeBoolean
+import com.example.data.firestore.safeInt
+import com.example.data.firestore.safeLong
+import com.example.data.firestore.safeNullableString
+import com.example.data.firestore.safeString
+import com.example.data.firestore.safeStringList
 import com.example.domain.quran.QuranSchool
 import com.example.domain.quran.ScoutQuranEnrollment
 import com.example.domain.quran.SelectedPeriod
@@ -191,31 +197,27 @@ class QuranFirestoreDataSource(
     // ==========================================
 
     private fun mapDocToSchool(doc: DocumentSnapshot): QuranSchool? {
-        val id = doc.getString("id") ?: doc.id
-        val name = doc.getString("name") ?: return null
-        val teacherName = doc.getString("teacherName") ?: ""
-        val teacherPhone = doc.getString("teacherPhone") ?: ""
-        val address = doc.getString("address")
-        val notes = doc.getString("notes")
-        val archived = doc.getBoolean("archived") ?: false
-        val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-        val updatedAt = doc.getLong("updatedAt") ?: System.currentTimeMillis()
-        val createdBy = doc.getString("createdBy")
-        val updatedBy = doc.getString("updatedBy")
-
-        return QuranSchool(
-            id = id,
-            name = name,
-            teacherName = teacherName,
-            teacherPhone = teacherPhone,
-            address = address,
-            notes = notes,
-            archived = archived,
-            createdAt = createdAt,
-            updatedAt = updatedAt,
-            createdBy = createdBy,
-            updatedBy = updatedBy
-        )
+        return try {
+            val id = doc.safeNullableString("id") ?: doc.id
+            val name = doc.safeNullableString("name") ?: return null
+            val now = System.currentTimeMillis()
+            QuranSchool(
+                id = id,
+                name = name,
+                teacherName = doc.safeString("teacherName"),
+                teacherPhone = doc.safeString("teacherPhone"),
+                address = doc.safeNullableString("address"),
+                notes = doc.safeNullableString("notes"),
+                archived = doc.safeBoolean("archived", false),
+                createdAt = doc.safeLong("createdAt", now),
+                updatedAt = doc.safeLong("updatedAt", now),
+                createdBy = doc.safeNullableString("createdBy"),
+                updatedBy = doc.safeNullableString("updatedBy")
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to map school ${doc.id}", e)
+            null
+        }
     }
 
     private fun mapSchoolToMap(school: QuranSchool): Map<String, Any?> {
@@ -236,45 +238,40 @@ class QuranFirestoreDataSource(
 
     @Suppress("UNCHECKED_CAST")
     private fun mapDocToEnrollment(doc: DocumentSnapshot): ScoutQuranEnrollment? {
-        val scoutId = doc.getString("scoutId") ?: doc.id
-        val schoolId = doc.getString("schoolId") ?: return null
-        val schoolName = doc.getString("schoolName") ?: ""
-        val teacherName = doc.getString("teacherName") ?: ""
-        val teacherPhone = doc.getString("teacherPhone") ?: ""
-        val currentMemorizedParts = (doc.getLong("currentMemorizedParts") ?: 0L).toInt()
-        val memorizationNote = doc.getString("memorizationNote")
-        val studyDays = (doc.get("studyDays") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+        return try {
+            val scoutId = doc.safeNullableString("scoutId") ?: doc.id
+            val schoolId = doc.safeNullableString("schoolId") ?: return null
+            val studyDays = doc.safeStringList("studyDays")
 
-        val rawPeriods = (doc.get("studyPeriods") as? List<*>)?.mapNotNull { it as? Map<String, Any?> } ?: emptyList()
-        val studyPeriods = rawPeriods.mapNotNull { map ->
-            val key = map["key"] as? String ?: return@mapNotNull null
-            val period = StudyPeriod.fromKey(key) ?: return@mapNotNull null
-            val startTime = map["startTime"] as? String
-            SelectedPeriod(period = period, startTime = startTime)
+            val rawPeriods = (doc.get("studyPeriods") as? List<*>)?.mapNotNull { it as? Map<*, *> } ?: emptyList()
+            val studyPeriods = rawPeriods.mapNotNull { map ->
+                val key = map["key"] as? String ?: return@mapNotNull null
+                val period = StudyPeriod.fromKey(key) ?: return@mapNotNull null
+                val startTime = map["startTime"] as? String
+                SelectedPeriod(period = period, startTime = startTime)
+            }
+
+            val now = System.currentTimeMillis()
+            ScoutQuranEnrollment(
+                scoutId = scoutId,
+                schoolId = schoolId,
+                schoolName = doc.safeString("schoolName"),
+                teacherName = doc.safeString("teacherName"),
+                teacherPhone = doc.safeString("teacherPhone"),
+                currentMemorizedParts = doc.safeInt("currentMemorizedParts", 0),
+                memorizationNote = doc.safeNullableString("memorizationNote"),
+                studyDays = studyDays,
+                studyPeriods = studyPeriods,
+                generalNotes = doc.safeNullableString("generalNotes"),
+                createdAt = doc.safeLong("createdAt", now),
+                updatedAt = doc.safeLong("updatedAt", now),
+                createdBy = doc.safeNullableString("createdBy"),
+                updatedBy = doc.safeNullableString("updatedBy")
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to map quran enrollment ${doc.id}", e)
+            null
         }
-
-        val generalNotes = doc.getString("generalNotes")
-        val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-        val updatedAt = doc.getLong("updatedAt") ?: System.currentTimeMillis()
-        val createdBy = doc.getString("createdBy")
-        val updatedBy = doc.getString("updatedBy")
-
-        return ScoutQuranEnrollment(
-            scoutId = scoutId,
-            schoolId = schoolId,
-            schoolName = schoolName,
-            teacherName = teacherName,
-            teacherPhone = teacherPhone,
-            currentMemorizedParts = currentMemorizedParts,
-            memorizationNote = memorizationNote,
-            studyDays = studyDays,
-            studyPeriods = studyPeriods,
-            generalNotes = generalNotes,
-            createdAt = createdAt,
-            updatedAt = updatedAt,
-            createdBy = createdBy,
-            updatedBy = updatedBy
-        )
     }
 
     private fun mapEnrollmentToMap(enrollment: ScoutQuranEnrollment): Map<String, Any?> {

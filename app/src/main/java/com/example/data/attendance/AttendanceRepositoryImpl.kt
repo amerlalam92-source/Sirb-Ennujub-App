@@ -62,38 +62,80 @@ class AttendanceRepositoryImpl(
 
     override suspend fun saveAttendance(attendance: Attendance): Result<Unit> {
         val currentUser = authRepository.currentUser
+        val existingRecords = if (attendance.activityId.isNotBlank()) {
+            try {
+                dataSource.getAttendanceForActivity(attendance.activityId).first()
+            } catch (_: Exception) {
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
+        val old = existingRecords.find { it.scoutId == attendance.scoutId }
+        if (old != null && old.status == attendance.status) {
+            // لا يوجد أي تغيير، لا نحفظ في Firestore ولا نسجل في سجل العمليات
+            return Result.success(Unit)
+        }
+
+        val currentUnitId = attendance.unitId ?: authRepository.getCurrentLeader()?.unitId
         val prepared = attendance.copy(
+            unitId = currentUnitId,
             recordedBy = currentUser?.uid ?: "",
             recordedByName = currentUser?.displayName ?: "قائد كشفي",
             updatedAt = System.currentTimeMillis()
         )
         val result = dataSource.saveAttendance(prepared)
         if (result.isSuccess) {
+            val activity = if (prepared.activityId.isNotBlank()) {
+                try {
+                    activityDataSource.getActivityById(prepared.activityId)
+                } catch (_: Exception) {
+                    null
+                }
+            } else null
+
+            val activityTitle = activity?.title
+            val details = if (!activityTitle.isNullOrBlank()) {
+                "تم تحديث حضور 1 شبل في النشاط: $activityTitle"
+            } else {
+                "تم تحديث حضور 1 شبل"
+            }
+
             activityLogDataSource.logActivity(
                 userId = currentUser?.uid ?: "",
                 userName = currentUser?.displayName ?: "قائد كشفي",
-                action = "save",
+                action = "save_batch",
                 targetType = "attendance",
                 targetId = prepared.id,
-                targetName = prepared.scoutFullName
+                targetName = "سجل حضور",
+                details = details,
+                unitId = currentUnitId
             )
 
             // مزامنة اشتراك الشبل في المالية إذا كان النشاط اجتماعاً تدريبياً ومفعلاً فيه تحصيل الاشتراكات
-            if (prepared.activityId.isNotBlank()) {
+            val isMeeting = activity == null ||
+                activity.type == ActivityType.TRAINING_MEETING.key ||
+                activity.type.equals("training_meeting", ignoreCase = true) ||
+                activity.type == "اجتماع تدريبي" ||
+                activity.activityType == ActivityType.TRAINING_MEETING ||
+                activity.activityType.isMeetingType()
+            val shouldCollect = activity?.collectSubscriptions ?: true
+            if (isMeeting && shouldCollect) {
                 try {
-                    val activity = activityDataSource.getActivityById(prepared.activityId)
-                    if (activity != null && activity.type == ActivityType.TRAINING_MEETING.key && activity.collectSubscriptions) {
-                        val subStatus = SubscriptionStatus.fromKey(prepared.status)
-                        financeRepository.ensureSubscriptionForAttendance(
-                            activityId = prepared.activityId,
-                            scoutId = prepared.scoutId,
-                            scoutFullName = prepared.scoutFullName,
-                            activityTitle = activity.title,
-                            activityDate = if (prepared.activityDate > 0) prepared.activityDate else activity.startDate,
-                            attendanceStatus = subStatus
-                        )
-                    }
-                } catch (_: Exception) {}
+                    val subStatus = SubscriptionStatus.fromKey(prepared.status)
+                    val actDate = if (prepared.activityDate > 0) prepared.activityDate else (activity?.startDate ?: System.currentTimeMillis())
+                    val actTitle = activity?.title?.ifBlank { "اجتماع تدريبي" } ?: "اجتماع تدريبي"
+                    financeRepository.ensureSubscriptionForAttendance(
+                        activityId = prepared.activityId,
+                        scoutId = prepared.scoutId,
+                        scoutFullName = prepared.scoutFullName,
+                        activityTitle = actTitle,
+                        activityDate = actDate,
+                        attendanceStatus = subStatus
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("AttendanceRepo", "Error syncing subscription: ${e.message}", e)
+                }
             }
         }
         return result
@@ -101,10 +143,45 @@ class AttendanceRepositoryImpl(
 
     override suspend fun saveAttendanceBatch(list: List<Attendance>): Result<Unit> {
         if (list.isEmpty()) return Result.success(Unit)
+
+        val activityId = list.firstOrNull()?.activityId ?: ""
+
+        // 1) جلب سجلات الحضور الحالية للنشاط من Firestore
+        val existingRecords = if (activityId.isNotBlank()) {
+            try {
+                dataSource.getAttendanceForActivity(activityId).first()
+            } catch (_: Exception) {
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
+        val oldMap = existingRecords.associateBy { it.scoutId }
+
+        // 2) و 3) حساب عدد السجلات التي تغيرت فعلياً
+        var changedCount = 0
+        for (newRecord in list) {
+            val oldRecord = oldMap[newRecord.scoutId]
+            if (oldRecord == null) {
+                changedCount++
+            } else if (oldRecord.status != newRecord.status) {
+                changedCount++
+            }
+        }
+
+        // 4) إذا لم يتغير أي شبل (changedCount == 0):
+        // عدم الحفظ وعدم التسجيل في Audit Log والخروج بنجاح فوراً
+        if (changedCount == 0) {
+            return Result.success(Unit)
+        }
+
+        // 5) في حال وجود تغييرات فعلية: الحفظ والتسجيل
         val currentUser = authRepository.currentUser
+        val currentUnitId = list.firstOrNull()?.unitId ?: authRepository.getCurrentLeader()?.unitId
         val now = System.currentTimeMillis()
         val preparedList = list.map {
             it.copy(
+                unitId = currentUnitId,
                 recordedBy = currentUser?.uid ?: "",
                 recordedByName = currentUser?.displayName ?: "قائد كشفي",
                 recordedAt = if (it.recordedAt > 0) it.recordedAt else now,
@@ -113,34 +190,58 @@ class AttendanceRepositoryImpl(
         }
         val result = dataSource.saveAttendanceBatch(preparedList)
         if (result.isSuccess) {
-            val activityId = list.firstOrNull()?.activityId ?: ""
+            val activity = if (activityId.isNotBlank()) {
+                try {
+                    activityDataSource.getActivityById(activityId)
+                } catch (_: Exception) {
+                    null
+                }
+            } else null
+
+            val activityTitle = activity?.title
+            val details = if (!activityTitle.isNullOrBlank()) {
+                "تم تحديث حضور ${changedCount} شبل في النشاط: $activityTitle"
+            } else {
+                "تم تحديث حضور ${changedCount} شبل"
+            }
+
             activityLogDataSource.logActivity(
                 userId = currentUser?.uid ?: "",
                 userName = currentUser?.displayName ?: "قائد كشفي",
                 action = "save_batch",
                 targetType = "attendance",
                 targetId = activityId,
-                targetName = "${list.size} سجل حضور"
+                targetName = "سجل حضور",
+                details = details,
+                unitId = currentUnitId
             )
 
             // مزامنة اشتراكات الأشبال تلقائياً للاجتماعات التدريبية فقط والمفعل فيها تحصيل الاشتراكات
-            if (activityId.isNotBlank()) {
+            val isMeeting = activity == null ||
+                activity.type == ActivityType.TRAINING_MEETING.key ||
+                activity.type.equals("training_meeting", ignoreCase = true) ||
+                activity.type == "اجتماع تدريبي" ||
+                activity.activityType == ActivityType.TRAINING_MEETING ||
+                activity.activityType.isMeetingType()
+            val shouldCollect = activity?.collectSubscriptions ?: true
+            if (isMeeting && shouldCollect) {
                 try {
-                    val activity = activityDataSource.getActivityById(activityId)
-                    if (activity != null && activity.type == ActivityType.TRAINING_MEETING.key && activity.collectSubscriptions) {
-                        for (item in preparedList) {
-                            val subStatus = SubscriptionStatus.fromKey(item.status)
-                            financeRepository.ensureSubscriptionForAttendance(
-                                activityId = item.activityId,
-                                scoutId = item.scoutId,
-                                scoutFullName = item.scoutFullName,
-                                activityTitle = activity.title,
-                                activityDate = if (item.activityDate > 0) item.activityDate else activity.startDate,
-                                attendanceStatus = subStatus
-                            )
-                        }
+                    val actDate = if (activity != null && activity.startDate > 0) activity.startDate else System.currentTimeMillis()
+                    val actTitle = activity?.title?.ifBlank { "اجتماع تدريبي" } ?: "اجتماع تدريبي"
+                    for (item in preparedList) {
+                        val subStatus = SubscriptionStatus.fromKey(item.status)
+                        financeRepository.ensureSubscriptionForAttendance(
+                            activityId = item.activityId,
+                            scoutId = item.scoutId,
+                            scoutFullName = item.scoutFullName,
+                            activityTitle = actTitle,
+                            activityDate = if (item.activityDate > 0) item.activityDate else actDate,
+                            attendanceStatus = subStatus
+                        )
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    android.util.Log.e("AttendanceRepo", "Error syncing batch subscriptions: ${e.message}", e)
+                }
             }
         }
         return result
@@ -381,6 +482,15 @@ class AttendanceRepositoryImpl(
             if (index >= 0) index + 1 else 0
         } catch (_: Exception) {
             0
+        }
+    }
+
+    override fun observeAllAttendance(): Flow<List<Attendance>> {
+        return combine(
+            dataSource.observeAllAttendance(),
+            dataSource.observePointsSettings()
+        ) { allList, settings ->
+            allList.map { it.withDynamicPoints(settings) }
         }
     }
 

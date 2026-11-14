@@ -70,6 +70,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.domain.finance.FinanceSubscription
 import com.example.domain.finance.SubscriptionStatus
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import com.example.presentation.common.CustomTopAppBar
 import com.example.ui.theme.EnrolledGreenContentDark
 import com.example.ui.theme.EnrolledGreenContentLight
@@ -85,6 +87,7 @@ fun SubscriptionDetailScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val isDark = isSystemInDarkTheme()
@@ -175,7 +178,7 @@ fun SubscriptionDetailScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     SubscriptionStatItem(
-                        label = "عدد الأشبال",
+                        label = replaceCustomWords("عدد ${terms.scoutPluralDefinite}", terms),
                         value = "${uiState.scoutsCount}"
                     )
                     SubscriptionStatItem(
@@ -316,7 +319,7 @@ fun SubscriptionDetailScreen(
                                 }
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Text(
-                                    text = stringResource(id = R.string.subscription_detail_empty_debtors),
+                                    text = replaceCustomWords(stringResource(id = R.string.subscription_detail_empty_debtors), terms),
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.primary,
                                     textAlign = TextAlign.Center
@@ -469,6 +472,7 @@ private fun SubscriptionScoutItem(
     isSaving: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     var textValue by remember(subscription.paidAmount) {
         mutableStateOf(subscription.paidAmount.toString())
     }
@@ -528,7 +532,7 @@ private fun SubscriptionScoutItem(
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        text = subscription.scoutFullName.ifBlank { "شبل كشفي" },
+                        text = subscription.scoutFullName.ifBlank { replaceCustomWords("${terms.scoutSingular} كشفي", terms) },
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface
                     )

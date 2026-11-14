@@ -1,5 +1,12 @@
 package com.example.data.activity
 
+import android.util.Log
+import com.example.data.firestore.safeBoolean
+import com.example.data.firestore.safeLong
+import com.example.data.firestore.safeNullableInt
+import com.example.data.firestore.safeNullableString
+import com.example.data.firestore.safeString
+import com.example.data.firestore.safeStringList
 import com.example.domain.activity.Activity
 import com.example.domain.activity.ActivityStatus
 import com.example.domain.activity.ActivityType
@@ -28,47 +35,39 @@ class ActivityFirestoreDataSource(
     /**
      * الاستماع لجميع الأنشطة مرتبة زمنياً
      */
-    fun observeActivities(): Flow<List<Activity>> = callbackFlow {
-        val listenerRegistration = collection
-            .orderBy("startDate", Query.Direction.ASCENDING)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    close(error)
-                    return@addSnapshotListener
-                }
-                val activities = snapshot?.documents?.mapNotNull { doc ->
-                    mapDocumentToActivity(doc)
-                } ?: emptyList()
-                trySend(activities)
+    fun observeActivities(@Suppress("UNUSED_PARAMETER") unitId: String? = null): Flow<List<Activity>> = callbackFlow {
+        val listenerRegistration = collection.addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                Log.w("ActivityFirestoreDS", "Error observing activities", error)
+                trySend(emptyList())
+                return@addSnapshotListener
             }
+            val activities = snapshot?.documents?.mapNotNull { doc ->
+                mapDocumentToActivity(doc)
+            }?.sortedBy { it.startDate } ?: emptyList()
+            trySend(activities)
+        }
         awaitClose { listenerRegistration.remove() }
     }
 
     /**
      * الاستماع للأنشطة القادمة فقط
      */
-    fun observeUpcomingActivities(limit: Int = 20): Flow<List<Activity>> = callbackFlow {
-        val todayStart = java.util.Calendar.getInstance().apply {
-            set(java.util.Calendar.HOUR_OF_DAY, 0)
-            set(java.util.Calendar.MINUTE, 0)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }.timeInMillis
-
-        val listenerRegistration = collection
-            .whereGreaterThanOrEqualTo("endDate", todayStart)
-            .orderBy("endDate", Query.Direction.ASCENDING)
-            .limit(limit.toLong())
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    close(error)
-                    return@addSnapshotListener
-                }
-                val activities = snapshot?.documents?.mapNotNull { doc ->
-                    mapDocumentToActivity(doc)
-                } ?: emptyList()
-                trySend(activities)
+    fun observeUpcomingActivities(limit: Int = 20, @Suppress("UNUSED_PARAMETER") unitId: String? = null): Flow<List<Activity>> = callbackFlow {
+        val listenerRegistration = collection.addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                Log.w("ActivityFirestoreDS", "Error observing upcoming activities", error)
+                trySend(emptyList())
+                return@addSnapshotListener
             }
+            val activities = snapshot?.documents?.mapNotNull { doc ->
+                mapDocumentToActivity(doc)
+            }?.filter { it.isUpcoming() }
+                ?.sortedBy { it.endDate }
+                ?.take(limit)
+                ?: emptyList()
+            trySend(activities)
+        }
         awaitClose { listenerRegistration.remove() }
     }
 
@@ -76,8 +75,13 @@ class ActivityFirestoreDataSource(
      * جلب نشاط محدد بالمعرف
      */
     suspend fun getActivityById(id: String): Activity? {
-        val doc = collection.document(id).get().await()
-        return if (doc.exists()) mapDocumentToActivity(doc) else null
+        return try {
+            val doc = collection.document(id).get().await()
+            if (doc.exists()) mapDocumentToActivity(doc) else null
+        } catch (e: Exception) {
+            Log.w("ActivityFirestoreDS", "Error getting activity $id", e)
+            null
+        }
     }
 
     /**
@@ -225,24 +229,6 @@ class ActivityFirestoreDataSource(
     }
 
     /**
-     * تحديث إعدادات المساهمات المالية للنشاط (هل المساهمة مطلوبة والمبلغ الافتراضي)
-     */
-    suspend fun updateContributionSettings(id: String, required: Boolean, defaultAmount: Int?): Result<Unit> {
-        if (id.isBlank()) return Result.failure(IllegalArgumentException("معرف النشاط مفقود"))
-        return try {
-            val updateData = hashMapOf<String, Any?>(
-                "contributionRequired" to required,
-                "contributionDefaultAmount" to defaultAmount,
-                "updatedAt" to System.currentTimeMillis()
-            )
-            collection.document(id).update(updateData).await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    /**
      * التحقق الصارم من مدخلات النشاط
      */
     private fun validateActivity(activity: Activity): Result<Unit> {
@@ -266,45 +252,54 @@ class ActivityFirestoreDataSource(
         return Result.success(Unit)
     }
 
-    @Suppress("UNCHECKED_CAST")
-    private fun mapDocumentToActivity(doc: DocumentSnapshot): Activity {
-        val topicsList = doc.get("meetingTopics") as? List<String> ?: emptyList()
-        val rawOverride = (doc.get("subscriptionOverride") ?: doc.get("subscriptionAmountOverride")) as? Map<*, *>
-        val parsedOverride = rawOverride?.mapNotNull { (k, v) ->
-            val key = k as? String
-            val value = when (v) {
-                is Number -> v.toInt()
-                is String -> v.toIntOrNull()
-                else -> null
-            }
-            if (key != null && value != null) key to value else null
-        }?.toMap()
+    private fun mapDocumentToActivity(doc: DocumentSnapshot): Activity? {
+        return try {
+            val topicsList = doc.safeStringList("meetingTopics")
+            val rawOverride = (doc.get("subscriptionOverride") ?: doc.get("subscriptionAmountOverride")) as? Map<*, *>
+            val parsedOverride = rawOverride?.mapNotNull { (k, v) ->
+                val key = k as? String
+                val value = when (v) {
+                    is Number -> v.toInt()
+                    is String -> v.toIntOrNull()
+                    else -> null
+                }
+                if (key != null && value != null) key to value else null
+            }?.toMap()
 
-        return Activity(
-            id = doc.id,
-            title = doc.getString("title") ?: "",
-            type = doc.getString("type") ?: ActivityType.TRAINING_MEETING.key,
-            startDate = doc.getLong("startDate") ?: System.currentTimeMillis(),
-            endDate = doc.getLong("endDate") ?: System.currentTimeMillis(),
-            startTime = doc.getString("startTime") ?: "",
-            endTime = doc.getString("endTime") ?: "",
-            location = doc.getString("location") ?: "",
-            objectives = doc.getString("objectives") ?: "",
-            tools = doc.getString("tools") ?: "",
-            responsibleName = doc.getString("responsibleName") ?: "",
-            status = doc.getString("status") ?: ActivityStatus.PLANNED.key,
-            notes = doc.getString("notes") ?: "",
-            meetingTopics = topicsList,
-            finalReport = doc.getString("finalReport") ?: "",
-            subscriptionOverride = parsedOverride,
-            contributionRequired = doc.getBoolean("contributionRequired") ?: false,
-            contributionDefaultAmount = doc.getLong("contributionDefaultAmount")?.toInt(),
-            collectSubscriptions = doc.getBoolean("collectSubscriptions") ?: true,
-            createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis(),
-            updatedAt = doc.getLong("updatedAt") ?: System.currentTimeMillis(),
-            createdBy = doc.getString("createdBy") ?: "",
-            updatedBy = doc.getString("updatedBy") ?: ""
-        )
+            val now = System.currentTimeMillis()
+            val startDate = doc.safeLong("startDate", now)
+
+            Activity(
+                id = doc.id,
+                title = doc.safeString("title"),
+                type = doc.safeString("type", ActivityType.TRAINING_MEETING.key),
+                startDate = startDate,
+                endDate = doc.safeLong("endDate", startDate),
+                startTime = doc.safeString("startTime"),
+                endTime = doc.safeString("endTime"),
+                location = doc.safeString("location"),
+                objectives = doc.safeString("objectives"),
+                tools = doc.safeString("tools"),
+                responsibleName = doc.safeString("responsibleName"),
+                status = doc.safeString("status", ActivityStatus.PLANNED.key),
+                notes = doc.safeString("notes"),
+                meetingTopics = topicsList,
+                finalReport = doc.safeString("finalReport"),
+                subscriptionOverride = parsedOverride,
+                contributionRequired = doc.safeBoolean("contributionRequired", false),
+                contributionDefaultAmount = doc.safeNullableInt("contributionDefaultAmount"),
+                collectSubscriptions = doc.safeBoolean("collectSubscriptions", true),
+                customSubscriptionAmount = doc.safeNullableInt("customSubscriptionAmount"),
+                unitId = doc.safeNullableString("unitId"),
+                createdAt = doc.safeLong("createdAt", doc.safeLong("startDate", 0L)),
+                updatedAt = doc.safeLong("updatedAt", now),
+                createdBy = doc.safeString("createdBy"),
+                updatedBy = doc.safeString("updatedBy")
+            )
+        } catch (e: Exception) {
+            Log.w("ActivityFirestoreDS", "Failed to map activity ${doc.id}", e)
+            null
+        }
     }
 
     private fun mapActivityToMap(activity: Activity): Map<String, Any?> {
@@ -335,6 +330,8 @@ class ActivityFirestoreDataSource(
             "contributionRequired" to activity.contributionRequired,
             "contributionDefaultAmount" to activity.contributionDefaultAmount,
             "collectSubscriptions" to activity.collectSubscriptions,
+            "customSubscriptionAmount" to activity.customSubscriptionAmount,
+            "unitId" to activity.unitId,
             "createdAt" to activity.createdAt,
             "updatedAt" to activity.updatedAt,
             "createdBy" to activity.createdBy,

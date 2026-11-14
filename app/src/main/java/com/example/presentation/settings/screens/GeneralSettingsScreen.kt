@@ -1,7 +1,7 @@
-package com.example.presentation.settings
+package com.example.presentation.settings.screens
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,12 +17,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Save
@@ -35,35 +33,27 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.RadioButton
-import androidx.compose.foundation.clickable
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.text.input.KeyboardType
-import com.example.domain.evaluation.CriteriaType
-import com.example.domain.evaluation.EvaluationCriteria
-import com.example.presentation.common.AppAlertDialog
-import com.example.presentation.common.CustomTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,18 +65,28 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.domain.evaluation.CriteriaType
+import com.example.domain.evaluation.EvaluationCriteria
+import com.example.domain.settings.replaceCustomWords
+import com.example.presentation.common.AppAlertDialog
+import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
+import com.example.presentation.settings.SettingsEvent
+import com.example.presentation.settings.SettingsViewModel
 
 /**
- * شاشة إعدادات التطبيق وسلّم التنقيط الكشفي (Settings Screen)
+ * شاشة إعدادات التنقيط والتقييم (GeneralSettingsScreen)
+ * تشمل: سلم التنقيط الكشفي، إعدادات شارات الكفاية والهواية، ومعايير التقييم الديناميكية.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(
+fun GeneralSettingsScreen(
     viewModel: SettingsViewModel,
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val terms = LocalAppTerms.current
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
@@ -95,6 +95,7 @@ fun SettingsScreen(
                 is SettingsEvent.ShowMessage -> {
                     snackbarHostState.showSnackbar(event.message)
                 }
+                else -> {}
             }
         }
     }
@@ -104,15 +105,15 @@ fun SettingsScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             CustomTopAppBar(
-                title = stringResource(id = R.string.settings_title),
+                title = "إعدادات التنقيط والتقييم",
                 navigationIcon = {
                     IconButton(
                         onClick = onNavigateBack,
-                        modifier = Modifier.testTag("settings_back_button")
+                        modifier = Modifier.testTag("general_settings_back_btn")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(id = R.string.cancel_action),
+                            contentDescription = stringResource(id = R.string.back_action),
                             tint = MaterialTheme.colorScheme.onSurface
                         )
                     }
@@ -120,7 +121,7 @@ fun SettingsScreen(
             )
         }
     ) { paddingValues ->
-        if (uiState.isLoading) {
+        if (uiState.isLoading || uiState.isLoadingPoints) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -175,7 +176,10 @@ fun SettingsScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "يُطبَّق سلّم النقاط هذا حصرياً على أنشطة 'اجتماع تدريبي' لتحفيز الأشبال على المواظبة والانضباط.",
+                                text = replaceCustomWords(
+                                    "يُطبَّق سلّم النقاط هذا حصرياً على أنشطة 'اجتماع تدريبي' لتحفيز ${terms.scoutPluralDefinite} على المواظبة والانضباط.",
+                                    terms
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                             )
@@ -284,9 +288,7 @@ fun SettingsScreen(
                     }
                 }
 
-                // =============================================================
                 // قسم إعدادات التقييم التربوي (نقاط شارات الكفاية والهواية الإضافية)
-                // =============================================================
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
@@ -425,7 +427,6 @@ fun SettingsScreen(
                 // =============================================================
                 // قسم معايير التقييم الديناميكية (Dynamic Evaluation Criteria)
                 // =============================================================
-
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
@@ -535,267 +536,6 @@ fun SettingsScreen(
                         }
                     }
                 }
-
-                // فاصل بصري بين معايير التقييم وإعدادات المالية
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 8.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                )
-
-                // بطاقة توضيحية حول إعدادات المالية
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.secondary),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AccountBalanceWallet,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSecondary,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = stringResource(id = R.string.settings_finance_section),
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = stringResource(id = R.string.settings_finance_section_hint),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f)
-                            )
-                        }
-                    }
-                }
-
-                // A) Section: مبالغ الاشتراكات الافتراضية
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        // مبلغ الحاضر (default 20)
-                        OutlinedTextField(
-                            value = uiState.presentAmount,
-                            onValueChange = { viewModel.onFinanceFieldChanged("present_amount", it) },
-                            label = { Text(stringResource(id = R.string.settings_present_amount)) },
-                            suffix = { Text(stringResource(id = R.string.settings_currency_suffix)) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("present_amount_input"),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-
-                        // مبلغ المتأخر (default 30)
-                        OutlinedTextField(
-                            value = uiState.lateAmount,
-                            onValueChange = { viewModel.onFinanceFieldChanged("late_amount", it) },
-                            label = { Text(stringResource(id = R.string.settings_late_amount)) },
-                            suffix = { Text(stringResource(id = R.string.settings_currency_suffix)) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("late_amount_input"),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-
-                        // مبلغ المتأخر جداً (default 40)
-                        OutlinedTextField(
-                            value = uiState.veryLateAmount,
-                            onValueChange = { viewModel.onFinanceFieldChanged("very_late_amount", it) },
-                            label = { Text(stringResource(id = R.string.settings_very_late_amount)) },
-                            suffix = { Text(stringResource(id = R.string.settings_currency_suffix)) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("very_late_amount_input"),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-
-                        // مبلغ الغائب بعذر (default 40)
-                        OutlinedTextField(
-                            value = uiState.absentExcusedAmount,
-                            onValueChange = { viewModel.onFinanceFieldChanged("absent_excused_amount", it) },
-                            label = { Text(stringResource(id = R.string.settings_excused_amount)) },
-                            suffix = { Text(stringResource(id = R.string.settings_currency_suffix)) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("excused_amount_input"),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-
-                        // مبلغ الغائب بدون عذر (default 50)
-                        OutlinedTextField(
-                            value = uiState.absentUnexcusedAmount,
-                            onValueChange = { viewModel.onFinanceFieldChanged("absent_unexcused_amount", it) },
-                            label = { Text(stringResource(id = R.string.settings_unexcused_amount)) },
-                            suffix = { Text(stringResource(id = R.string.settings_currency_suffix)) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("unexcused_amount_input"),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                    }
-                }
-
-                // B) Section: الرصيد الافتتاحي
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.settings_opening_balance_section),
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = stringResource(id = R.string.settings_opening_balance_hint),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        OutlinedTextField(
-                            value = uiState.openingBalance,
-                            onValueChange = { viewModel.onFinanceFieldChanged("opening_balance", it) },
-                            label = { Text(stringResource(id = R.string.settings_opening_balance_label)) },
-                            suffix = { Text(stringResource(id = R.string.settings_currency_suffix)) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("opening_balance_input"),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                    }
-                }
-
-                // C) Buttons at the bottom of these finance settings
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(
-                        onClick = { viewModel.resetFinanceToDefaults() },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("reset_finance_defaults_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.RestartAlt,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(stringResource(id = R.string.action_reset_defaults))
-                    }
-
-                    Button(
-                        onClick = { viewModel.saveFinanceSettings() },
-                        enabled = !uiState.isSavingFinance,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("save_finance_settings_button"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        if (uiState.isSavingFinance) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Save,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(stringResource(id = R.string.settings_save_finance))
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // زر تنظيف السجلات المالية المعلقة
-                OutlinedButton(
-                    onClick = { viewModel.onOpenCleanOrphanedDialog() },
-                    enabled = !uiState.isCleaningOrphanedRecords,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("clean_orphaned_finance_button"),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    if (uiState.isCleaningOrphanedRecords) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(id = R.string.settings_cleaning_orphaned))
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(id = R.string.settings_clean_orphaned_records))
-                    }
-                }
             }
         }
 
@@ -839,42 +579,6 @@ fun SettingsScreen(
                     TextButton(
                         onClick = { viewModel.onDeleteCriteriaDismissed() },
                         modifier = Modifier.testTag("cancel_delete_criteria_button")
-                    ) {
-                        Text(stringResource(id = R.string.action_cancel))
-                    }
-                }
-            )
-        }
-
-        // حوار تأكيد تنظيف السجلات المالية المعلقة
-        if (uiState.isCleanOrphanedDialogOpen) {
-            AppAlertDialog(
-                onDismissRequest = { viewModel.onDismissCleanOrphanedDialog() },
-                title = {
-                    Text(
-                        text = stringResource(id = R.string.dialog_clean_orphaned_title),
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                    )
-                },
-                text = {
-                    Text(
-                        text = stringResource(id = R.string.dialog_clean_orphaned_message),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = { viewModel.onConfirmCleanOrphanedRecords() },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier.testTag("confirm_clean_orphaned_button")
-                    ) {
-                        Text(stringResource(id = R.string.action_clean))
-                    }
-                },
-                dismissButton = {
-                    TextButton(
-                        onClick = { viewModel.onDismissCleanOrphanedDialog() },
-                        modifier = Modifier.testTag("cancel_clean_orphaned_button")
                     ) {
                         Text(stringResource(id = R.string.action_cancel))
                     }

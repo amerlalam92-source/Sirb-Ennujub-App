@@ -5,6 +5,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import com.example.presentation.common.AppLogo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -132,8 +133,7 @@ fun SignUpScreen(
                         .clip(CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.ennujub_logo),
+                    AppLogo(
                         contentDescription = stringResource(id = R.string.app_name),
                         modifier = Modifier.size(105.dp)
                     )

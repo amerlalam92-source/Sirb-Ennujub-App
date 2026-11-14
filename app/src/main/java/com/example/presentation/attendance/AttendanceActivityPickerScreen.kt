@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.domain.activity.Activity
+import com.example.presentation.common.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import com.example.presentation.activity.ActivityFormatters
 
 /**
@@ -63,6 +65,7 @@ fun AttendanceActivityPickerScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val uiState by viewModel.pickerUiState.collectAsStateWithLifecycle()
 
     Scaffold(
@@ -70,7 +73,7 @@ fun AttendanceActivityPickerScreen(
         topBar = {
             CustomTopAppBar(
                 title = stringResource(id = R.string.attendance_picker_title),
-                subtitle = stringResource(id = R.string.attendance_picker_subtitle),
+                subtitle = replaceCustomWords("اختر النشاط لتسجيل حضور وغياب ${terms.scoutPluralDefinite}", terms),
                 navigationIcon = {
                     IconButton(
                         onClick = onNavigateBack,

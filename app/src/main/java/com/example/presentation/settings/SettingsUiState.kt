@@ -1,5 +1,6 @@
 package com.example.presentation.settings
 
+import com.example.domain.auth.Leader
 import com.example.domain.evaluation.EvaluationCriteria
 
 enum class FinanceField {
@@ -43,6 +44,12 @@ data class SettingsUiState(
     val isCleaningOrphanedRecords: Boolean = false,
     val isCleanOrphanedDialogOpen: Boolean = false,
 
+    // حذف الحساب ونقل الرئاسة
+    val showDeleteAccountDialog: Boolean = false,
+    val showTransferLeadershipDialog: Boolean = false,
+    val availableLeadersForTransfer: List<Leader> = emptyList(),
+    val isDeletingAccount: Boolean = false,
+
     // حالات عامة
     val isLoading: Boolean = false,
     val isSaving: Boolean = false
@@ -57,4 +64,5 @@ data class SettingsUiState(
 
 sealed interface SettingsEvent {
     data class ShowMessage(val message: String) : SettingsEvent
+    data class AccountDeleted(val message: String = "تم حذف الحساب بنجاح") : SettingsEvent
 }

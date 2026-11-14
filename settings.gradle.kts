@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "سرب النُّجُب"
+rootProject.name = "إدارة الوحدات الكشفية"
 
 include(":app")

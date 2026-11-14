@@ -63,6 +63,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.domain.hobby.HobbyBadgeRequirement
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import java.lang.String.format
 
 /**
@@ -75,6 +77,7 @@ fun HobbyBadgeRequirementsScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -296,7 +299,14 @@ fun HobbyBadgeRequirementsScreen(
             title = {
                 Text(text = "تعذر الحذف", fontWeight = FontWeight.Bold)
             },
-            text = { Text("لا يمكن حذف المتطلب لأن بعض الأشبال قد أنجزوه بالفعل. يمكنك أرشفته بدلاً من ذلك.") },
+            text = {
+                Text(
+                    replaceCustomWords(
+                        "لا يمكن حذف المتطلب لأن بعض ${terms.scoutPluralDefinite} قد أنجزوه بالفعل. يمكنك أرشفته بدلاً من ذلك.",
+                        terms
+                    )
+                )
+            },
             confirmButton = {
                 TextButton(onClick = { showCannotDeleteDialog = false }) {
                     Text(stringResource(id = R.string.action_ok))

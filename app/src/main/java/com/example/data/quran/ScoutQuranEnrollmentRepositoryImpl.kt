@@ -1,29 +1,49 @@
 package com.example.data.quran
 
-import com.example.domain.auth.AuthRepository
 import com.example.data.log.ActivityLogDataSource
+import com.example.data.scout.ScoutFirestoreDataSource
+import com.example.domain.auth.AuthRepository
 import com.example.domain.quran.QuranSchoolRepository
 import com.example.domain.quran.ScoutQuranEnrollment
 import com.example.domain.quran.ScoutQuranEnrollmentRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 
 class ScoutQuranEnrollmentRepositoryImpl(
     private val dataSource: QuranFirestoreDataSource,
     private val schoolRepository: QuranSchoolRepository,
+    private val scoutDataSource: ScoutFirestoreDataSource,
     private val activityLogDataSource: ActivityLogDataSource,
     private val authRepository: AuthRepository
 ) : ScoutQuranEnrollmentRepository {
+
+    private fun observeActiveScoutIds(): Flow<Set<String>> {
+        return scoutDataSource.observeScouts().map { scouts ->
+            scouts.filter { it.isActive }.map { it.id }.toSet()
+        }
+    }
 
     override fun observeEnrollmentForScout(scoutId: String): Flow<ScoutQuranEnrollment?> {
         return dataSource.observeEnrollmentForScout(scoutId)
     }
 
     override fun observeAllEnrollments(): Flow<List<ScoutQuranEnrollment>> {
-        return dataSource.observeAllEnrollments()
+        return combine(
+            dataSource.observeAllEnrollments(),
+            observeActiveScoutIds()
+        ) { enrollments, activeScoutIds ->
+            enrollments.filter { it.scoutId in activeScoutIds }
+        }
     }
 
     override fun observeEnrollmentsForSchool(schoolId: String): Flow<List<ScoutQuranEnrollment>> {
-        return dataSource.observeEnrollmentsForSchool(schoolId)
+        return combine(
+            dataSource.observeEnrollmentsForSchool(schoolId),
+            observeActiveScoutIds()
+        ) { enrollments, activeScoutIds ->
+            enrollments.filter { it.scoutId in activeScoutIds }
+        }
     }
 
     override suspend fun getEnrollmentForScout(scoutId: String): ScoutQuranEnrollment? {

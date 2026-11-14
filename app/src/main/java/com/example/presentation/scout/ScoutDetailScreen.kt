@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -51,16 +53,21 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
+import com.example.presentation.common.replaceCustomWords
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,10 +81,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
@@ -105,6 +115,7 @@ fun ScoutDetailScreen(
     onNavigateToInfo: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val context = LocalContext.current
     val detailState by viewModel.detailUiState.collectAsStateWithLifecycle()
     val stats by viewModel.scoutStats.collectAsStateWithLifecycle()
@@ -114,6 +125,7 @@ fun ScoutDetailScreen(
     val scoutDebt by viewModel.scoutDebt.collectAsStateWithLifecycle()
     val scoutSubscriptions by viewModel.scoutSubscriptions.collectAsStateWithLifecycle()
     val progressMessage by viewModel.progressMessage.collectAsStateWithLifecycle()
+    val isMainLeader by viewModel.isMainLeader.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
 
@@ -121,6 +133,8 @@ fun ScoutDetailScreen(
     var showArchiveDialog by remember { mutableStateOf(false) }
     var showUnarchiveDialog by remember { mutableStateOf(false) }
     var showMissedActivitiesSheet by remember { mutableStateOf(false) }
+    var showEditCreditDialog by remember { mutableStateOf(false) }
+    var editingSubscription by remember { mutableStateOf<com.example.domain.finance.FinanceSubscription?>(null) }
 
     LaunchedEffect(scoutId) {
         viewModel.loadScoutDetail(scoutId)
@@ -146,7 +160,7 @@ fun ScoutDetailScreen(
         snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
         topBar = {
             CustomTopAppBar(
-                title = stringResource(id = R.string.scout_detail_title),
+                title = replaceCustomWords("ملف ${terms.scoutSingularDefinite}", terms),
                 navigationIcon = {
                     IconButton(
                         onClick = onNavigateBack,
@@ -169,7 +183,7 @@ fun ScoutDetailScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Edit,
-                                contentDescription = stringResource(id = R.string.edit_scout_title),
+                                contentDescription = replaceCustomWords(stringResource(id = R.string.edit_scout_title), terms),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -182,7 +196,7 @@ fun ScoutDetailScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Archive,
-                                    contentDescription = stringResource(id = R.string.action_archive_scout),
+                                    contentDescription = replaceCustomWords(stringResource(id = R.string.action_archive_scout), terms),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -193,7 +207,7 @@ fun ScoutDetailScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Unarchive,
-                                    contentDescription = stringResource(id = R.string.action_unarchive_scout),
+                                    contentDescription = replaceCustomWords(stringResource(id = R.string.action_unarchive_scout), terms),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -206,7 +220,7 @@ fun ScoutDetailScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Delete,
-                                contentDescription = stringResource(id = R.string.action_delete_scout),
+                                contentDescription = replaceCustomWords(stringResource(id = R.string.action_delete_scout), terms),
                                 tint = MaterialTheme.colorScheme.error
                             )
                         }
@@ -321,8 +335,8 @@ fun ScoutDetailScreen(
                                             shape = RoundedCornerShape(8.dp)
                                         ) {
                                             Text(
-                                                text = if (scout.isActive) stringResource(id = R.string.status_active)
-                                                else stringResource(id = R.string.status_archived),
+                                                text = if (scout.isActive) replaceCustomWords("نشط بـ${terms.groupNameDefinite}", terms)
+                                                else replaceCustomWords(stringResource(id = R.string.status_archived), terms),
                                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                                 color = MaterialTheme.colorScheme.onPrimary,
                                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -370,7 +384,7 @@ fun ScoutDetailScreen(
 
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = stringResource(id = R.string.scout_info_card_title),
+                                        text = replaceCustomWords("معلومات ${terms.scoutSingularDefinite}", terms),
                                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
@@ -495,7 +509,7 @@ fun ScoutDetailScreen(
                                         modifier = Modifier.size(18.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text(stringResource(id = R.string.action_show_missed_activities))
+                                    Text(replaceCustomWords("عرض الأنشطة التي غاب عنها ${terms.scoutSingularDefinite}", terms))
                                 }
                             } else {
                                 Box(
@@ -523,10 +537,14 @@ fun ScoutDetailScreen(
                             onClick = { onNavigateToHobbyBadges(scout.id) }
                         )
 
-                        // بطاقة ملخص الديون المالية للشبل
+                        // بطاقة ملخص الديون المالية للشبل والرصيد المقدم
                         ScoutDebtSummaryCard(
                             debt = scoutDebt,
-                            subscriptions = scoutSubscriptions
+                            subscriptions = scoutSubscriptions,
+                            creditBalance = scout.creditBalance,
+                            isMainLeader = isMainLeader,
+                            onEditCreditClick = { showEditCreditDialog = true },
+                            onEditSubscriptionDebtClick = { sub -> editingSubscription = sub }
                         )
 
                         // زر مشاركة كـ PDF
@@ -547,9 +565,10 @@ fun ScoutDetailScreen(
                                     scout = scout,
                                     stats = currentStats,
                                     activities = activities,
-                                    context = context
+                                    context = context,
+                                    terms = terms
                                 )
-                                PdfExporter.shareScoutPdf(file, scout.fullName, context)
+                                PdfExporter.shareScoutPdf(file, scout.fullName, context, terms = terms)
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -628,14 +647,14 @@ fun ScoutDetailScreen(
             onDismissRequest = { showDeleteDialog = false },
             title = {
                 Text(
-                    text = stringResource(id = R.string.action_delete_scout),
+                    text = replaceCustomWords(stringResource(id = R.string.action_delete_scout), terms),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.error
                 )
             },
             text = {
                 Text(
-                    text = stringResource(id = R.string.confirm_delete_scout_body_format, scoutName),
+                    text = replaceCustomWords(stringResource(id = R.string.confirm_delete_scout_body_format, scoutName), terms),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -672,13 +691,13 @@ fun ScoutDetailScreen(
             onDismissRequest = { showArchiveDialog = false },
             title = {
                 Text(
-                    text = stringResource(id = R.string.action_archive_scout),
+                    text = replaceCustomWords(stringResource(id = R.string.action_archive_scout), terms),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                 )
             },
             text = {
                 Text(
-                    text = stringResource(id = R.string.confirm_archive_scout_body_format, scoutName),
+                    text = replaceCustomWords(stringResource(id = R.string.confirm_archive_scout_body_format, scoutName), terms),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -710,13 +729,13 @@ fun ScoutDetailScreen(
             onDismissRequest = { showUnarchiveDialog = false },
             title = {
                 Text(
-                    text = stringResource(id = R.string.action_unarchive_scout),
+                    text = replaceCustomWords(stringResource(id = R.string.action_unarchive_scout), terms),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                 )
             },
             text = {
                 Text(
-                    text = "هل ترغب في إعادة هذا الشبل إلى القائمة النشطة؟",
+                    text = replaceCustomWords("هل ترغب في إعادة هذا ${terms.scoutSingularDefinite} إلى القائمة النشطة؟", terms),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -764,7 +783,7 @@ fun ScoutDetailScreen(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = stringResource(id = R.string.action_show_missed_activities),
+                        text = replaceCustomWords("عرض الأنشطة التي غاب عنها ${terms.scoutSingularDefinite}", terms),
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -847,6 +866,176 @@ fun ScoutDetailScreen(
             }
         }
     }
+
+    // حوار تعديل الرصيد المقدم يدوياً (حصري للقائد الرئيسي)
+    if (isMainLeader && showEditCreditDialog) {
+        val currentScout = (detailState as? ScoutDetailUiState.Success)?.scout
+        if (currentScout != null) {
+            var creditInput by remember(currentScout.id, currentScout.creditBalance) {
+                mutableStateOf(currentScout.creditBalance.toString())
+            }
+            val parsedCredit = normalizeArabicDigits(creditInput).toIntOrNull()
+            val isCreditValid = parsedCredit != null && parsedCredit >= 0
+
+            AppAlertDialog(
+                onDismissRequest = { showEditCreditDialog = false },
+                title = {
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                        Text(
+                            text = "تعديل الرصيد المقدم",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                },
+                text = {
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = "تعديل الرصيد المقدم لـ ${currentScout.fullName}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = creditInput,
+                                onValueChange = { raw ->
+                                    val normalized = normalizeArabicDigits(raw).filter { it.isDigit() }
+                                    creditInput = normalized
+                                },
+                                label = { Text("الرصيد المقدم الجديد (دج)") },
+                                suffix = { Text("دج") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                isError = creditInput.isNotEmpty() && !isCreditValid,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("edit_credit_balance_input"),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (parsedCredit != null) {
+                                showEditCreditDialog = false
+                                viewModel.updateCreditManually(currentScout.id, parsedCredit)
+                            }
+                        },
+                        enabled = isCreditValid,
+                        modifier = Modifier.testTag("confirm_edit_credit_button")
+                    ) {
+                        Text(stringResource(id = R.string.save_scout_button))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEditCreditDialog = false }) {
+                        Text(stringResource(id = R.string.cancel_action))
+                    }
+                },
+                shape = RoundedCornerShape(16.dp)
+            )
+        }
+    }
+
+    // حوار تعديل دين الاشتراك يدوياً (حصري للقائد الرئيسي)
+    val subToEdit = editingSubscription
+    if (isMainLeader && subToEdit != null) {
+        var debtInput by remember(subToEdit.id, subToEdit.debtAmount) {
+            mutableStateOf(subToEdit.debtAmount.toString())
+        }
+        val parsedDebt = normalizeArabicDigits(debtInput).toIntOrNull()
+        val isDebtValid = parsedDebt != null && parsedDebt >= 0
+        val previewPaid = if (parsedDebt != null) {
+            (subToEdit.requiredAmount - parsedDebt).coerceAtLeast(0)
+        } else {
+            subToEdit.paidAmount
+        }
+
+        AppAlertDialog(
+            onDismissRequest = { editingSubscription = null },
+            title = {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Text(
+                        text = "تعديل دين الاشتراك",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            text = {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = subToEdit.activityTitle.ifBlank { "نشاط تدريبي" },
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "المطلوب: ${subToEdit.requiredAmount} دج • المدفوع الجديد تلقائياً: $previewPaid دج",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = debtInput,
+                            onValueChange = { raw ->
+                                val normalized = normalizeArabicDigits(raw).filter { it.isDigit() }
+                                debtInput = normalized
+                            },
+                            label = { Text("قيمة الدين الجديد (دج)") },
+                            suffix = { Text("دج") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            isError = debtInput.isNotEmpty() && !isDebtValid,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("edit_subscription_debt_input"),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (parsedDebt != null) {
+                            editingSubscription = null
+                            viewModel.updateSubscriptionDebtManually(subToEdit.id, parsedDebt)
+                        }
+                    },
+                    enabled = isDebtValid,
+                    modifier = Modifier.testTag("confirm_edit_subscription_debt_button")
+                ) {
+                    Text(stringResource(id = R.string.save_scout_button))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingSubscription = null }) {
+                    Text(stringResource(id = R.string.cancel_action))
+                }
+            },
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+}
+
+private fun normalizeArabicDigits(input: String): String {
+    val sb = StringBuilder(input.length)
+    for (ch in input) {
+        when (ch) {
+            in '٠'..'٩' -> sb.append(('0'.code + (ch.code - '٠'.code)).toChar())
+            in '۰'..'۹' -> sb.append(('0'.code + (ch.code - '۰'.code)).toChar())
+            else -> sb.append(ch)
+        }
+    }
+    return sb.toString()
 }
 
 @Composable
@@ -1056,14 +1245,25 @@ private fun ScoutHobbyBadgesSummaryCard(
 private fun ScoutDebtSummaryCard(
     debt: com.example.domain.finance.ScoutDebt?,
     subscriptions: List<com.example.domain.finance.FinanceSubscription>,
+    creditBalance: Int,
+    isMainLeader: Boolean,
+    onEditCreditClick: () -> Unit,
+    onEditSubscriptionDebtClick: (com.example.domain.finance.FinanceSubscription) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     var isExpanded by remember { mutableStateOf(false) }
     val isDark = androidx.compose.foundation.isSystemInDarkTheme()
 
     val totalDebt = debt?.totalDebt ?: subscriptions.sumOf { it.debtAmount }
     val hasSubscriptions = subscriptions.isNotEmpty()
     val unpaidSubs = subscriptions.filter { it.debtAmount > 0 }
+    val sortedSubs = remember(subscriptions) {
+        subscriptions.sortedWith(
+            compareByDescending<com.example.domain.finance.FinanceSubscription> { it.debtAmount > 0 }
+                .thenByDescending { it.activityDate }
+        )
+    }
 
     Card(
         modifier = modifier
@@ -1109,7 +1309,7 @@ private fun ScoutDebtSummaryCard(
 
                     Column {
                         Text(
-                            text = stringResource(id = R.string.scout_debt_card_title),
+                            text = replaceCustomWords(stringResource(id = R.string.scout_debt_card_title), terms),
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -1165,6 +1365,61 @@ private fun ScoutDebtSummaryCard(
                 }
             }
 
+            // الرصيد المقدم للشبل مع زر التعديل الحصري للقائد الرئيسي
+            Spacer(modifier = Modifier.height(10.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Payments,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "الرصيد المقدم:",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = String.format(com.example.presentation.common.AppLocale.AR_DZ, "%d دج", creditBalance),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.testTag("scout_credit_balance_text")
+                        )
+                    }
+
+                    if (isMainLeader) {
+                        IconButton(
+                            onClick = onEditCreditClick,
+                            modifier = Modifier.testTag("edit_credit_balance_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "تعديل الرصيد المقدم",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
             // المحتوى الموسع عند النقر
             androidx.compose.animation.AnimatedVisibility(visible = isExpanded) {
                 Column(
@@ -1179,39 +1434,88 @@ private fun ScoutDebtSummaryCard(
                             fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
                             color = MaterialTheme.colorScheme.outline
                         )
-                    } else if (unpaidSubs.isEmpty()) {
-                        Text(
-                            text = "لا توجد ديون متبقية، تم تسديد جميع الاشتراكات بالكامل.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isDark) Color(0xFFA5D6A7) else Color(0xFF1B5E20),
-                            fontWeight = FontWeight.Medium
-                        )
                     } else {
-                        val dateFormatter = java.text.SimpleDateFormat("yyyy/MM/dd", com.example.presentation.common.AppLocale.AR_DZ)
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f))
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            unpaidSubs.forEach { sub ->
-                                val dateStr = if (sub.activityDate > 0) {
-                                    dateFormatter.format(java.util.Date(sub.activityDate))
-                                } else {
-                                    "—"
+                        if (unpaidSubs.isEmpty()) {
+                            Text(
+                                text = "لا توجد ديون متبقية، تم تسديد جميع الاشتراكات بالكامل.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isDark) Color(0xFFA5D6A7) else Color(0xFF1B5E20),
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(bottom = if (isMainLeader) 8.dp else 0.dp)
+                            )
+                        }
+
+                        val subsToDisplay = if (isMainLeader) sortedSubs else unpaidSubs
+                        if (subsToDisplay.isNotEmpty()) {
+                            val dateFormatter = java.text.SimpleDateFormat("yyyy/MM/dd", com.example.presentation.common.AppLocale.AR_DZ)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (unpaidSubs.isNotEmpty()) {
+                                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.28f)
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                        }
+                                    )
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                subsToDisplay.forEachIndexed { index, sub ->
+                                    val dateStr = if (sub.activityDate > 0) {
+                                        dateFormatter.format(java.util.Date(sub.activityDate))
+                                    } else {
+                                        "—"
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "${sub.activityTitle.ifBlank { "نشاط تدريبي" }} ($dateStr)",
+                                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = if (sub.debtAmount > 0) {
+                                                    "الدين: ${sub.debtAmount} دج • المدفوع: ${sub.paidAmount} دج"
+                                                } else {
+                                                    "مسدد (الدين: 0 دج • المدفوع: ${sub.paidAmount} دج)"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                                color = if (sub.debtAmount > 0) {
+                                                    MaterialTheme.colorScheme.error
+                                                } else if (isDark) {
+                                                    Color(0xFFA5D6A7)
+                                                } else {
+                                                    Color(0xFF1B5E20)
+                                                }
+                                            )
+                                        }
+
+                                        if (isMainLeader) {
+                                            IconButton(
+                                                onClick = { onEditSubscriptionDebtClick(sub) },
+                                                modifier = Modifier.testTag("edit_subscription_debt_${sub.id}")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Edit,
+                                                    contentDescription = "تعديل دين الاشتراك",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (index < subsToDisplay.lastIndex) {
+                                        HorizontalDivider(
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                                        )
+                                    }
                                 }
-                                Text(
-                                    text = stringResource(
-                                        id = R.string.scout_debt_item_format,
-                                        sub.activityTitle.ifBlank { "نشاط تدريبي" },
-                                        dateStr,
-                                        sub.debtAmount
-                                    ),
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                                    color = MaterialTheme.colorScheme.error
-                                )
                             }
                         }
                     }

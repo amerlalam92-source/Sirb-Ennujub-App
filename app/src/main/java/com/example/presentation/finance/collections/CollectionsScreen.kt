@@ -73,7 +73,6 @@ fun CollectionsScreen(
     viewModel: CollectionsViewModel,
     onNavigateBack: () -> Unit,
     onNavigateToSubscriptionDetail: (String) -> Unit,
-    onNavigateToContributionDetail: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -254,23 +253,6 @@ fun CollectionsScreen(
                                 ),
                                 modifier = Modifier.testTag("filter_chip_subscriptions")
                             )
-
-                            FilterChip(
-                                selected = uiState.selectedFilter == CollectionsFilter.CONTRIBUTIONS,
-                                onClick = { viewModel.onFilterSelected(CollectionsFilter.CONTRIBUTIONS) },
-                                label = {
-                                    Text(
-                                        text = String.format(AppLocale.AR_DZ, "مساهمات (%d)", uiState.contribsCount),
-                                        fontWeight = if (uiState.selectedFilter == CollectionsFilter.CONTRIBUTIONS) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                },
-                                shape = RoundedCornerShape(20.dp),
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                                ),
-                                modifier = Modifier.testTag("filter_chip_contributions")
-                            )
                         }
                     }
 
@@ -317,11 +299,7 @@ fun CollectionsScreen(
                                 dateFormat = dateFormat,
                                 positiveColor = positiveGreen,
                                 onClick = {
-                                    if (item.type == "subscriptions") {
-                                        onNavigateToSubscriptionDetail(item.activityId)
-                                    } else {
-                                        onNavigateToContributionDetail(item.activityId)
-                                    }
+                                    onNavigateToSubscriptionDetail(item.activityId)
                                 }
                             )
                         }
@@ -398,24 +376,12 @@ private fun CollectionActivityCard(
             ) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = if (isSubscriptions) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.secondaryContainer
-                    }
+                    color = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     Text(
-                        text = if (isSubscriptions) {
-                            stringResource(id = R.string.collections_chip_subscriptions)
-                        } else {
-                            stringResource(id = R.string.collections_chip_contributions)
-                        },
+                        text = stringResource(id = R.string.collections_chip_subscriptions),
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = if (isSubscriptions) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSecondaryContainer
-                        },
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                     )
                 }

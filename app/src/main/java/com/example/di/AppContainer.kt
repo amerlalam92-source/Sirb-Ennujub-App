@@ -180,6 +180,12 @@ interface AppContainer {
     val evaluationViewModelFactory: androidx.lifecycle.ViewModelProvider.Factory
     val settingsRepository: com.example.domain.settings.SettingsRepository
     val evaluationMatrixViewModelFactory: androidx.lifecycle.ViewModelProvider.Factory
+    val generalReportsViewModelFactory: androidx.lifecycle.ViewModelProvider.Factory
+    val activityLogRepository: com.example.domain.log.ActivityLogRepository
+    val auditLogViewModelFactory: androidx.lifecycle.ViewModelProvider.Factory
+    val leaderManagementViewModelFactory: androidx.lifecycle.ViewModelProvider.Factory
+    val brandingRepository: com.example.domain.settings.BrandingRepository
+    val termsRepository: com.example.domain.settings.TermsRepository
 }
 
 class DefaultAppContainer(private val context: Context) : AppContainer {
@@ -273,7 +279,9 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
         ActivityRepositoryImpl(
             dataSource = activityFirestoreDataSource,
             activityLogDataSource = activityLogDataSource,
-            authRepository = authRepository
+            authRepository = authRepository,
+            financeRepository = financeRepository,
+            scoutRepository = scoutRepository
         )
     }
 
@@ -548,6 +556,7 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
         com.example.data.quran.ScoutQuranEnrollmentRepositoryImpl(
             dataSource = quranFirestoreDataSource,
             schoolRepository = quranSchoolRepository,
+            scoutDataSource = scoutFirestoreDataSource,
             activityLogDataSource = activityLogDataSource,
             authRepository = authRepository
         )
@@ -620,6 +629,7 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
     override val financeRepository: com.example.domain.finance.FinanceRepository by lazy {
         com.example.data.finance.FinanceRepositoryImpl(
             dataSource = financeFirestoreDataSource,
+            scoutDataSource = scoutFirestoreDataSource,
             activityLogDataSource = activityLogDataSource,
             authRepository = authRepository,
             firestore = firestore
@@ -695,7 +705,11 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
     }
 
     override val evaluationRepository: com.example.domain.evaluation.EvaluationRepository by lazy {
-        com.example.data.evaluation.EvaluationRepositoryImpl(evaluationFirestoreDataSource)
+        com.example.data.evaluation.EvaluationRepositoryImpl(
+            dataSource = evaluationFirestoreDataSource,
+            activityLogDataSource = activityLogDataSource,
+            authRepository = authRepository
+        )
     }
 
     override val observeCriteriaUseCase: com.example.domain.evaluation.usecases.ObserveCriteriaUseCase by lazy {
@@ -737,7 +751,8 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
             evaluationRepository = evaluationRepository,
             authRepository = authRepository,
             scoutQuranEnrollmentRepository = scoutQuranEnrollmentRepository,
-            attendanceRepository = attendanceRepository
+            attendanceRepository = attendanceRepository,
+            termsRepository = termsRepository
         )
     }
 
@@ -752,6 +767,56 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
             evaluationRepository = evaluationRepository,
             settingsRepository = settingsRepository
         )
+    }
+
+    override val generalReportsViewModelFactory: androidx.lifecycle.ViewModelProvider.Factory by lazy {
+        com.example.presentation.reports.GeneralReportsViewModel.Factory(
+            scoutRepository = scoutRepository,
+            activityRepository = activityRepository,
+            attendanceRepository = attendanceRepository,
+            progressRepository = progressRepository,
+            hobbyBadgeRepository = hobbyBadgeRepository,
+            evaluationRepository = evaluationRepository,
+            authRepository = authRepository,
+            termsRepository = termsRepository
+        )
+    }
+
+    override val activityLogRepository: com.example.domain.log.ActivityLogRepository by lazy {
+        com.example.data.log.ActivityLogRepositoryImpl(
+            dataSource = activityLogDataSource,
+            authRepository = authRepository
+        )
+    }
+
+    override val auditLogViewModelFactory: androidx.lifecycle.ViewModelProvider.Factory by lazy {
+        com.example.presentation.audit.AuditLogViewModel.Factory(
+            activityLogRepository = activityLogRepository,
+            authRepository = authRepository,
+            termsRepository = termsRepository
+        )
+    }
+
+    override val leaderManagementViewModelFactory: androidx.lifecycle.ViewModelProvider.Factory by lazy {
+        com.example.presentation.leaders.LeaderManagementViewModel.Factory(
+            authRepository = authRepository
+        )
+    }
+
+    private val brandingFirestoreDataSource: com.example.data.settings.BrandingFirestoreDataSource by lazy {
+        com.example.data.settings.BrandingFirestoreDataSource(firestore)
+    }
+
+    override val brandingRepository: com.example.domain.settings.BrandingRepository by lazy {
+        com.example.data.settings.BrandingRepositoryImpl(brandingFirestoreDataSource)
+    }
+
+    private val termsFirestoreDataSource: com.example.data.settings.TermsFirestoreDataSource by lazy {
+        com.example.data.settings.TermsFirestoreDataSource(firestore)
+    }
+
+    override val termsRepository: com.example.domain.settings.TermsRepository by lazy {
+        com.example.data.settings.TermsRepositoryImpl(termsFirestoreDataSource)
     }
 }
 

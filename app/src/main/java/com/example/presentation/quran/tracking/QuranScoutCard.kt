@@ -67,6 +67,8 @@ import com.example.domain.scout.Scout
 import com.example.ui.theme.EnrolledGreenContainerDark
 import com.example.ui.theme.EnrolledGreenContainerLight
 import com.example.ui.theme.EnrolledGreenContentDark
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import com.example.ui.theme.EnrolledGreenContentLight
 import com.example.ui.theme.NotEnrolledRedContainerDark
 import com.example.ui.theme.NotEnrolledRedContainerLight
@@ -85,6 +87,7 @@ fun QuranScoutCard(
     onDeleteClicked: (Scout, ScoutQuranEnrollment) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val context = LocalContext.current
     val scout = scoutItem.scout
     val enrollment = scoutItem.enrollment
@@ -185,7 +188,7 @@ fun QuranScoutCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.MoreVert,
-                                contentDescription = "خيارات الشبل"
+                                contentDescription = replaceCustomWords("خيارات ${terms.scoutSingularDefinite}", terms)
                             )
                         }
 

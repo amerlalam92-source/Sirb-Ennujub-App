@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import com.example.presentation.common.AppLogo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +46,7 @@ fun SplashScreen(
     authRepository: AuthRepository,
     onNavigateToLogin: () -> Unit,
     onNavigateToHome: () -> Unit,
+    onNavigateToPendingApproval: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scale = remember { Animatable(0.7f) }
@@ -63,10 +65,19 @@ fun SplashScreen(
         // مهلة بسيطة لعرض هوية الفوج الكشفي
         delay(900)
 
-        // فحص حالة الجلسة الحالية
-        if (authRepository.currentUser != null) {
-            onNavigateToHome()
-        } else {
+        // فحص حالة الجلسة الحالية وحالة اعتماد القائد
+        try {
+            if (authRepository.currentUser != null) {
+                val leader = authRepository.getCurrentLeader()
+                if (leader?.status == "pending") {
+                    onNavigateToPendingApproval()
+                } else {
+                    onNavigateToHome()
+                }
+            } else {
+                onNavigateToLogin()
+            }
+        } catch (_: Exception) {
             onNavigateToLogin()
         }
     }
@@ -87,8 +98,7 @@ fun SplashScreen(
                 .alpha(alpha.value)
         ) {
             // شعار الفوج الكشفي الرسمي بحجم كبير ونقي بدون أي خلفية ملونة
-            Image(
-                painter = painterResource(id = R.drawable.ennujub_logo),
+            AppLogo(
                 contentDescription = stringResource(id = R.string.app_name),
                 modifier = Modifier
                     .size(200.dp)

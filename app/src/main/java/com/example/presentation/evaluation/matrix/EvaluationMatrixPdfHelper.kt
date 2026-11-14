@@ -11,7 +11,10 @@ import android.graphics.pdf.PdfDocument
 import androidx.core.content.FileProvider
 import androidx.core.content.res.ResourcesCompat
 import com.example.R
+import com.example.domain.settings.CustomTerms
+import com.example.domain.settings.replaceCustomWords
 import com.example.presentation.common.AppLocale
+import com.example.presentation.reports.PdfExporter
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -33,7 +36,8 @@ object EvaluationMatrixPdfHelper {
     fun exportMatrixPdf(
         rows: List<ScoutMatrixRow>,
         totalMeetingsHeld: Int,
-        context: Context
+        context: Context,
+        terms: CustomTerms = PdfExporter.currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoFont = getCairoTypeface(context)
@@ -114,14 +118,14 @@ object EvaluationMatrixPdfHelper {
             yPos += 15f
             canvas.drawText("الكشافة الإسلامية الجزائرية — المحافظة الولائية لسطيف", pageWidth / 2f, yPos, textPaint)
             yPos += 15f
-            canvas.drawText("فوج محمد رحال — سرب النُّجُب للأشبال", pageWidth / 2f, yPos, textPaint)
+            canvas.drawText(replaceCustomWords("فوج محمد رحال — ${terms.groupName} ${terms.unitNameDefinite} ${terms.scoutPluralDefinite}", terms), pageWidth / 2f, yPos, textPaint)
             yPos += 20f
 
-            canvas.drawText("المصفوفة الشاملة لتقييم الأشبال", pageWidth / 2f, yPos, titlePaint)
+            canvas.drawText(replaceCustomWords("المصفوفة الشاملة لتقييم ${terms.scoutPluralDefinite}", terms), pageWidth / 2f, yPos, titlePaint)
             yPos += 14f
 
             val sdf = SimpleDateFormat("dd/MM/yyyy", AppLocale.AR_DZ)
-            val subInfo = "تاريخ التقرير: ${sdf.format(Date())} | عدد الاجتماعات المعتمدة: $totalMeetingsHeld | إجمالي الأشبال: ${rows.size}"
+            val subInfo = replaceCustomWords("تاريخ التقرير: ${sdf.format(Date())} | عدد الاجتماعات المعتمدة: $totalMeetingsHeld | إجمالي ${terms.scoutPluralDefinite}: ${rows.size}", terms)
             val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.GRAY
                 textSize = 9f
@@ -146,7 +150,7 @@ object EvaluationMatrixPdfHelper {
 
             val headers = listOf(
                 "الترتيب",
-                "اسم الشبل",
+                "اسم ${terms.scoutSingularDefinite}",
                 "تقييم الحضور",
                 "تقييم القادة",
                 "تقييم الحفظ",
@@ -297,15 +301,15 @@ object EvaluationMatrixPdfHelper {
                 textAlign = Paint.Align.RIGHT
             }
             val rightTextX = leftMargin + totalTableWidth - 12f
-            canvas.drawText("شرح طريقة الحساب:", rightTextX, legY, legTitlePaint)
+            canvas.drawText(replaceCustomWords("شرح طريقة الحساب:", terms), rightTextX, legY, legTitlePaint)
             legY += 13f
-            canvas.drawText("• المعدل العام: هو ناتج قسمة المجموع الكلي على 4.", rightTextX, legY, legTextPaint)
+            canvas.drawText(replaceCustomWords("• المعدل العام: هو ناتج قسمة المجموع الكلي على 4.", terms), rightTextX, legY, legTextPaint)
             legY += 12f
-            canvas.drawText("• المجموع الكلي: هو مجموع درجات الحضور + القادة + الحفظ + الكراس + نقاط شارات الكفاية + نقاط شارات الهواية الإضافية.", rightTextX, legY, legTextPaint)
+            canvas.drawText(replaceCustomWords("• المجموع الكلي: هو مجموع درجات الحضور + القادة + الحفظ + الكراس + نقاط شارات الكفاية + نقاط شارات الهواية الإضافية.", terms), rightTextX, legY, legTextPaint)
             legY += 12f
-            canvas.drawText("• شارات الكفاية: 10 نقاط لكل شارة.", rightTextX, legY, legTextPaint)
+            canvas.drawText(replaceCustomWords("• شارات الكفاية: 10 نقاط لكل شارة.", terms), rightTextX, legY, legTextPaint)
             legY += 12f
-            canvas.drawText("• شارات الهواية: 5 نقاط لكل شارة إضافية تزيد عن المطلوب في بطاقة التقدم.", rightTextX, legY, legTextPaint)
+            canvas.drawText(replaceCustomWords("• شارات الهواية: 5 نقاط لكل شارة إضافية تزيد عن المطلوب في بطاقة التقدم.", terms), rightTextX, legY, legTextPaint)
 
             // أسفل الصفحة
             val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -365,7 +369,11 @@ object EvaluationMatrixPdfHelper {
         canvas.drawText(text, x + width / 2f, y + 15f, pctPaint)
     }
 
-    fun shareMatrixPdf(file: File, context: Context) {
+    fun shareMatrixPdf(
+        file: File,
+        context: Context,
+        terms: CustomTerms = PdfExporter.currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -373,7 +381,7 @@ object EvaluationMatrixPdfHelper {
         )
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
-            putExtra(Intent.EXTRA_SUBJECT, "المصفوفة الشاملة لتقييم الأشبال — سرب النُّجُب")
+            putExtra(Intent.EXTRA_SUBJECT, replaceCustomWords("المصفوفة الشاملة لتقييم ${terms.scoutPluralDefinite} — ${terms.groupName} ${terms.unitNameDefinite}", terms))
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }

@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Handyman
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Title
@@ -307,6 +308,43 @@ fun ActivityFormScreen(
                                 onCheckedChange = viewModel::onFormCollectSubscriptionsChanged,
                                 modifier = Modifier.testTag("form_collect_subscriptions_switch")
                             )
+                        }
+
+                        // حقل قيمة الاشتراك المخصصة للأنشطة غير التدريبية (رحلات، مخيمات...)
+                        val showCustomSubscriptionField = formState.type != ActivityType.TRAINING_MEETING.key && formState.collectSubscriptions
+                        AnimatedVisibility(
+                            visible = showCustomSubscriptionField,
+                            enter = fadeIn(),
+                            exit = fadeOut()
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedTextField(
+                                    value = formState.customSubscriptionAmountInput,
+                                    onValueChange = viewModel::onFormCustomSubscriptionAmountChanged,
+                                    label = { Text(stringResource(id = R.string.custom_subscription_amount_label)) },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Payments,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Next
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("form_custom_subscription_amount_input"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                                    )
+                                )
+                            }
                         }
                     }
 

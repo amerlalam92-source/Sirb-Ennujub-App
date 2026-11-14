@@ -22,21 +22,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Analytics
-import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -56,8 +51,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -76,23 +69,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
-import com.example.domain.activity.Activity
 import com.example.domain.evaluation.CriteriaType
 import com.example.domain.evaluation.EvaluationCriteria
 import com.example.domain.evaluation.ScoutEvaluation
 import com.example.domain.scout.Scout
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import com.example.presentation.common.AppAlertDialog
-import com.example.presentation.common.AppLocale
 import com.example.presentation.common.CustomTopAppBar
-import java.text.SimpleDateFormat
-import java.util.Date
 
 /**
- * شاشة تقييم الأشبال (Evaluation Screen)
- * تنقسم إلى تبويبين:
- * 1. تقييم الأنشطة: اختيار النشاط -> رصد معايير القائد (الانضباط، الأخلاق، المشاركة، الحيوية) + العقوبة.
- * 2. التقييم الفصلي: اختيار الفصل الدراسي (الفصل الأول، الثاني، الثالث) -> تقييم موحد يظهر لجميع القادة مع حفظ القرآن والكراس.
- * تدعم قفل التعديل التلقائي بعد مرور 7 أيام مع إظهار أيقونة القفل وإخفاء خيار الحذف.
+ * شاشة التقييم الفصلي للأشبال (Quarterly Evaluation Screen)
+ * تعرض قائمة الأشبال لكل فصل دراسي (الفصل الأول، الثاني، الثالث) وتتيح رصد المعايير الستة:
+ * - 4 معايير خاصة بكل قائد (الأخلاق، المشاركة، الاهتمام، الانضباط) من 20.
+ * - معيارين مشتركين (حفظ القرآن، تقييم الكراس) من 20.
+ * تدعم صلاحيات القائد الرئيسي (عرض درجات القادة الآخرين للقراءة فقط) وقفل التعديل بعد 7 أيام.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -102,17 +93,13 @@ fun EvaluationScreen(
     onNavigateToMatrix: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // التحكم بزر الرجوع: في تبويب الأنشطة إذا اختير نشاط، يعود للخطوة 1 أولاً
     BackHandler {
-        if (uiState.selectedTab == 0 && uiState.selectedActivity != null) {
-            viewModel.clearSelectedActivity()
-        } else {
-            onNavigateBack()
-        }
+        onNavigateBack()
     }
 
     LaunchedEffect(uiState.snackbarMessage) {
@@ -133,7 +120,7 @@ fun EvaluationScreen(
                 )
             },
             text = {
-                Text(text = stringResource(id = R.string.confirm_delete_evaluation))
+                Text(text = replaceCustomWords(stringResource(id = R.string.confirm_delete_evaluation), terms))
             },
             confirmButton = {
                 Button(
@@ -155,16 +142,10 @@ fun EvaluationScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             CustomTopAppBar(
-                title = stringResource(id = R.string.evaluation_screen_title),
+                title = replaceCustomWords(stringResource(id = R.string.evaluation_screen_title), terms),
                 navigationIcon = {
                     IconButton(
-                        onClick = {
-                            if (uiState.selectedTab == 0 && uiState.selectedActivity != null) {
-                                viewModel.clearSelectedActivity()
-                            } else {
-                                onNavigateBack()
-                            }
-                        },
+                        onClick = onNavigateBack,
                         modifier = Modifier.testTag("evaluation_back_button")
                     ) {
                         Icon(
@@ -199,523 +180,67 @@ fun EvaluationScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // شريط التبويبات (تقييم الأنشطة / التقييم الفصلي)
-            TabRow(
-                selectedTabIndex = uiState.selectedTab,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("evaluation_tab_row")
-            ) {
-                Tab(
-                    selected = uiState.selectedTab == 0,
-                    onClick = { viewModel.onTabSelected(0) },
-                    text = {
-                        Text(
-                            text = stringResource(id = R.string.evaluation_tab_activities),
-                            fontWeight = if (uiState.selectedTab == 0) FontWeight.Bold else FontWeight.Normal
-                        )
-                    },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.Event,
-                            contentDescription = null
-                        )
-                    },
-                    modifier = Modifier.testTag("evaluation_tab_activities")
-                )
-                Tab(
-                    selected = uiState.selectedTab == 1,
-                    onClick = { viewModel.onTabSelected(1) },
-                    text = {
-                        Text(
-                            text = stringResource(id = R.string.evaluation_tab_quarterly),
-                            fontWeight = if (uiState.selectedTab == 1) FontWeight.Bold else FontWeight.Normal
-                        )
-                    },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.MenuBook,
-                            contentDescription = null
-                        )
-                    },
-                    modifier = Modifier.testTag("evaluation_tab_quarterly")
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-            ) {
-                if (uiState.selectedTab == 0) {
-                    // ==================== التبويب 1: تقييم الأنشطة ====================
-                    if (uiState.selectedActivity == null) {
-                        Step1SelectActivityContent(
-                            activities = uiState.activities,
-                            isLoading = uiState.isLoading,
-                            onActivitySelected = { viewModel.onActivitySelected(it) },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Step2ScoutsEvaluationContent(
-                            selectedActivity = uiState.selectedActivity!!,
-                            scouts = uiState.filteredScouts,
-                            totalScoutsCount = uiState.totalScoutsCount,
-                            evaluatedCount = uiState.evaluatedCount,
-                            uiState = uiState,
-                            onSearchQueryChanged = { viewModel.onSearchQueryChanged(it) },
-                            onChangeActivity = { viewModel.clearSelectedActivity() },
-                            onScoutClick = { viewModel.onScoutSelectedForEvaluation(it) },
-                            onDeleteMyEvaluation = { evalId -> viewModel.setPendingDeleteEvaluation(evalId) },
-                            isLoading = uiState.isLoading,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                } else {
-                    // ==================== التبويب 2: التقييم الفصلي ====================
-                    QuarterlyEvaluationContent(
-                        selectedTerm = uiState.selectedTerm,
-                        onTermSelected = { viewModel.onTermSelected(it) },
-                        scouts = uiState.filteredScouts,
-                        totalScoutsCount = uiState.totalScoutsCount,
-                        evaluatedCount = uiState.evaluatedCount,
-                        uiState = uiState,
-                        onSearchQueryChanged = { viewModel.onSearchQueryChanged(it) },
-                        onScoutClick = { viewModel.onScoutSelectedForEvaluation(it) },
-                        onDeleteMyEvaluation = { evalId -> viewModel.setPendingDeleteEvaluation(evalId) },
-                        isLoading = uiState.isLoading,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-
-                // نافذة تقييم الشبل
-                uiState.selectedScoutForEvaluation?.let { scout ->
-                    val isActivityTab = uiState.selectedTab == 0
-                    val targetCriteria = uiState.criteria.filter { criteria ->
-                        if (isActivityTab) {
-                            criteria.type == EvaluationCriteria.TYPE_LEADER_CRITERIA ||
-                                    criteria.type == CriteriaType.LEADER_CRITERIA.name ||
-                                    criteria.type == CriteriaType.LEADER_CRITERIA.value
-                        } else {
-                            criteria.type == EvaluationCriteria.TYPE_QURAN ||
-                                    criteria.type == CriteriaType.QURAN.name ||
-                                    criteria.type == CriteriaType.QURAN.value ||
-                                    criteria.type == EvaluationCriteria.TYPE_NOTEBOOK ||
-                                    criteria.type == CriteriaType.NOTEBOOK.name ||
-                                    criteria.type == CriteriaType.NOTEBOOK.value
-                        }
-                    }
-
-                    ScoutEvaluationDialog(
-                        scout = scout,
-                        criteriaList = targetCriteria,
-                        existingEvaluation = uiState.evaluations[scout.id],
-                        isSaving = uiState.isSaving,
-                        showPenalty = isActivityTab,
-                        currentMemorized = if (!isActivityTab) uiState.getMemorizedTextForScout(scout.id) else null,
-                        onSave = { scoresMap, penaltyAmount, penaltyReason, testedAmount ->
-                            viewModel.saveEvaluation(scout.id, scoresMap, penaltyAmount, penaltyReason, testedAmount)
-                        },
-                        onDelete = { evalId ->
-                            viewModel.deleteEvaluation(evalId)
-                        },
-                        onDismiss = { viewModel.dismissEvaluationDialog() }
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * محتوى الخطوة 1 (تقييم الأنشطة): قائمة اختيار النشاط
- */
-@Composable
-private fun Step1SelectActivityContent(
-    activities: List<Activity>,
-    isLoading: Boolean,
-    onActivitySelected: (Activity) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val dateFormatter = remember { SimpleDateFormat("yyyy/MM/dd", AppLocale.AR_DZ) }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp)
-    ) {
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // بطاقة ترويسة الخطوة الأولى
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
+            QuarterlyEvaluationContent(
+                selectedTerm = uiState.selectedTerm,
+                onTermSelected = { viewModel.onTermSelected(it) },
+                scouts = uiState.filteredScouts,
+                totalScoutsCount = uiState.totalScoutsCount,
+                evaluatedCount = uiState.evaluatedCount,
+                uiState = uiState,
+                onSearchQueryChanged = { viewModel.onSearchQueryChanged(it) },
+                onScoutClick = { viewModel.onScoutSelectedForEvaluation(it) },
+                onDeleteMyEvaluation = { evalId -> viewModel.setPendingDeleteEvaluation(evalId) },
+                isLoading = uiState.isLoading,
+                modifier = Modifier.fillMaxSize()
             )
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Event,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(26.dp)
-                    )
-                }
 
-                Spacer(modifier = Modifier.width(14.dp))
+            // نافذة التقييم الفصلي للشبل (6 معايير من 20)
+            uiState.selectedScoutForEvaluation?.let { scout ->
+                val sharedCriteriaIds = uiState.criteria.filter { c ->
+                    c.type == EvaluationCriteria.TYPE_QURAN ||
+                            c.type == CriteriaType.QURAN.name ||
+                            c.type == CriteriaType.QURAN.value ||
+                            c.type == EvaluationCriteria.TYPE_NOTEBOOK ||
+                            c.type == CriteriaType.NOTEBOOK.name ||
+                            c.type == CriteriaType.NOTEBOOK.value ||
+                            c.name.contains("قرآن") ||
+                            c.name.contains("حفظ") ||
+                            c.name.contains("كراس")
+                }.map { it.id }
 
-                Column {
-                    Text(
-                        text = stringResource(id = R.string.evaluation_step1_title),
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Text(
-                        text = stringResource(id = R.string.evaluation_step1_subtitle),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (isLoading && activities.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
-        } else if (activities.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = stringResource(id = R.string.evaluation_no_activities),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(activities, key = { it.id }) { activity ->
-                    val dateStr = if (activity.startDate > 0) {
-                        dateFormatter.format(Date(activity.startDate))
-                    } else "—"
-
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onActivitySelected(activity) }
-                            .testTag("activity_card_${activity.id}"),
-                        shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.secondaryContainer),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CalendarMonth,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(14.dp))
-
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = activity.title,
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-
-                                Spacer(modifier = Modifier.height(4.dp))
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                                        shape = RoundedCornerShape(6.dp)
-                                    ) {
-                                        Text(
-                                            text = activity.activityType.arabicLabel,
-                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-
-                                    Spacer(modifier = Modifier.width(8.dp))
-
-                                    Text(
-                                        text = dateStr,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-
-                                if (activity.location.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.LocationOn,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = activity.location,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-                            }
-
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
+                val initialSharedScores = buildMap {
+                    sharedCriteriaIds.forEach { criteriaId ->
+                        uiState.getLatestSharedScore(scout.id, criteriaId)?.let { score ->
+                            put(criteriaId, score)
                         }
                     }
                 }
-            }
-        }
-    }
-}
 
-/**
- * محتوى الخطوة 2 (تقييم الأنشطة): قائمة الأشبال وتقييم كل شبل
- */
-@Composable
-private fun Step2ScoutsEvaluationContent(
-    selectedActivity: Activity,
-    scouts: List<Scout>,
-    totalScoutsCount: Int,
-    evaluatedCount: Int,
-    uiState: EvaluationUiState,
-    onSearchQueryChanged: (String) -> Unit,
-    onChangeActivity: () -> Unit,
-    onScoutClick: (Scout) -> Unit,
-    onDeleteMyEvaluation: (String) -> Unit,
-    isLoading: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val dateFormatter = remember { SimpleDateFormat("yyyy/MM/dd", AppLocale.AR_DZ) }
-    val dateStr = if (selectedActivity.startDate > 0) {
-        dateFormatter.format(Date(selectedActivity.startDate))
-    } else "—"
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp)
-    ) {
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // بطاقة تفاصيل النشاط المختار مع زر التبديل
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("selected_activity_card"),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-            ),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = selectedActivity.title,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "${selectedActivity.activityType.arabicLabel} • $dateStr",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                OutlinedButton(
-                    onClick = onChangeActivity,
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                    modifier = Modifier.testTag("change_activity_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SwapHoriz,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = stringResource(id = R.string.evaluation_change_activity),
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // شريط إحصائية الإنجاز
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Surface(
-                color = MaterialTheme.colorScheme.primaryContainer,
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Text(
-                    text = "تقييمي الشخصي: $evaluatedCount من $totalScoutsCount",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                ScoutEvaluationDialog(
+                    scout = scout,
+                    criteriaList = uiState.criteria,
+                    existingEvaluation = uiState.evaluations[scout.id],
+                    isSaving = uiState.isSaving,
+                    showPenalty = false,
+                    isMainLeader = uiState.isMainLeader,
+                    otherLeadersEvaluations = uiState.getOtherLeaderEvaluationsForScout(scout.id),
+                    leaderNames = uiState.leaderNames,
+                    initialSharedScores = initialSharedScores,
+                    initialTestedAmount = uiState.getLatestTestedAmount(scout.id),
+                    currentMemorized = uiState.getMemorizedTextForScout(scout.id),
+                    onSave = { scoresMap, penaltyAmount, penaltyReason, testedAmount ->
+                        viewModel.saveEvaluation(scout.id, scoresMap, penaltyAmount, penaltyReason, testedAmount)
+                    },
+                    onDelete = { evalId ->
+                        viewModel.deleteEvaluation(evalId)
+                    },
+                    onDismiss = { viewModel.dismissEvaluationDialog() }
                 )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedTextField(
-            value = uiState.searchQuery,
-            onValueChange = onSearchQueryChanged,
-            placeholder = { Text(stringResource(id = R.string.evaluation_search_scouts_hint)) },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            trailingIcon = {
-                if (uiState.searchQuery.isNotBlank()) {
-                    IconButton(onClick = { onSearchQueryChanged("") }) {
-                        Icon(
-                            imageVector = Icons.Default.Clear,
-                            contentDescription = stringResource(id = R.string.cancel_action)
-                        )
-                    }
-                }
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("evaluation_scout_search")
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        if (isLoading && uiState.evaluations.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
-        } else if (scouts.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = stringResource(id = R.string.evaluation_no_scouts),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(scouts, key = { it.id }) { scout ->
-                    val myEval = uiState.evaluations[scout.id]
-                    val status = uiState.getEvaluationStatus(scout.id)
-                    val isLocked = uiState.isEvaluationLocked(myEval)
-
-                    ScoutEvaluationItemCard(
-                        scout = scout,
-                        status = status,
-                        myEvaluation = myEval,
-                        isLocked = isLocked,
-                        onClick = { onScoutClick(scout) },
-                        onDeleteMyEvaluation = {
-                            myEval?.let { onDeleteMyEvaluation(it.id) }
-                        }
-                    )
-                }
             }
         }
     }
@@ -723,12 +248,11 @@ private fun Step2ScoutsEvaluationContent(
 
 /**
  * محتوى التقييم الفصلي: اختيار الفصل الدراسي (الفصل الأول، الثاني، الثالث) وقائمة الأشبال
- * تقييم موحد يظهر لجميع القادة
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QuarterlyEvaluationContent(
-    selectedTerm: String?,
+    selectedTerm: String,
     onTermSelected: (String) -> Unit,
     scouts: List<Scout>,
     totalScoutsCount: Int,
@@ -740,8 +264,9 @@ private fun QuarterlyEvaluationContent(
     isLoading: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     var dropdownExpanded by remember { mutableStateOf(false) }
-    val currentTerm = selectedTerm ?: "TERM_1"
+    val currentTerm = selectedTerm.ifBlank { "TERM_1" }
     val termLabel = when (currentTerm) {
         "TERM_1" -> stringResource(id = R.string.term_first)
         "TERM_2" -> stringResource(id = R.string.term_second)
@@ -772,11 +297,28 @@ private fun QuarterlyEvaluationContent(
                     .fillMaxWidth()
                     .padding(14.dp)
             ) {
-                Text(
-                    text = stringResource(id = R.string.evaluation_select_term),
-                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.evaluation_select_term),
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = stringResource(id = R.string.evaluation_tab_quarterly),
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -841,7 +383,7 @@ private fun QuarterlyEvaluationContent(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // شريط إحصائية الإنجاز الفصلي الموحد
+        // شريط إحصائية الإنجاز الفصلي
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -852,7 +394,7 @@ private fun QuarterlyEvaluationContent(
                 shape = RoundedCornerShape(10.dp)
             ) {
                 Text(
-                    text = "تم التقييم: $evaluatedCount من $totalScoutsCount",
+                    text = "تقييمي: $evaluatedCount من $totalScoutsCount",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
@@ -909,7 +451,7 @@ private fun QuarterlyEvaluationContent(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = stringResource(id = R.string.evaluation_no_scouts),
+                    text = replaceCustomWords(stringResource(id = R.string.evaluation_no_scouts), terms),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -962,8 +504,7 @@ private fun ScoutEvaluationItemCard(
     val isEvaluatedByOthers = status == ScoutEvaluationStatus.EVALUATED_BY_OTHERS
 
     val totalScore = if (isEvaluatedByMe && myEvaluation != null) {
-        val sum = myEvaluation.criteriaScores.values.sum()
-        sum - myEvaluation.penaltyAmount
+        myEvaluation.criteriaScores.values.sum()
     } else 0
 
     Card(
@@ -1001,9 +542,9 @@ private fun ScoutEvaluationItemCard(
                     .clip(CircleShape)
                     .background(
                         when {
-                            isEvaluatedByMe -> MaterialTheme.colorScheme.primaryContainer
-                            isEvaluatedByOthers -> MaterialTheme.colorScheme.tertiaryContainer
-                            else -> MaterialTheme.colorScheme.surfaceVariant
+                            isEvaluatedByMe -> MaterialTheme.colorScheme.primary
+                            isEvaluatedByOthers -> MaterialTheme.colorScheme.tertiary
+                            else -> MaterialTheme.colorScheme.primaryContainer
                         }
                     ),
                 contentAlignment = Alignment.Center
@@ -1012,9 +553,9 @@ private fun ScoutEvaluationItemCard(
                     text = firstChar,
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = when {
-                        isEvaluatedByMe -> MaterialTheme.colorScheme.onPrimaryContainer
-                        isEvaluatedByOthers -> MaterialTheme.colorScheme.onTertiaryContainer
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        isEvaluatedByMe -> MaterialTheme.colorScheme.onPrimary
+                        isEvaluatedByOthers -> MaterialTheme.colorScheme.onTertiary
+                        else -> MaterialTheme.colorScheme.onPrimaryContainer
                     }
                 )
             }
@@ -1022,35 +563,40 @@ private fun ScoutEvaluationItemCard(
             Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = scout.fullName,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = scout.fullName,
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isEvaluatedByMe && isLocked) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = stringResource(id = R.string.eval_locked_content_desc),
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .testTag("scout_eval_locked_icon_${scout.id}")
+                        )
+                    }
+                }
                 if (scout.school.isNotBlank()) {
                     Text(
                         text = scout.school,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-            }
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // شارة حالة التقييم مع أيقونة القفل إذا كان التقييم مقفلاً
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (isLocked) {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = stringResource(id = R.string.eval_locked_content_desc),
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier
-                            .size(16.dp)
-                            .testTag("scout_locked_icon_${scout.id}")
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                }
+                Spacer(modifier = Modifier.height(6.dp))
 
                 when (status) {
                     ScoutEvaluationStatus.EVALUATED_BY_ME -> {

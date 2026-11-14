@@ -1,6 +1,6 @@
 {
-  "name": "سرب النُّجُب — فوج محمد رحال",
-  "description": "تطبيق إدارة كشافة سرب النُّجُب - فوج محمد رحال للقادة الكشفيين",
+  "name": "إدارة الوحدات الكشفية",
+  "description": "تطبيق إدارة الوحدات الكشفية للقادة الكشفيين",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

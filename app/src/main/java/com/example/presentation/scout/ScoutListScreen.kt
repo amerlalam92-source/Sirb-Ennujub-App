@@ -87,6 +87,8 @@ import com.example.R
 import com.example.domain.scout.Scout
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
+import com.example.presentation.common.replaceCustomWords
 import com.example.presentation.common.ResponsiveFilterRow
 
 /**
@@ -100,8 +102,10 @@ fun ScoutListScreen(
     onNavigateToDetail: (String) -> Unit,
     onNavigateToAdd: () -> Unit,
     onNavigateBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    stageTerms: com.example.presentation.common.StageTerms = com.example.presentation.common.LocalStageTerms.current
 ) {
+    val terms = LocalAppTerms.current
     val uiState by viewModel.listUiState.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedFilter by viewModel.selectedFilter.collectAsStateWithLifecycle()
@@ -119,8 +123,8 @@ fun ScoutListScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             CustomTopAppBar(
-                title = stringResource(id = R.string.scouts_title),
-                subtitle = stringResource(id = R.string.scouts_subtitle),
+                title = replaceCustomWords("سجل ${terms.scoutPluralDefinite}", terms),
+                subtitle = replaceCustomWords("إدارة أفراد ${terms.groupNameDefinite}", terms),
                 navigationIcon = {
                     IconButton(
                         onClick = onNavigateBack,
@@ -147,7 +151,7 @@ fun ScoutListScreen(
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
-                    contentDescription = stringResource(id = R.string.add_scout_button),
+                    contentDescription = replaceCustomWords("إضافة ${terms.scoutSingular}", terms),
                     modifier = Modifier.size(28.dp)
                 )
             }
@@ -165,7 +169,7 @@ fun ScoutListScreen(
                 onValueChange = viewModel::onSearchQueryChanged,
                 placeholder = {
                     Text(
-                        text = stringResource(id = R.string.search_hint),
+                        text = replaceCustomWords(stringResource(id = R.string.search_hint), terms),
                         maxLines = 1
                     )
                 },
@@ -244,7 +248,7 @@ fun ScoutListScreen(
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(
-                            text = stringResource(id = R.string.active_scouts_count_badge, count),
+                            text = replaceCustomWords(stringResource(id = R.string.active_scouts_count_badge, count), terms),
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
@@ -315,9 +319,9 @@ fun ScoutListScreen(
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Text(
                                     text = if (searchQuery.isNotEmpty()) {
-                                        stringResource(id = R.string.empty_search_title)
+                                        replaceCustomWords(stringResource(id = R.string.empty_search_title), terms)
                                     } else {
-                                        stringResource(id = R.string.empty_scouts_title)
+                                        replaceCustomWords(stringResource(id = R.string.empty_scouts_title), terms)
                                     },
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onBackground
@@ -325,9 +329,9 @@ fun ScoutListScreen(
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
                                     text = if (searchQuery.isNotEmpty()) {
-                                        stringResource(id = R.string.empty_search_desc)
+                                        replaceCustomWords(stringResource(id = R.string.empty_search_desc), terms)
                                     } else {
-                                        stringResource(id = R.string.empty_scouts_desc)
+                                        replaceCustomWords(stringResource(id = R.string.empty_scouts_desc), terms)
                                     },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -464,13 +468,13 @@ fun ScoutListScreen(
             onDismissRequest = { scoutToArchive = null },
             title = {
                 Text(
-                    text = stringResource(id = R.string.dialog_archive_scout_title),
+                    text = replaceCustomWords(stringResource(id = R.string.dialog_archive_scout_title), terms),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                 )
             },
             text = {
                 Text(
-                    text = stringResource(id = R.string.confirm_archive_scout_body_format, scout.fullName),
+                    text = replaceCustomWords(stringResource(id = R.string.confirm_archive_scout_body_format, scout.fullName), terms),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -482,7 +486,7 @@ fun ScoutListScreen(
                         viewModel.archiveScout(id) {
                             scope.launch {
                                 val result = snackbarHostState.showSnackbar(
-                                    message = "تمت أرشفة الشبل",
+                                    message = replaceCustomWords("تمت أرشفة ${terms.scoutSingularDefinite}", terms),
                                     actionLabel = "تراجع",
                                     duration = androidx.compose.material3.SnackbarDuration.Short
                                 )
@@ -516,13 +520,13 @@ fun ScoutListScreen(
             onDismissRequest = { scoutToUnarchive = null },
             title = {
                 Text(
-                    text = stringResource(id = R.string.dialog_unarchive_scout_title),
+                    text = replaceCustomWords(stringResource(id = R.string.dialog_unarchive_scout_title), terms),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                 )
             },
             text = {
                 Text(
-                    text = stringResource(id = R.string.confirm_unarchive_scout_body_format, scout.fullName),
+                    text = replaceCustomWords(stringResource(id = R.string.confirm_unarchive_scout_body_format, scout.fullName), terms),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -534,7 +538,7 @@ fun ScoutListScreen(
                         viewModel.unarchiveScout(id) {
                             scope.launch {
                                 snackbarHostState.showSnackbar(
-                                    message = "تم إلغاء أرشفة الشبل",
+                                    message = replaceCustomWords("تم إلغاء أرشفة ${terms.scoutSingularDefinite}", terms),
                                     duration = androidx.compose.material3.SnackbarDuration.Short
                                 )
                             }
@@ -564,14 +568,14 @@ fun ScoutListScreen(
             onDismissRequest = { scoutToDelete = null },
             title = {
                 Text(
-                    text = stringResource(id = R.string.dialog_delete_scout_title),
+                    text = replaceCustomWords(stringResource(id = R.string.dialog_delete_scout_title), terms),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.error
                 )
             },
             text = {
                 Text(
-                    text = stringResource(id = R.string.confirm_delete_scout_body_format, scout.fullName),
+                    text = replaceCustomWords(stringResource(id = R.string.confirm_delete_scout_body_format, scout.fullName), terms),
                     style = MaterialTheme.typography.bodyMedium
                 )
             },
@@ -583,7 +587,7 @@ fun ScoutListScreen(
                         viewModel.deleteScout(id) {
                             scope.launch {
                                 snackbarHostState.showSnackbar(
-                                    message = "تم حذف الشبل",
+                                    message = replaceCustomWords("تم حذف ${terms.scoutSingularDefinite}", terms),
                                     duration = androidx.compose.material3.SnackbarDuration.Short
                                 )
                             }

@@ -222,6 +222,9 @@ class ProgressRepositoryImpl(
     override fun observeScoutBadges(scoutId: String): Flow<List<ScoutBadge>> =
         dataSource.observeScoutBadges(scoutId)
 
+    override fun observeAllScoutBadges(): Flow<List<ScoutBadge>> =
+        dataSource.observeAllScoutBadges()
+
     override suspend fun grantBadge(
         scoutId: String,
         level: BadgeLevel,

@@ -47,6 +47,11 @@ interface EvaluationRepository {
     fun getEvaluationsForActivity(activityId: String): Flow<List<ScoutEvaluation>>
 
     /**
+     * الحصول على تقييمات قائد محدد فقط لفصل دراسي محدد
+     */
+    fun getEvaluationsForActivityByLeader(activityId: String, leaderId: String): Flow<List<ScoutEvaluation>>
+
+    /**
      * الحصول على جميع التقييمات لشبل محدد عبر الأنشطة
      */
     fun getEvaluationsForScout(scoutId: String): Flow<List<ScoutEvaluation>>
@@ -55,4 +60,9 @@ interface EvaluationRepository {
      * الاستماع لجميع التقييمات المسجلة في النظام
      */
     fun observeAllEvaluations(): Flow<List<ScoutEvaluation>>
+
+    /**
+     * حذف جميع تقييمات الأنشطة القديمة (التي لا تبدأ بـ TERM_) لمرة واحدة
+     */
+    suspend fun deleteAllActivityEvaluations(): Result<Unit>
 }

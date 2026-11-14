@@ -5,8 +5,7 @@ package com.example.presentation.finance.collections
  */
 enum class CollectionsFilter {
     ALL,
-    SUBSCRIPTIONS,
-    CONTRIBUTIONS
+    SUBSCRIPTIONS
 }
 
 /**
@@ -18,7 +17,6 @@ data class CollectionsUiState(
     val selectedFilter: CollectionsFilter = CollectionsFilter.ALL,
     val allCount: Int = 0,
     val subsCount: Int = 0,
-    val contribsCount: Int = 0,
     val totalRequired: Int = 0,
     val totalPaid: Int = 0,
     val totalDebt: Int = 0,

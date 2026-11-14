@@ -27,6 +27,8 @@ data class Activity(
     val contributionRequired: Boolean = false, // هل يتطلب هذا النشاط مساهمة مالية من المشاركين
     val contributionDefaultAmount: Int? = null, // المبلغ الافتراضي لمساهمة الشبل في هذا النشاط
     val collectSubscriptions: Boolean = true, // تفعيل تحصيل الاشتراكات المالية لهذا النشاط
+    val customSubscriptionAmount: Int? = null, // قيمة الاشتراك المخصصة للأنشطة غير التدريبية (رحلات، مخيمات...)
+    val unitId: String? = null, // معرف الوحدة الكشفية
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val createdBy: String = "",
@@ -75,5 +77,17 @@ data class Activity(
         val diffMillis = (endDate - startDate).coerceAtLeast(0)
         val days = TimeUnit.MILLISECONDS.toDays(diffMillis).toInt() + 1
         return days.coerceAtLeast(1)
+    }
+
+    /**
+     * هل النشاط قديم (تم إنشاؤه قبل تحديث النظام المالي)؟
+     */
+    fun isLegacy(): Boolean {
+        val referenceTimestamp = if (createdAt > 0L) createdAt else startDate
+        return referenceTimestamp < LEGACY_CUTOFF_TIMESTAMP
+    }
+
+    companion object {
+        const val LEGACY_CUTOFF_TIMESTAMP = 1762992000000L
     }
 }

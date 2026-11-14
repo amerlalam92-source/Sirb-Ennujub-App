@@ -47,9 +47,10 @@ class QuranScoutsViewModel(
         userMessageFlow
     ) { scouts, enrollments, schools, filter, message ->
         val enrollmentMap = enrollments.associateBy { it.scoutId }
+        val activeScouts = scouts.filter { it.isActive }
 
-        // ترتيب الأشبال أبجدياً بالاسم ثم اللقب
-        val sortedScouts = scouts.sortedWith(
+        // ترتيب الأشبال النشطين فقط أبجدياً بالاسم ثم اللقب
+        val sortedScouts = activeScouts.sortedWith(
             Comparator { s1, s2 ->
                 val nameComp = arabicCollator.compare(s1.name, s2.name)
                 if (nameComp != 0) nameComp else arabicCollator.compare(s1.surname, s2.surname)

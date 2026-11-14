@@ -54,6 +54,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import com.example.presentation.common.CustomTopAppBar
 
 /**
@@ -67,6 +69,7 @@ fun EvaluationMatrixScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val horizontalScrollState = rememberScrollState()
@@ -76,7 +79,7 @@ fun EvaluationMatrixScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             CustomTopAppBar(
-                title = stringResource(id = R.string.eval_matrix_title),
+                title = replaceCustomWords(stringResource(id = R.string.eval_matrix_title), terms),
                 navigationIcon = {
                     IconButton(
                         onClick = onNavigateBack,
@@ -146,7 +149,7 @@ fun EvaluationMatrixScreen(
                             .testTag("eval_matrix_search_field"),
                         placeholder = {
                             Text(
-                                text = stringResource(id = R.string.eval_matrix_search_placeholder),
+                                text = replaceCustomWords("البحث عن ${terms.scoutSingular} بالاسم...", terms),
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         },
@@ -178,10 +181,9 @@ fun EvaluationMatrixScreen(
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text(
-                            text = stringResource(
-                                id = R.string.eval_matrix_summary_format,
-                                uiState.totalScoutsCount,
-                                uiState.totalMeetingsHeld
+                            text = replaceCustomWords(
+                                "إجمالي ${terms.scoutPluralDefinite}: ${uiState.totalScoutsCount} | الاجتماعات التدريبية المعتمدة: ${uiState.totalMeetingsHeld}",
+                                terms
                             ),
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -202,7 +204,10 @@ fun EvaluationMatrixScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = stringResource(id = R.string.eval_matrix_empty),
+                            text = replaceCustomWords(
+                                "لا يوجد ${terms.scoutPlural} نشطون بـ${terms.groupNameDefinite}",
+                                terms
+                            ),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -237,7 +242,7 @@ fun EvaluationMatrixScreen(
                                     )
                                     // 2. اسم الشبل (140.dp)
                                     MatrixTableCell(
-                                        text = stringResource(id = R.string.eval_col_scout),
+                                        text = replaceCustomWords("اسم ${terms.scoutSingularDefinite}", terms),
                                         width = 140.dp,
                                         isHeader = true
                                     )

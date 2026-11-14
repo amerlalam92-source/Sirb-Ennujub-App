@@ -229,6 +229,7 @@
     <string name="stat_late_label">متأخر</string>
     <string name="stat_absent_excused_label">غائب بعذر</string>
     <string name="stat_absent_unexcused_label">غائب بدون عذر</string>
+    <string name="status_absent_simple">غائب</string>
     <string name="stat_total_points_label">إجمالي النقاط</string>
     <string name="action_show_missed_activities">عرض الأنشطة التي غاب عنها</string>
     <string name="no_missed_activities">لا يوجد غياب مسجّل</string>
@@ -239,6 +240,8 @@
     <string name="drawer_scouts">الأشبال</string>
     <string name="drawer_activities">الأنشطة</string>
     <string name="drawer_attendance">تسجيل الحضور</string>
+    <string name="drawer_progress">بطاقة التقدم</string>
+    <string name="evaluation_matrix_title">المصفوفة الشاملة لتقييم الأشبال</string>
     <string name="drawer_reports">التقارير</string>
     <string name="drawer_settings">الإعدادات</string>
     <string name="drawer_about">حول التطبيق</string>
@@ -594,6 +597,8 @@
     <string name="finance_type_donation">تبرع</string>
     <string name="finance_type_contribution">مساهمة</string>
     <string name="finance_type_opening_balance">رصيد افتتاحي</string>
+    <string name="finance_type_debt_payment">سداد دين</string>
+    <string name="finance_type_advance_payment">دفعة مقدمة</string>
 
     <string name="expense_category_transport">نقل ومواصلات</string>
     <string name="expense_category_food">إعاشة وطعام</string>
@@ -648,8 +653,15 @@
     <string name="report_annual_comprehensive">التقرير السنوي الشامل</string>
     <string name="report_annual_statement_sub">ملخص السنة الكشفية بالكامل</string>
     <string name="report_scout_statement">كشف حساب شبل</string>
-    <string name="report_scout_statement_sub">سجل مدفوعات وديون شبل محدد</string>
     <string name="report_placeholder_sub">قيد التطوير</string>
+    <string name="scout_statements_picker_title">تحديد الأشبال</string>
+    <string name="action_select_all">تحديد الكل</string>
+    <string name="action_deselect_all">إلغاء الكل</string>
+    <string name="action_export_statements_format">تصدير (%1$d) كشف</string>
+    <string name="scout_statements_share_title">مشاركة الكشوفات</string>
+    <string name="action_share">مشاركة</string>
+    <string name="statements_saved_to_downloads_note">تم حفظ جميع الملفات في مجلد التنزيلات.</string>
+    <string name="filter_debtors">المدينون فقط</string>
     <string name="month_picker_title">اختر الشهر والسنة</string>
     <string name="month_picker_month">الشهر</string>
     <string name="month_picker_year">السنة</string>
@@ -754,46 +766,6 @@
     <string name="error_donation_amount_required">يرجى إدخال المبلغ</string>
     <string name="error_donation_amount_invalid">المبلغ يجب أن يكون أكبر من صفر</string>
 
-    <!-- Contributions (المساهمات) -->
-    <string name="contributions_title">المساهمات</string>
-    <string name="contributions_subtitle">مساهمات الأشبال في الأنشطة الكبرى</string>
-    <string name="contributions_activities_empty">لا توجد أنشطة بمساهمات حالياً</string>
-    <string name="contributions_total_required_label">المطلوب</string>
-    <string name="contributions_total_collected_label">المُحصَّل</string>
-    <string name="contributions_total_remaining_label">المتبقي</string>
-    <string name="contributions_participants_count_format">%1$d مشارك</string>
-    <string name="contributions_filter_all_format">الكل (%1$d)</string>
-    <string name="contributions_filter_debtors_format">المدينون (%1$d)</string>
-    <string name="contributions_filter_paid_format">المسددون (%1$d)</string>
-    <string name="contributions_all_paid_empty">كل الأشبال سدّدوا مساهماتهم 🎉</string>
-    <string name="contributions_none_paid_empty">لم يسدد أحد بعد</string>
-    <string name="contributions_no_scouts_empty">لا يوجد مشاركون مسجلون في مساهمات هذا النشاط</string>
-    <string name="contributions_pay_full">تسديد كامل</string>
-    <string name="contributions_pay_partial">تسديد جزئي</string>
-    <string name="contributions_paid_full_badge">مسدد بالكامل</string>
-    <string name="contributions_debt_badge">متبقي %1$d دج</string>
-    <string name="contributions_paid_format">المسدد: %1$d دج</string>
-    <string name="contributions_required_format">المطلوب: %1$d دج</string>
-    <string name="contributions_edit_contribution">تعديل المساهمة</string>
-    <string name="contributions_delete_participant">حذف من المساهمات</string>
-    <string name="contributions_delete_confirm">هل أنت متأكد من حذف هذا الشبل من قائمة المساهمات؟</string>
-    <string name="contributions_add_participant">إضافة مشارك</string>
-    <string name="contributions_add_all_active_scouts">إضافة جميع الأشبال النشطين</string>
-    <string name="contributions_set_activity_default">تحديد مبلغ المساهمة للنشاط</string>
-    <string name="contributions_activity_default_title">مبلغ المساهمة للنشاط</string>
-    <string name="contributions_activity_default_amount_label">المبلغ المطلوب لكل شبل (دج)</string>
-    <string name="contributions_activity_require_toggle">تفعيل المساهمات المالية لهذا النشاط</string>
-    <string name="contributions_payment_title">تسديد مساهمة جزئية</string>
-    <string name="contributions_payment_amount_label">المبلغ المدفوع الآن (دج)</string>
-    <string name="contributions_payment_notes_label">ملاحظات التسديد (اختياري)</string>
-    <string name="contributions_payment_saved">تم تسجيل تسديد المساهمة</string>
-    <string name="contributions_updated">تم تحديث بيانات المساهمة</string>
-    <string name="contributions_deleted">تم حذف الشبل من المساهمات</string>
-    <string name="contributions_scouts_added">تمت إضافة المشاركين بنجاح</string>
-    <string name="activity_contributions_section_title">المساهمات المالية للمشاركين</string>
-    <string name="activity_manage_contributions">إدارة المساهمات المالية</string>
-    <string name="activity_contributions_badge">مساهمة مطلوبة</string>
-
     <!-- Subscription Override (Part 3A) -->
     <string name="subscription_override_title">مبالغ الاشتراكات لهذا النشاط</string>
     <string name="subscription_override_info">المبالغ الافتراضية من الإعدادات: حاضر %1$d دج • متأخر %2$d دج • بعذر %3$d دج • بدون عذر %4$d دج</string>
@@ -804,18 +776,6 @@
     <string name="subscription_override_amount_unexcused">مبلغ الغائب بدون عذر</string>
     <string name="subscription_override_saved">تم حفظ مبالغ الاشتراكات لهذا النشاط</string>
     <string name="subscription_override_action">تعديل مبالغ الاشتراكات</string>
-
-    <!-- Multi-select Add Participants Dialog -->
-    <string name="contribution_add_participants_title">إضافة مشاركين</string>
-    <string name="contribution_add_participants_amount_label">مبلغ المساهمة المطلوب لكل شبل (دج)</string>
-    <string name="contribution_add_participants_select_all">تحديد الكل</string>
-    <string name="contribution_add_participants_clear_all">إلغاء الكل</string>
-    <string name="contribution_add_participants_selected_count_format">المحدد: %1$d</string>
-    <string name="contribution_add_participants_no_available">كل الأشبال النشطين مشاركون بالفعل في هذه المساهمة</string>
-    <string name="contribution_add_participants_success_format">تمت إضافة %1$d مشارك</string>
-    <string name="error_contribution_amount_required">يرجى إدخال المبلغ</string>
-    <string name="error_contribution_amount_invalid">المبلغ يجب أن يكون أكبر من صفر</string>
-    <string name="error_contribution_select_scout">يرجى تحديد شبل واحد على الأقل</string>
 
     <!-- Collections (التحصيلات) -->
     <string name="finance_feature_collections">التحصيلات</string>
@@ -829,10 +789,8 @@
 
     <string name="collections_filter_all_format">الكل (%1$d)</string>
     <string name="collections_filter_subscriptions_format">اشتراكات (%1$d)</string>
-    <string name="collections_filter_contributions_format">مساهمات (%1$d)</string>
 
     <string name="collections_chip_subscriptions">اشتراكات</string>
-    <string name="collections_chip_contributions">مساهمات</string>
 
     <string name="collections_participants_count_format">%1$d مشارك</string>
     <string name="collections_required_format">المطلوب: %1$d دج</string>
@@ -840,9 +798,9 @@
     <string name="collections_debt_format">المتبقي: %1$d دج</string>
 
     <string name="collections_empty">لا توجد تحصيلات بعد</string>
-    <string name="collections_empty_hint">ستظهر هنا تلقائيًا عند تسجيل اشتراكات أو مساهمات</string>
+    <string name="collections_empty_hint">ستظهر هنا تلقائيًا عند تسجيل الاشتراكات</string>
 
-    <string name="activity_delete_confirm_cascade">سيتم حذف النشاط وجميع سجلات الحضور والاشتراكات والمساهمات المرتبطة به نهائيًا، بما في ذلك أي مبالغ مدفوعة. هل أنت متأكد؟</string>
+    <string name="activity_delete_confirm_cascade">سيتم حذف النشاط وجميع سجلات الحضور والاشتراكات المرتبطة به نهائيًا، بما في ذلك أي مبالغ مدفوعة. هل أنت متأكد؟</string>
 
     <!-- Multiple Guardian Phones & Duplicate Scout Check -->
     <string name="scout_additional_phones_section">أرقام إضافية للولي (اختياري)</string>
@@ -866,6 +824,7 @@
     <!-- Collect Subscriptions Toggle & Delete Collections & Clean Orphaned -->
     <string name="collect_subscriptions_label">تفعيل تحصيل الاشتراكات المالية</string>
     <string name="collect_subscriptions_hint">تسجيل مستحقات مالية تلقائية للأشبال عند رصد الحضور</string>
+    <string name="custom_subscription_amount_label">قيمة الاشتراك لكل مشارك (دج)</string>
     <string name="action_delete_all_collections">حذف كل التحصيلات لهذا النشاط</string>
     <string name="dialog_delete_all_collections_title">حذف كل التحصيلات</string>
     <string name="dialog_delete_all_collections_message">هل أنت متأكد من حذف جميع سجلات التحصيل (الاشتراكات/المساهمات) لهذا النشاط؟ لا يمكن التراجع عن هذا الإجراء.</string>
@@ -914,6 +873,10 @@
     <string name="eval_current_memorized_format">المحفوظ المسجل: %1$s</string>
     <string name="eval_tested_amount_label">المقدار المطلوب اختباره</string>
     <string name="eval_tested_amount_hint">مثال: الجزء الأول أو سورة البقرة</string>
+    <string name="evaluation_leader_criteria_section">معايير القائد (من 20)</string>
+    <string name="evaluation_shared_criteria_section">المعايير المشتركة (حفظ القرآن والكراس)</string>
+    <string name="evaluation_other_leaders_scores_title">تقييمات القادة الآخرين:</string>
+    <string name="evaluation_quarterly_subtitle">التقييم الفصلي الشامل</string>
 
     <!-- حالات التقييم متعدد القادة -->
     <string name="eval_status_evaluated_by_me_format">تم التقييم (المجموع: %1$d)</string>
@@ -983,6 +946,168 @@
     <string name="update_download_failed">فشل تحميل التحديث، يرجى المحاولة لاحقاً</string>
     <string name="update_download_success">تم تحميل التحديث بنجاح، جارٍ التثبيت...</string>
     <string name="update_permission_required">يرجى منح إذن تثبيت التطبيقات لتثبيت التحديث</string>
+
+    <!-- التقارير العامة (General Reports) -->
+    <string name="general_reports_title">التقارير العامة</string>
+    <string name="report_comprehensive_attendance">تقرير الحضور الشامل</string>
+    <string name="report_comprehensive_attendance_desc">مصفوفة حضور وغياب الأشبال وتفاصيل المشاركة في كافة الأنشطة</string>
+    <string name="report_general_activity">تقرير النشاط العام</string>
+    <string name="report_general_activity_desc">إحصائيات الأنشطة ونسب الحضور والمشاركات عبر السرب</string>
+    <string name="report_comprehensive_progress">تقرير التقدم الشامل</string>
+    <string name="report_comprehensive_progress_desc">متابعة اجتياز شارات الكفاءة والمراحل الكشفية</string>
+    <string name="report_general_evaluation">تقرير التقييم العام</string>
+    <string name="report_general_evaluation_desc">المصفوفة الشاملة لتقييم المعايير السلوكية والمهارية</string>
+    <string name="report_leaders_evaluation">تقرير تقييم القادة</string>
+    <string name="report_leaders_evaluation_desc">متابعة وتقييم أداء ومساهمات قادة السرب</string>
+    <string name="under_development_message">قيد التطوير</string>
+    <string name="report_empty_scouts">لا يوجد أشبال نشطون لعرض التقرير</string>
+    <string name="report_empty_activities">لا توجد أنشطة سابقة لعرض التقرير</string>
+    <string name="report_total_activities">إجمالي الأنشطة</string>
+    <string name="report_total_attendees">إجمالي الحضور</string>
+    <string name="report_avg_attendance_rate">متوسط نسبة الحضور</string>
+    <string name="report_column_activity_title">اسم النشاط</string>
+    <string name="report_column_activity_type">نوع النشاط</string>
+    <string name="report_column_date">التاريخ</string>
+    <string name="report_column_attendees_count">الحاضرون</string>
+    <string name="report_column_absents_count">الغائبون</string>
+    <string name="report_column_attendance_rate">نسبة الحضور</string>
+    <string name="report_column_scout_name">اسم الشبل</string>
+    <string name="report_column_total_attendance">إجمالي الحضور</string>
+    <string name="report_column_percentage">النسبة</string>
+    <!-- تقرير التقدم الشامل وتقرير تقييم القادة -->
+    <string name="report_badge_acceptance_col">شارة القبول</string>
+    <string name="report_badge_beginner_col">شارة المبتدئ</string>
+    <string name="report_badge_second_col">شارة الثاني</string>
+    <string name="report_badge_first_col">شارة الأول</string>
+    <string name="report_badge_hobbies_count_col">شارات الهواية (عدد)</string>
+    <string name="report_total_scouts">إجمالي الأشبال</string>
+    <string name="report_total_hobbies_granted">إجمالي شارات الهواية</string>
+    <string name="report_leaders_overall_avg">المعدل العام للقادة</string>
+    <string name="report_total_leaders_evaluating">عدد القادة المقيمين</string>
+    <string name="report_total_evaluations_count">إجمالي التقييمات</string>
+    <string name="report_overall_leaders_average">متوسط تقييم القادة</string>
+    <string name="report_empty_evaluations">لا توجد تقييمات مسجلة للأنشطة حتى الآن</string>
+    <string name="pdf_export_placeholder">ميزة تصدير التقرير بصيغة PDF قيد التطوير</string>
+
+    <!-- سجل العمليات (Audit Log) -->
+    <string name="audit_log_title">سجل العمليات</string>
+    <string name="audit_filter_date_all">كل الأوقات</string>
+    <string name="audit_filter_date_today">اليوم</string>
+    <string name="audit_filter_date_week">هذا الأسبوع</string>
+    <string name="audit_filter_date_month">هذا الشهر</string>
+    <string name="audit_filter_action_all">كل العمليات</string>
+    <string name="audit_filter_action_add">إضافة</string>
+    <string name="audit_filter_action_update">تعديل</string>
+    <string name="audit_filter_action_delete">حذف</string>
+    <string name="audit_filter_leader_all">كل القادة</string>
+    <string name="audit_empty">لا توجد عمليات مسجلة</string>
+    <string name="audit_log_item_format">%1$s: %2$s %3$s</string>
+    <string name="drawer_audit_log">سجل العمليات</string>
+    <string name="report_audit_log">سجل العمليات</string>
+    <string name="report_audit_log_desc">سجل تفصيلي لكافة عمليات الإضافة والتعديل والحذف المنفذة في النظام</string>
+
+    <!-- تفاصيل العملية (Audit Log Details Dialog) -->
+    <string name="audit_details_title">تفاصيل العملية</string>
+    <string name="audit_detail_leader">القائد:</string>
+    <string name="audit_detail_action">نوع العملية:</string>
+    <string name="audit_detail_target">العنصر المتأثر:</string>
+    <string name="audit_detail_type">نوع العنصر:</string>
+    <string name="audit_detail_date">التاريخ والوقت:</string>
+    <string name="audit_action_add">إضافة</string>
+    <string name="audit_action_update">تعديل</string>
+    <string name="audit_action_delete">حذف</string>
+    <string name="audit_target_scout">شبل</string>
+    <string name="audit_target_activity">نشاط</string>
+    <string name="audit_target_finance">مالية</string>
+    <string name="audit_target_attendance">حضور</string>
+    <string name="audit_target_evaluation">تقييم</string>
+    <string name="audit_target_progress">تقدم</string>
+    <string name="audit_target_hobby">هواية</string>
+    <string name="audit_target_quran">قرآن</string>
+    <string name="audit_target_other">أخرى</string>
+    <string name="audit_detail_description">تفاصيل العملية:</string>
+    <string name="audit_dialog_close">إغلاق</string>
+
+    <!-- حذف الحساب ونقل الرئاسة الكشفية -->
+    <string name="settings_danger_zone">منطقة الخطر</string>
+    <string name="settings_delete_account">حذف الحساب نهائياً</string>
+    <string name="delete_account_title">حذف الحساب</string>
+    <string name="delete_account_body">هل أنت متأكد من حذف حسابك نهائياً؟ سيتم حذف جميع تقييماتك وسجلاتك.</string>
+    <string name="transfer_leadership_title">نقل الرئاسة</string>
+    <string name="transfer_leadership_body">أنت القائد الرئيسي. يجب تعيين قائد آخر كرئيسي قبل حذف حسابك.</string>
+    <string name="no_other_leaders">يجب أن ينضم قائد آخر أولاً لتتمكن من نقل الرئاسة.</string>
+    <string name="confirm_transfer_and_delete">نقل الرئاسة وحذف حسابي</string>
+    <string name="error_recent_login">يرجى تسجيل الخروج والدخول مرة أخرى قبل الحذف.</string>
+    <string name="deleting_account_progress">جارٍ حذف الحساب...</string>
+    <string name="select_new_main_leader">اختر القائد الجديد</string>
+
+    <!-- إدارة قادة السرب ونظام الاعتماد -->
+    <string name="pending_approval_title">حسابك قيد المراجعة</string>
+    <string name="pending_approval_body">حسابك قيد المراجعة من قبل قائد السرب. يرجى المحاولة لاحقاً.</string>
+    <string name="leader_management_title">إدارة قادة السرب</string>
+    <string name="tab_pending_leaders">قيد المراجعة</string>
+    <string name="tab_approved_leaders">معتمدون</string>
+    <string name="leader_approve">موافقة</string>
+    <string name="leader_reject">رفض</string>
+    <string name="leader_delete">حذف</string>
+    <string name="main_leader_badge">قائد رئيسي</string>
+    <string name="action_make_main_leader">تعيين كقائد رئيسي</string>
+    <string name="action_remove_main_leader">إلغاء الرئاسة</string>
+    <string name="confirm_delete_leader">هل أنت متأكد من حذف هذا القائد؟</string>
+    <string name="no_pending_leaders">لا توجد طلبات انضمام جديدة</string>
+    <string name="no_approved_leaders">لا يوجد قادة معتمدون</string>
+    <string name="error_last_main_leader">لا يمكن إلغاء الرئاسة لأنه يجب أن يكون هناك قائد رئيسي واحد على الأقل.</string>
+    <string name="confirm_make_main_leader_title">تعيين قائد رئيسي</string>
+    <string name="confirm_make_main_leader_body_format">هل أنت متأكد من تعيين القائد \'%1$s\' كقائد رئيسي للسرب؟</string>
+    <string name="confirm_revoke_main_leader_title">إلغاء الرئاسة</string>
+    <string name="confirm_revoke_main_leader_body_format">هل أنت متأكد من إلغاء صفة الرئاسة عن القائد \'%1$s\'؟</string>
+    <!-- تخصيص شعار التطبيق (Dynamic In-App Logo) -->
+    <string name="settings_logo_section">شعار التطبيق</string>
+    <string name="action_change_logo">تغيير الشعار</string>
+    <string name="logo_updated_successfully">تم تحديث الشعار بنجاح</string>
+    <string name="error_loading_image">تعذر تحميل الصورة</string>
+
+    <!-- تخصيص الكلمات والمصطلحات (Custom Terminology System) -->
+    <string name="settings_custom_terms_section">تخصيص الكلمات والمصطلحات</string>
+    <string name="terms_scout_singular">شبل (المفرد النكرة)</string>
+    <string name="terms_scout_singular_def">الشبل (المفرد المعرفة)</string>
+    <string name="terms_scout_plural">أشبال (الجمع النكرة)</string>
+    <string name="terms_scout_plural_def">الأشبال (الجمع المعرفة)</string>
+    <string name="terms_group_singular">سرب (النكرة)</string>
+    <string name="terms_group_singular_def">السرب (المعرفة)</string>
+    <string name="terms_unit_name">النجب (النكرة)</string>
+    <string name="terms_unit_name_def">النجب (المعرفة)</string>
+    <string name="terms_custom_words">كلمات إضافية مخصصة</string>
+    <string name="terms_original_word">الكلمة الأصلية</string>
+    <string name="terms_replacement_word">الكلمة البديلة</string>
+    <string name="action_add_word">إضافة</string>
+    <string name="action_save_terms">حفظ الكلمات</string>
+    <string name="terms_saved_toast">تم حفظ الكلمات بنجاح</string>
+
+    <!-- التحصيل المالي في استمارة الحضور -->
+    <string name="finance_section_title">التحصيل المالي</string>
+    <string name="previous_debts_label">ديون سابقة:</string>
+    <string name="today_sub_label">اشتراك اليوم:</string>
+    <string name="total_required_label">المجموع المطلوب:</string>
+    <string name="paid_amount_label">المبلغ المدفوع</string>
+    <string name="action_pay_all">دفع الكل</string>
+    <string name="action_decrement">- 5 دج</string>
+    <string name="action_increment">+ 5 دج</string>
+    <string name="label_previous_debt">الديون السابقة</string>
+    <string name="label_today_sub">اشتراك اليوم</string>
+    <string name="label_remaining_debt">الديون المتبقية</string>
+    <string name="label_required_format">المطلوب: %1$d دج</string>
+    <string name="label_paid_format">المحصل: %1$d دج</string>
+    <string name="finance_total_paid_label">إجمالي المدفوع:</string>
+    <string name="finance_paid_amount_hint">المبلغ المدفوع</string>
+    <string name="confirm_update_total_title">تأكيد التعديل</string>
+    <string name="confirm_update_total_body">هل أنت متأكد من تعديل إجمالي المبلغ المدفوع لهذا الشبل؟</string>
+    <string name="error_select_status_first">يرجى اختيار حالة الحضور أولاً لتسجيل الدفع.</string>
+    <string name="msg_absent_cannot_pay">الشبل غائب، لا يمكن تسجيل الدفع الآن.</string>
+    <string name="attendance_search_scout_title">البحث عن شبل</string>
+    <string name="attendance_search_scout_desc">بحث عن شبل للانتقال إليه</string>
+    <string name="attendance_search_current_badge">الحالي</string>
+    <string name="attendance_search_close_desc">إغلاق البحث</string>
 </resources>
 
 

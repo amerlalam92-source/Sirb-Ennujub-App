@@ -1,7 +1,12 @@
 package com.example.presentation.reports
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -9,6 +14,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.util.Base64
 import android.graphics.pdf.PdfDocument
 import androidx.core.content.FileProvider
 import androidx.core.content.res.ResourcesCompat
@@ -21,6 +27,9 @@ import com.example.domain.finance.FinanceSummary
 import com.example.domain.finance.FinanceTransaction
 import com.example.domain.finance.FinanceTransactionType
 import com.example.domain.finance.ScoutDebt
+import com.example.domain.log.ActivityLog
+import com.example.domain.settings.CustomTerms
+import com.example.domain.settings.replaceCustomWords
 import java.util.Calendar
 import com.example.domain.attendance.Attendance
 import com.example.domain.attendance.AttendanceRow
@@ -43,6 +52,11 @@ import java.util.Locale
 object PdfExporter {
 
     private val dateFormatter = SimpleDateFormat("EEEE d MMMM yyyy", com.example.presentation.common.AppLocale.AR_DZ)
+
+    var currentLogoBase64: String? = null
+    var currentTerms: CustomTerms? = null
+
+    private fun effectiveTerms(terms: CustomTerms?): CustomTerms = terms ?: currentTerms ?: CustomTerms()
 
     private fun getCairoTypeface(context: Context): Typeface? {
         return try {
@@ -81,17 +95,17 @@ object PdfExporter {
         return lines
     }
 
-    data class ActivityReportAttendanceEntry(
-        val scoutFullName: String,
-        val status: AttendanceStatus?,
-        val points: Int
+    private data class ActivityDetailsCardBlock(
+        val title: String,
+        val lines: List<String>
     )
 
     fun exportScoutReport(
         scout: Scout,
         stats: ScoutStatistics,
         activities: List<Activity>,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoTypeface = getCairoTypeface(context)
@@ -100,7 +114,7 @@ object PdfExporter {
         val page = pdfDocument.startPage(pageInfo)
         val canvas = page.canvas
 
-        drawScoutReport(canvas, scout, stats, activities, cairoTypeface, boldCairo, context)
+        drawScoutReport(canvas, scout, stats, activities, cairoTypeface, boldCairo, context, terms)
 
         pdfDocument.finishPage(page)
 
@@ -114,7 +128,12 @@ object PdfExporter {
         return pdfFile
     }
 
-    fun shareScoutPdf(file: File, scoutName: String, context: Context) {
+    fun shareScoutPdf(
+        file: File,
+        scoutName: String,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -122,11 +141,33 @@ object PdfExporter {
         )
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
-            putExtra(Intent.EXTRA_SUBJECT, "تقرير الشبل: $scoutName")
+            putExtra(Intent.EXTRA_SUBJECT, "تقرير ${terms.scoutSingularDefinite}: $scoutName")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "مشاركة تقرير الشبل"))
+        context.startActivity(Intent.createChooser(intent, "مشاركة تقرير ${terms.scoutSingularDefinite}"))
+    }
+
+    private fun getLogoBitmap(context: Context, logoBase64: String? = null): Bitmap? {
+        val effectiveBase64 = if (!logoBase64.isNullOrEmpty()) {
+            logoBase64
+        } else {
+            currentLogoBase64 ?: try {
+                context.getSharedPreferences("branding_prefs", Context.MODE_PRIVATE)
+                    .getString("logo_base64", null)
+            } catch (_: Exception) { null }
+        }
+
+        return if (!effectiveBase64.isNullOrEmpty()) {
+            try {
+                val imageBytes = Base64.decode(effectiveBase64, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+            } catch (e: Exception) {
+                BitmapFactory.decodeResource(context.resources, R.drawable.ennujub_logo)
+            }
+        } else {
+            BitmapFactory.decodeResource(context.resources, R.drawable.ennujub_logo)
+        }
     }
 
     private fun drawLogo(
@@ -135,13 +176,11 @@ object PdfExporter {
         left: Float,
         top: Float,
         targetWidth: Float = 55f,
-        targetHeight: Float = 55f
+        targetHeight: Float = 55f,
+        logoBase64: String? = null
     ) {
         try {
-            val options = BitmapFactory.Options().apply {
-                inScaled = false
-            }
-            val logoBitmap = BitmapFactory.decodeResource(context.resources, R.drawable.ennujub_logo, options)
+            val logoBitmap = getLogoBitmap(context, logoBase64)
             if (logoBitmap != null) {
                 val origWidth = logoBitmap.width.toFloat()
                 val origHeight = logoBitmap.height.toFloat()
@@ -175,7 +214,8 @@ object PdfExporter {
         activities: List<Activity>,
         cairoTypeface: Typeface?,
         boldCairo: Typeface?,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val textPaint = Paint().apply {
             color = Color.rgb(33, 33, 33)
@@ -227,7 +267,7 @@ object PdfExporter {
         // رسم الترويسة والشعار
         drawLogo(canvas, context, left = 40f, top = 25f, targetWidth = 55f, targetHeight = 55f)
 
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 555f, 50f, titlePaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 50f, titlePaint)
         canvas.drawText("الكشافة الإسلامية الجزائرية", 555f, 70f, subtitlePaint)
         canvas.drawLine(40f, 100f, 555f, 100f, linePaint)
 
@@ -287,7 +327,7 @@ object PdfExporter {
 
         var yPos = 415f
         if (stats.missedActivities.isEmpty()) {
-            canvas.drawText("ما شاء الله! لا توجد أي غيابات مسجلة للشبل حتى الآن.", 540f, yPos, textPaint)
+            canvas.drawText("ما شاء الله! لا توجد أي غيابات مسجلة لـ${terms.scoutSingularDefinite} حتى الآن.", 540f, yPos, textPaint)
         } else {
             for (item in stats.missedActivities.take(12)) {
                 val dateStr = if (item.date > 0) SimpleDateFormat("yyyy/MM/dd", com.example.presentation.common.AppLocale.AR_DZ).format(Date(item.date)) else ""
@@ -308,20 +348,22 @@ object PdfExporter {
         }
         val nowStr = dateFormatter.format(Date())
         canvas.drawText("تاريخ استخراج الوثيقة: $nowStr", 555f, 808f, footerPaint)
-        canvas.drawText("وثيقة كشفية صادرة عن تطبيق سرب النُّجُب المعتمد", 200f, 808f, footerPaint)
+        canvas.drawText("وثيقة كشفية صادرة عن تطبيق ${terms.groupName} ${terms.unitNameDefinite} المعتمد", 200f, 808f, footerPaint)
     }
 
     fun exportActivityAttendancePdf(
         activity: Activity,
         rows: List<AttendanceRow>,
         trainingMeetingNumber: Int?,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoTypeface = getCairoTypeface(context)
         val boldCairo = getBoldCairoTypeface(cairoTypeface)
+        val activeRows = rows.filter { it.scout.isActive }
         val rowsPerPage = 25
-        val totalPages = maxOf(1, (rows.size + rowsPerPage - 1) / rowsPerPage)
+        val totalPages = maxOf(1, (activeRows.size + rowsPerPage - 1) / rowsPerPage)
 
         for (pageIndex in 0 until totalPages) {
             val pageInfo = PdfDocument.PageInfo.Builder(595, 842, pageIndex + 1).create()
@@ -329,8 +371,8 @@ object PdfExporter {
             val canvas = page.canvas
 
             val startRow = pageIndex * rowsPerPage
-            val endRow = minOf(rows.size, (pageIndex + 1) * rowsPerPage)
-            val pageRows = if (rows.isNotEmpty()) rows.subList(startRow, endRow) else emptyList()
+            val endRow = minOf(activeRows.size, (pageIndex + 1) * rowsPerPage)
+            val pageRows = if (activeRows.isNotEmpty()) activeRows.subList(startRow, endRow) else emptyList()
 
             drawActivityAttendancePage(
                 canvas = canvas,
@@ -340,10 +382,11 @@ object PdfExporter {
                 trainingMeetingNumber = trainingMeetingNumber,
                 pageNumber = pageIndex + 1,
                 totalPages = totalPages,
-                totalScouts = rows.size,
+                totalScouts = activeRows.size,
                 cairoTypeface = cairoTypeface,
                 boldCairo = boldCairo,
-                context = context
+                context = context,
+                terms = terms
             )
 
             pdfDocument.finishPage(page)
@@ -357,7 +400,12 @@ object PdfExporter {
         return pdfFile
     }
 
-    fun shareActivityAttendancePdf(file: File, activityTitle: String, context: Context) {
+    fun shareActivityAttendancePdf(
+        file: File,
+        activityTitle: String,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -372,121 +420,21 @@ object PdfExporter {
         context.startActivity(Intent.createChooser(intent, "مشاركة تقرير الحضور"))
     }
 
-    fun exportActivityFullReportPdf(
-        activity: Activity,
-        attendanceList: List<Attendance>,
-        meetingTopics: List<String> = activity.meetingTopics,
-        context: Context
-    ): File {
-        val entries = attendanceList.map {
-            ActivityReportAttendanceEntry(
-                scoutFullName = it.scoutFullName.ifBlank { "شبل كشفي" },
-                status = it.attendanceStatus,
-                points = it.points
-            )
-        }
-        return generateActivityFullReportDocument(activity, entries, meetingTopics, context)
-    }
-
-    @JvmName("exportActivityFullReportPdfFromRows")
-    fun exportActivityFullReportPdf(
-        activity: Activity,
-        attendanceRows: List<AttendanceRow>,
-        meetingTopics: List<String> = activity.meetingTopics,
-        context: Context
-    ): File {
-        val entries = attendanceRows.map {
-            ActivityReportAttendanceEntry(
-                scoutFullName = it.scout.fullName.ifBlank { "شبل كشفي" },
-                status = it.attendance?.attendanceStatus,
-                points = it.attendance?.points ?: 0
-            )
-        }
-        return generateActivityFullReportDocument(activity, entries, meetingTopics, context)
-    }
-
     fun exportActivityDetailsPdf(
         activity: Activity,
-        attendanceList: List<AttendanceRow>,
-        context: Context
+        meetingTopics: List<String> = activity.meetingTopics,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
-        return exportActivityFullReportPdf(
-            activity = activity,
-            attendanceRows = attendanceList,
-            meetingTopics = activity.meetingTopics,
-            context = context
-        )
+        return generateActivityDetailsDocument(activity, meetingTopics, context, terms)
     }
 
-    private fun generateActivityFullReportDocument(
-        activity: Activity,
-        items: List<ActivityReportAttendanceEntry>,
-        meetingTopics: List<String>,
-        context: Context
-    ): File {
-        val pdfDocument = PdfDocument()
-        val cairoTypeface = getCairoTypeface(context)
-        val boldCairo = getBoldCairoTypeface(cairoTypeface)
-
-        val attendanceCount = items.size
-        val attendancePages = if (attendanceCount <= 20) {
-            1
-        } else {
-            1 + (attendanceCount - 20 + 25) / 26
-        }
-        val totalPages = 1 + attendancePages
-
-        // الصفحة 1: بطاقة بيانات النشاط الشاملة، الأهداف، الأدوات، المواضيع، والتقرير الأدبي
-        run {
-            val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
-            val page = pdfDocument.startPage(pageInfo)
-            drawActivityReportPage1(
-                canvas = page.canvas,
-                activity = activity,
-                meetingTopics = meetingTopics,
-                cairoTypeface = cairoTypeface,
-                boldCairo = boldCairo,
-                totalPages = totalPages,
-                context = context
-            )
-            pdfDocument.finishPage(page)
-        }
-
-        // الصفحة 2 وما يليها: ملخص الحضور وجدول الحضور المفصل
-        for (attPageIndex in 0 until attendancePages) {
-            val pageNumber = 2 + attPageIndex
-            val pageInfo = PdfDocument.PageInfo.Builder(595, 842, pageNumber).create()
-            val page = pdfDocument.startPage(pageInfo)
-
-            val startIndex = if (attPageIndex == 0) 0 else 20 + (attPageIndex - 1) * 26
-            val endIndex = if (attPageIndex == 0) minOf(20, items.size) else minOf(items.size, 20 + attPageIndex * 26)
-            val pageItems = if (items.isNotEmpty() && startIndex < items.size) items.subList(startIndex, endIndex) else emptyList()
-
-            drawActivityReportAttendancePage(
-                canvas = page.canvas,
-                activity = activity,
-                pageItems = pageItems,
-                allItems = items,
-                startRowIndex = startIndex,
-                pageNumber = pageNumber,
-                totalPages = totalPages,
-                isFirstAttendancePage = (attPageIndex == 0),
-                cairoTypeface = cairoTypeface,
-                boldCairo = boldCairo,
-                context = context
-            )
-            pdfDocument.finishPage(page)
-        }
-
-        val pdfFile = File(context.cacheDir, "activity_full_report_${activity.id}.pdf")
-        FileOutputStream(pdfFile).use { outputStream ->
-            pdfDocument.writeTo(outputStream)
-        }
-        pdfDocument.close()
-        return pdfFile
-    }
-
-    fun shareActivityPdf(file: File, activityTitle: String, context: Context) {
+    fun shareActivityPdf(
+        file: File,
+        activityTitle: String,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -494,28 +442,30 @@ object PdfExporter {
         )
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
-            putExtra(Intent.EXTRA_SUBJECT, "التقرير الشامل للنشاط: $activityTitle")
-            putExtra(Intent.EXTRA_TEXT, "مرفق التقرير الشامل للنشاط الكشفي ($activityTitle) متضمناً البطاقة الفنية، الأهداف، وسجل الحضور بصيغة PDF.")
+            putExtra(Intent.EXTRA_SUBJECT, "بطاقة تفاصيل النشاط: $activityTitle")
+            putExtra(Intent.EXTRA_TEXT, "مرفق بطاقة تفاصيل النشاط الكشفي ($activityTitle) متضمناً البيانات الفنية، الأهداف، الأدوات، والتقرير الأدبي بصيغة PDF.")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "مشاركة التقرير الشامل للنشاط"))
+        context.startActivity(Intent.createChooser(intent, "مشاركة تفاصيل النشاط"))
     }
 
     fun exportTrainingMeetingsRegisterPdf(
         meetings: List<MeetingWithAttendance>,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoTypeface = getCairoTypeface(context) ?: Typeface.DEFAULT
 
         val chronologicalMeetings = meetings.sortedBy { it.number }
-        val allScouts = chronologicalMeetings.firstOrNull()?.rows?.map { it.scout } ?: emptyList()
+        val allScouts = (chronologicalMeetings.firstOrNull()?.rows?.map { it.scout } ?: emptyList())
+            .filter { it.isActive }
 
         if (chronologicalMeetings.isEmpty() || allScouts.isEmpty()) {
             val pageInfo = PdfDocument.PageInfo.Builder(842, 595, 1).create()
             val page = pdfDocument.startPage(pageInfo)
-            drawEmptyRegisterMatrixPage(page.canvas, cairoTypeface, context)
+            drawEmptyRegisterMatrixPage(page.canvas, cairoTypeface, context, terms)
             pdfDocument.finishPage(page)
         } else {
             val minRowHeight = 18f
@@ -540,7 +490,8 @@ object PdfExporter {
                         pageNumber = pageIndex,
                         totalPages = totalPages,
                         cairoTypeface = cairoTypeface,
-                        context = context
+                        context = context,
+                        terms = terms
                     )
 
                     pdfDocument.finishPage(page)
@@ -557,7 +508,11 @@ object PdfExporter {
         return pdfFile
     }
 
-    fun shareTrainingMeetingsRegisterPdf(file: File, context: Context) {
+    fun shareTrainingMeetingsRegisterPdf(
+        file: File,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -565,7 +520,7 @@ object PdfExporter {
         )
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
-            putExtra(Intent.EXTRA_SUBJECT, "سجل الاجتماعات التدريبية — سرب النُّجُب")
+            putExtra(Intent.EXTRA_SUBJECT, "سجل الاجتماعات التدريبية — ${terms.groupName} ${terms.unitNameDefinite}")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -582,7 +537,8 @@ object PdfExporter {
         year: Int,
         transactions: List<FinanceTransaction>,
         summary: FinanceSummary,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoTypeface = try {
@@ -644,7 +600,7 @@ object PdfExporter {
                 date = latestDate,
                 description = "$syntheticDesc ($count)",
                 category = null,
-                source = "الأشبال",
+                source = terms.scoutPluralDefinite,
                 createdAt = latestDate
             )
         }
@@ -689,7 +645,8 @@ object PdfExporter {
                 totalExpenses = totalExpenses,
                 closingBalance = closingBalance,
                 cairoTypeface = cairoTypeface,
-                context = context
+                context = context,
+                terms = terms
             )
 
             pdfDocument.finishPage(page)
@@ -703,7 +660,13 @@ object PdfExporter {
         return pdfFile
     }
 
-    fun shareMonthlyStatementPdf(file: File, month: Int, year: Int, context: Context) {
+    fun shareMonthlyStatementPdf(
+        file: File,
+        month: Int,
+        year: Int,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val monthName = ARABIC_MONTHS.getOrElse(month - 1) { "شهر $month" }
         val uri = FileProvider.getUriForFile(
             context,
@@ -712,7 +675,7 @@ object PdfExporter {
         )
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
-            putExtra(Intent.EXTRA_SUBJECT, "كشف حساب لشهر $monthName $year — سرب النُّجُب")
+            putExtra(Intent.EXTRA_SUBJECT, "كشف حساب لشهر $monthName $year — ${terms.groupName} ${terms.unitNameDefinite}")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -721,7 +684,8 @@ object PdfExporter {
 
     fun exportExpensesByCategoryPdf(
         transactions: List<FinanceTransaction>,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoTypeface = try {
@@ -764,7 +728,8 @@ object PdfExporter {
             maxDate = maxDate,
             cairoTypeface = cairoTypeface,
             boldCairo = boldCairo,
-            context = context
+            context = context,
+            terms = terms
         )
 
         pdfDocument.finishPage(page)
@@ -777,7 +742,11 @@ object PdfExporter {
         return pdfFile
     }
 
-    fun shareExpensesByCategoryPdf(file: File, context: Context) {
+    fun shareExpensesByCategoryPdf(
+        file: File,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -785,7 +754,7 @@ object PdfExporter {
         )
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
-            putExtra(Intent.EXTRA_SUBJECT, "تقرير المصاريف حسب التصنيف — سرب النُّجُب")
+            putExtra(Intent.EXTRA_SUBJECT, "تقرير المصاريف حسب التصنيف — ${terms.groupName} ${terms.unitNameDefinite}")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -805,7 +774,8 @@ object PdfExporter {
         totalContributionsPaid: Int,
         totalOutstandingDebt: Int,
         activitiesWithDebt: List<ActivityDebtInfo> = emptyList(),
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoTypeface = try {
@@ -827,7 +797,8 @@ object PdfExporter {
             activitiesWithDebt = activitiesWithDebt,
             cairoTypeface = cairoTypeface,
             boldCairo = boldCairo,
-            context = context
+            context = context,
+            terms = terms
         )
 
         pdfDocument.finishPage(page)
@@ -840,7 +811,11 @@ object PdfExporter {
         return pdfFile
     }
 
-    fun shareSubscriptionsAndDebtsSummaryPdf(file: File, context: Context) {
+    fun shareSubscriptionsAndDebtsSummaryPdf(
+        file: File,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -848,7 +823,7 @@ object PdfExporter {
         )
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
-            putExtra(Intent.EXTRA_SUBJECT, "تقرير الاشتراكات والديون — سرب النُّجُب")
+            putExtra(Intent.EXTRA_SUBJECT, "تقرير الاشتراكات والديون — ${terms.groupName} ${terms.unitNameDefinite}")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -858,7 +833,8 @@ object PdfExporter {
     // 2) تقرير الديون التفصيلي
     fun exportDetailedDebtsPdf(
         debts: List<ScoutDebt>,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoTypeface = try {
@@ -906,7 +882,8 @@ object PdfExporter {
                 totalDebt = totalDebtSum,
                 cairoTypeface = cairoTypeface,
                 boldCairo = boldCairo,
-                context = context
+                context = context,
+                terms = terms
             )
 
             pdfDocument.finishPage(page)
@@ -920,7 +897,11 @@ object PdfExporter {
         return pdfFile
     }
 
-    fun shareDetailedDebtsPdf(file: File, context: Context) {
+    fun shareDetailedDebtsPdf(
+        file: File,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -928,7 +909,7 @@ object PdfExporter {
         )
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
-            putExtra(Intent.EXTRA_SUBJECT, "تقرير الديون التفصيلي — سرب النُّجُب")
+            putExtra(Intent.EXTRA_SUBJECT, "تقرير الديون التفصيلي — ${terms.groupName} ${terms.unitNameDefinite}")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -940,7 +921,8 @@ object PdfExporter {
         year: Int,
         transactions: List<FinanceTransaction>,
         summary: FinanceSummary,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoTypeface = try {
@@ -998,7 +980,8 @@ object PdfExporter {
             topCategories = topCategories,
             cairoTypeface = cairoTypeface,
             boldCairo = boldCairo,
-            context = context
+            context = context,
+            terms = terms
         )
 
         pdfDocument.finishPage(page)
@@ -1011,7 +994,12 @@ object PdfExporter {
         return pdfFile
     }
 
-    fun shareAnnualStatementPdf(file: File, year: Int, context: Context) {
+    fun shareAnnualStatementPdf(
+        file: File,
+        year: Int,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -1019,7 +1007,7 @@ object PdfExporter {
         )
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
-            putExtra(Intent.EXTRA_SUBJECT, "التقرير السنوي الشامل لعام $year — سرب النُّجُب")
+            putExtra(Intent.EXTRA_SUBJECT, "التقرير السنوي الشامل لعام $year — ${terms.groupName} ${terms.unitNameDefinite}")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -1030,8 +1018,9 @@ object PdfExporter {
     fun exportScoutStatementPdf(
         scout: Scout,
         subscriptions: List<FinanceSubscription>,
-        contributions: List<FinanceContribution>,
-        context: Context
+        contributions: List<FinanceContribution> = emptyList(),
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoTypeface = try {
@@ -1068,7 +1057,8 @@ object PdfExporter {
             totalDebt = totalDebt,
             cairoTypeface = cairoTypeface,
             boldCairo = boldCairo,
-            context = context
+            context = context,
+            terms = terms
         )
 
         pdfDocument.finishPage(page)
@@ -1081,7 +1071,12 @@ object PdfExporter {
         return pdfFile
     }
 
-    fun shareScoutStatementPdf(file: File, scoutName: String, context: Context) {
+    fun shareScoutStatementPdf(
+        file: File,
+        scoutName: String,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -1089,11 +1084,65 @@ object PdfExporter {
         )
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
-            putExtra(Intent.EXTRA_SUBJECT, "كشف حساب الشبل: $scoutName — سرب النُّجُب")
+            putExtra(Intent.EXTRA_SUBJECT, "كشف حساب ${terms.scoutSingularDefinite}: $scoutName — ${terms.groupName} ${terms.unitNameDefinite}")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "مشاركة كشف حساب الشبل كـ PDF"))
+        context.startActivity(Intent.createChooser(intent, "مشاركة كشف حساب ${terms.scoutSingularDefinite} كـ PDF"))
+    }
+
+    /**
+     * حفظ ملف PDF في مجلد التنزيلات العام (Public Downloads) وإرجاع مسار الـ Uri
+     */
+    fun savePdfToDownloads(context: Context, pdfFile: File, fileName: String): Uri? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { outputStream ->
+                    pdfFile.inputStream().use { inputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
+                }
+            }
+            uri
+        } else {
+            // For older Android versions (API < 29), save directly to public Downloads
+            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val destFile = File(downloadsDir, fileName)
+            try {
+                pdfFile.copyTo(destFile, overwrite = true)
+                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", destFile)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        }
+    }
+
+    /**
+     * مشاركة عدة ملفات PDF دفعة واحدة عبر تطبيقات التواصل
+     */
+    fun shareMultiplePdfs(
+        uris: List<Uri>,
+        subject: String,
+        chooserTitle: String,
+        context: Context
+    ) {
+        if (uris.isEmpty()) return
+        val arrayListUris = ArrayList(uris)
+        val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "application/pdf"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, arrayListUris)
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, chooserTitle))
     }
 
     private data class AnnualMonthStat(
@@ -1112,7 +1161,8 @@ object PdfExporter {
         activitiesWithDebt: List<ActivityDebtInfo>,
         cairoTypeface: Typeface,
         boldCairo: Typeface,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val primaryGreen = Color.rgb(46, 125, 50)
         val gold = Color.rgb(200, 169, 81)
@@ -1139,7 +1189,7 @@ object PdfExporter {
 
         // Header
         drawLogo(canvas, context, left = 40f, top = 25f, targetWidth = 50f, targetHeight = 50f)
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 555f, 45f, headerPaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 45f, headerPaint)
         canvas.drawText("الكشافة الإسلامية الجزائرية", 555f, 63f, subtitlePaint)
         canvas.drawLine(40f, 85f, 555f, 85f, linePaint)
 
@@ -1163,7 +1213,7 @@ object PdfExporter {
             isAntiAlias = true
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText("ملخص عام للمحصّل والمتبقي من اشتراكات ومساهمات الأشبال", 297f, currentY, subTitleDocPaint)
+        canvas.drawText("ملخص عام للمحصّل والمتبقي من اشتراكات ومساهمات ${terms.scoutPluralDefinite}", 297f, currentY, subTitleDocPaint)
         currentY += 22f
 
         // 3 Summary Cards: Subscriptions, Contributions, Outstanding Debt
@@ -1359,7 +1409,7 @@ object PdfExporter {
             isAntiAlias = true
         }
         footerPaint.textAlign = Paint.Align.RIGHT
-        canvas.drawText("تقرير مالي رسمي — سرب النُّجُب — فوج محمد رحال", 555f, 815f, footerPaint)
+        canvas.drawText("تقرير مالي رسمي — ${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 815f, footerPaint)
         footerPaint.textAlign = Paint.Align.LEFT
         canvas.drawText("تم الإنشاء: $footerDate", 40f, 815f, footerPaint)
     }
@@ -1377,7 +1427,8 @@ object PdfExporter {
         totalDebt: Int,
         cairoTypeface: Typeface,
         boldCairo: Typeface,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val primaryGreen = Color.rgb(46, 125, 50)
         val gold = Color.rgb(200, 169, 81)
@@ -1403,7 +1454,7 @@ object PdfExporter {
         }
 
         drawLogo(canvas, context, left = 40f, top = 25f, targetWidth = 50f, targetHeight = 50f)
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 555f, 45f, headerPaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 45f, headerPaint)
         canvas.drawText("الكشافة الإسلامية الجزائرية", 555f, 63f, subtitlePaint)
         canvas.drawLine(40f, 85f, 555f, 85f, linePaint)
 
@@ -1417,7 +1468,7 @@ object PdfExporter {
                 isAntiAlias = true
                 textAlign = Paint.Align.CENTER
             }
-            canvas.drawText("تقرير الديون التفصيلي للأشبال", 297f, currentY, titlePaint)
+            canvas.drawText("تقرير الديون التفصيلي لـ${terms.scoutPluralDefinite}", 297f, currentY, titlePaint)
             currentY += 18f
 
             // Summary Box
@@ -1447,7 +1498,7 @@ object PdfExporter {
                 textAlign = Paint.Align.LEFT
             }
 
-            canvas.drawText("عدد الأشبال المدينين: $totalScoutsCount شبل", 540f, currentY + 22f, summaryTextPaint)
+            canvas.drawText("عدد ${terms.scoutPluralDefinite} المدينين: $totalScoutsCount ${terms.scoutSingular}", 540f, currentY + 22f, summaryTextPaint)
             canvas.drawText("إجمالي المطلوب: $totalRequired دج | المدفوع: $totalPaid دج", 540f, currentY + 40f, summaryTextPaint)
 
             summaryValPaint.color = Color.rgb(198, 40, 40)
@@ -1477,7 +1528,7 @@ object PdfExporter {
         canvas.drawRect(40f, currentY, 555f, currentY + 24f, thBgPaint)
         canvas.drawRect(40f, currentY, 555f, currentY + 24f, thBorderPaint)
 
-        canvas.drawText("اسم الشبل", 550f, currentY + 16f, thTextPaint)
+        canvas.drawText("اسم ${terms.scoutSingularDefinite}", 550f, currentY + 16f, thTextPaint)
         canvas.drawText("المطلوب", 330f, currentY + 16f, thTextPaint)
         canvas.drawText("المدفوع", 210f, currentY + 16f, thTextPaint)
         thTextPaint.textAlign = Paint.Align.LEFT
@@ -1493,7 +1544,7 @@ object PdfExporter {
                 isAntiAlias = true
                 textAlign = Paint.Align.CENTER
             }
-            canvas.drawText("لا توجد ديون مستحقة — جميع الأشبال مسددون لالتزاماتهم بالكامل", 297f, currentY + 35f, emptyPaint)
+            canvas.drawText("لا توجد ديون مستحقة — جميع ${terms.scoutPluralDefinite} مسددون لالتزاماتهم بالكامل", 297f, currentY + 35f, emptyPaint)
         } else {
             val rowBgPaint = Paint().apply {
                 color = Color.rgb(252, 252, 252)
@@ -1589,7 +1640,8 @@ object PdfExporter {
         topCategories: List<Pair<ExpenseCategory, Int>>,
         cairoTypeface: Typeface,
         boldCairo: Typeface,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val primaryGreen = Color.rgb(46, 125, 50)
         val gold = Color.rgb(200, 169, 81)
@@ -1615,7 +1667,7 @@ object PdfExporter {
         }
 
         drawLogo(canvas, context, left = 40f, top = 25f, targetWidth = 50f, targetHeight = 50f)
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 555f, 45f, headerPaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 45f, headerPaint)
         canvas.drawText("الكشافة الإسلامية الجزائرية", 555f, 63f, subtitlePaint)
         canvas.drawLine(40f, 85f, 555f, 85f, linePaint)
 
@@ -1808,7 +1860,7 @@ object PdfExporter {
         val footerDate = SimpleDateFormat("yyyy/MM/dd HH:mm", com.example.presentation.common.AppLocale.AR_DZ).format(Date())
         val footerPaint = Paint().apply { color = Color.GRAY; textSize = 9f; typeface = cairoTypeface; isAntiAlias = true }
         footerPaint.textAlign = Paint.Align.RIGHT
-        canvas.drawText("التقرير السنوي الشامل — سرب النُّجُب — فوج محمد رحال", 555f, 815f, footerPaint)
+        canvas.drawText("التقرير السنوي الشامل — ${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 815f, footerPaint)
         footerPaint.textAlign = Paint.Align.LEFT
         canvas.drawText("تم الإنشاء: $footerDate", 40f, 815f, footerPaint)
     }
@@ -1823,7 +1875,8 @@ object PdfExporter {
         totalDebt: Int,
         cairoTypeface: Typeface,
         boldCairo: Typeface,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val primaryGreen = Color.rgb(46, 125, 50)
         val gold = Color.rgb(200, 169, 81)
@@ -1849,7 +1902,7 @@ object PdfExporter {
         }
 
         drawLogo(canvas, context, left = 40f, top = 25f, targetWidth = 50f, targetHeight = 50f)
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 555f, 45f, headerPaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 45f, headerPaint)
         canvas.drawText("الكشافة الإسلامية الجزائرية", 555f, 63f, subtitlePaint)
         canvas.drawLine(40f, 85f, 555f, 85f, linePaint)
 
@@ -1862,7 +1915,7 @@ object PdfExporter {
             isAntiAlias = true
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText("كشف حساب الشبل: ${scout.fullName}", 297f, currentY, titlePaint)
+        canvas.drawText("كشف حساب ${terms.scoutSingularDefinite}: ${scout.fullName}", 297f, currentY, titlePaint)
         currentY += 18f
 
         // Scout Info Box
@@ -1879,7 +1932,7 @@ object PdfExporter {
             textAlign = Paint.Align.RIGHT
         }
         val ageStr = if (scout.age > 0) "${scout.age} سنة" else "-"
-        canvas.drawText("اسم الشبل: ${scout.fullName}   |   العمر: $ageStr", 545f, currentY + 20f, infoTextPaint)
+        canvas.drawText("اسم ${terms.scoutSingularDefinite}: ${scout.fullName}   |   العمر: $ageStr", 545f, currentY + 20f, infoTextPaint)
         val guardianInfo = if (scout.guardianName.isNotBlank()) "${scout.guardianName} (${scout.guardianPhone})" else "غير محدد"
         canvas.drawText("الولي: $guardianInfo", 545f, currentY + 36f, infoTextPaint)
 
@@ -1984,7 +2037,7 @@ object PdfExporter {
 
         if (subscriptions.isEmpty()) {
             val emptyPaint = Paint().apply { color = Color.GRAY; textSize = 9f; typeface = cairoTypeface; textAlign = Paint.Align.CENTER }
-            canvas.drawText("لا توجد اشتراكات مسجلة لهذا الشبل", 297f, currentY + 20f, emptyPaint)
+            canvas.drawText("لا توجد اشتراكات مسجلة لـ${terms.scoutSingularDefinite}", 297f, currentY + 20f, emptyPaint)
             currentY += 32f
         } else {
             val subsToShow = subscriptions.take(7)
@@ -2033,7 +2086,7 @@ object PdfExporter {
 
         if (contributions.isEmpty()) {
             val emptyPaint = Paint().apply { color = Color.GRAY; textSize = 9f; typeface = cairoTypeface; textAlign = Paint.Align.CENTER }
-            canvas.drawText("لا توجد مساهمات مسجلة لهذا الشبل", 297f, currentY + 20f, emptyPaint)
+            canvas.drawText("لا توجد مساهمات مسجلة لـ${terms.scoutSingularDefinite}", 297f, currentY + 20f, emptyPaint)
         } else {
             val contribsToShow = contributions.take(7)
             for ((i, con) in contribsToShow.withIndex()) {
@@ -2067,7 +2120,7 @@ object PdfExporter {
         val footerDate = SimpleDateFormat("yyyy/MM/dd HH:mm", com.example.presentation.common.AppLocale.AR_DZ).format(Date())
         val footerPaint = Paint().apply { color = Color.GRAY; textSize = 9f; typeface = cairoTypeface; isAntiAlias = true }
         footerPaint.textAlign = Paint.Align.RIGHT
-        canvas.drawText("كشف حساب مالي فردي — سرب النُّجُب — فوج محمد رحال", 555f, 815f, footerPaint)
+        canvas.drawText("كشف حساب مالي فردي — ${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 815f, footerPaint)
         footerPaint.textAlign = Paint.Align.LEFT
         canvas.drawText("تم الإنشاء: $footerDate", 40f, 815f, footerPaint)
     }
@@ -2093,7 +2146,8 @@ object PdfExporter {
         totalExpenses: Int,
         closingBalance: Int,
         cairoTypeface: Typeface,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val monthName = ARABIC_MONTHS.getOrElse(month - 1) { "شهر $month" }
         val primaryGreen = Color.rgb(46, 125, 50)
@@ -2134,7 +2188,7 @@ object PdfExporter {
         // Header
         drawLogo(canvas, context, left = 40f, top = 25f, targetWidth = 50f, targetHeight = 50f)
 
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 555f, 45f, headerPaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 45f, headerPaint)
         canvas.drawText("الكشافة الإسلامية الجزائرية", 555f, 63f, subtitlePaint)
         canvas.drawLine(40f, 85f, 555f, 85f, linePaint)
 
@@ -2337,7 +2391,8 @@ object PdfExporter {
         maxDate: Long?,
         cairoTypeface: Typeface,
         boldCairo: Typeface,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val primaryGreen = Color.rgb(46, 125, 50)
         val gold = Color.rgb(200, 169, 81)
@@ -2368,7 +2423,7 @@ object PdfExporter {
         // Header with high quality logo
         drawLogo(canvas, context, left = 40f, top = 25f, targetWidth = 50f, targetHeight = 50f)
 
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 555f, 45f, headerPaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 45f, headerPaint)
         canvas.drawText("الكشافة الإسلامية الجزائرية", 555f, 63f, subtitlePaint)
         canvas.drawLine(40f, 85f, 555f, 85f, linePaint)
 
@@ -2545,7 +2600,7 @@ object PdfExporter {
         }
         canvas.drawText("تم الإنشاء في $footerDate", 555f, 818f, footerPaint)
         footerPaint.textAlign = Paint.Align.LEFT
-        canvas.drawText("تقرير مالي صادر عن تطبيق سرب النُّجُب", 40f, 818f, footerPaint)
+        canvas.drawText("تقرير مالي صادر عن تطبيق ${terms.groupName} ${terms.unitNameDefinite}", 40f, 818f, footerPaint)
     }
 
     private fun drawActivityAttendancePage(
@@ -2559,7 +2614,8 @@ object PdfExporter {
         totalScouts: Int,
         cairoTypeface: Typeface?,
         boldCairo: Typeface?,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val headerPaint = Paint().apply {
             color = Color.rgb(46, 125, 50)
@@ -2613,7 +2669,7 @@ object PdfExporter {
         // رسم الشعار
         drawLogo(canvas, context, left = 40f, top = 25f, targetWidth = 50f, targetHeight = 50f)
 
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 555f, 45f, headerPaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 45f, headerPaint)
         canvas.drawText("الكشافة الإسلامية الجزائرية", 555f, 65f, subtitlePaint)
         canvas.drawLine(40f, 85f, 555f, 85f, linePaint)
 
@@ -2721,14 +2777,143 @@ object PdfExporter {
         canvas.drawText("صفحة $pageNumber من $totalPages", 60f, 808f, Paint(footerPaint).apply { textAlign = Paint.Align.LEFT })
     }
 
-    private fun drawActivityReportPage1(
-        canvas: Canvas,
+    private fun generateActivityDetailsDocument(
         activity: Activity,
         meetingTopics: List<String>,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ): File {
+        val pdfDocument = PdfDocument()
+        val cairoTypeface = getCairoTypeface(context)
+        val boldCairo = getBoldCairoTypeface(cairoTypeface)
+
+        val measurePaint = Paint().apply {
+            textSize = 9.5f
+            typeface = cairoTypeface
+            isAntiAlias = true
+            textAlign = Paint.Align.RIGHT
+        }
+
+        val sections = mutableListOf<ActivityDetailsCardBlock>()
+
+        val objText = activity.objectives.ifBlank { "لم تُحدد أهداف تربوية خاصة لهذا النشاط." }
+        val objLines = wrapText(objText, measurePaint, 490f).ifEmpty { listOf(objText) }
+        sections.add(ActivityDetailsCardBlock("الأهداف التربوية", objLines))
+
+        val toolsText = activity.tools.ifBlank { "الأدوات الكشفية الاعتيادية." }
+        val toolLines = wrapText(toolsText, measurePaint, 490f).ifEmpty { listOf(toolsText) }
+        sections.add(ActivityDetailsCardBlock("الأدوات واللوازم", toolLines))
+
+        val nonBlankTopics = meetingTopics.filter { it.isNotBlank() }
+        if (nonBlankTopics.isNotEmpty()) {
+            val topicLines = nonBlankTopics.flatMapIndexed { idx, topic ->
+                wrapText("${idx + 1}. $topic", measurePaint, 490f)
+            }
+            if (topicLines.isNotEmpty()) {
+                sections.add(ActivityDetailsCardBlock("محاور ومواضيع الاجتماع التدريبي", topicLines))
+            }
+        }
+
+        val notesText = activity.notes.ifBlank { "لا توجد ملاحظات إضافية." }
+        val notesLines = wrapText(notesText, measurePaint, 490f).ifEmpty { listOf(notesText) }
+        sections.add(ActivityDetailsCardBlock("الملاحظات", notesLines))
+
+        val reportText = activity.finalReport.ifBlank { "لم يُسجل تقرير أدبي ختامي للنشاط بعد." }
+        val reportLines = wrapText(reportText, measurePaint, 490f).ifEmpty { listOf(reportText) }
+        sections.add(ActivityDetailsCardBlock("التقرير الأدبي وخلاصة النشاط", reportLines))
+
+        val maxContentBottom = 782f
+        val page1StartY = 244f // 136f + 98f (معلومات النشاط الأساسية) + 10f
+        val nextPageStartY = 136f
+        val fullPageMaxLines = ((maxContentBottom - nextPageStartY - 32f) / 14f).toInt().coerceAtLeast(1)
+
+        val pages = mutableListOf<List<ActivityDetailsCardBlock>>()
+        var currentPageBlocks = mutableListOf<ActivityDetailsCardBlock>()
+        var currentY = page1StartY
+
+        fun startNewPage() {
+            pages.add(currentPageBlocks)
+            currentPageBlocks = mutableListOf()
+            currentY = nextPageStartY
+        }
+
+        for (section in sections) {
+            var remainingLines = section.lines
+            var isContinuation = false
+
+            while (remainingLines.isNotEmpty()) {
+                val blockTitle = if (isContinuation) "${section.title} (تتمة)" else section.title
+                val remainingHeight = maxContentBottom - currentY
+                val maxLinesFit = ((remainingHeight - 32f) / 14f).toInt()
+
+                if (maxLinesFit < 1) {
+                    startNewPage()
+                    continue
+                }
+
+                // تجنّب تقسيم بطاقة قصيرة في نهاية الصفحة إذا كانت تتسع بالكامل في الصفحة التالية
+                val canFitOnFreshPage = remainingLines.size <= fullPageMaxLines
+                val hasContentAbove = pages.isEmpty() || currentPageBlocks.isNotEmpty()
+                if (remainingLines.size > maxLinesFit && canFitOnFreshPage && remainingLines.size <= 6 && hasContentAbove) {
+                    startNewPage()
+                    continue
+                }
+
+                if (remainingLines.size <= maxLinesFit) {
+                    currentPageBlocks.add(ActivityDetailsCardBlock(blockTitle, remainingLines))
+                    currentY += 32f + remainingLines.size * 14f + 10f
+                    remainingLines = emptyList()
+                } else {
+                    val chunk = remainingLines.take(maxLinesFit)
+                    currentPageBlocks.add(ActivityDetailsCardBlock(blockTitle, chunk))
+                    remainingLines = remainingLines.drop(maxLinesFit)
+                    isContinuation = true
+                    startNewPage()
+                }
+            }
+        }
+
+        if (pages.isEmpty() || currentPageBlocks.isNotEmpty()) {
+            pages.add(currentPageBlocks)
+        }
+
+        val totalPages = maxOf(1, pages.size)
+        pages.forEachIndexed { index, blocks ->
+            val pageNumber = index + 1
+            val pageInfo = PdfDocument.PageInfo.Builder(595, 842, pageNumber).create()
+            val page = pdfDocument.startPage(pageInfo)
+            drawActivityDetailsPage(
+                canvas = page.canvas,
+                activity = activity,
+                blocks = blocks,
+                pageNumber = pageNumber,
+                totalPages = totalPages,
+                cairoTypeface = cairoTypeface,
+                boldCairo = boldCairo,
+                context = context,
+                terms = terms
+            )
+            pdfDocument.finishPage(page)
+        }
+
+        val pdfFile = File(context.cacheDir, "activity_details_${activity.id}.pdf")
+        FileOutputStream(pdfFile).use { outputStream ->
+            pdfDocument.writeTo(outputStream)
+        }
+        pdfDocument.close()
+        return pdfFile
+    }
+
+    private fun drawActivityDetailsPage(
+        canvas: Canvas,
+        activity: Activity,
+        blocks: List<ActivityDetailsCardBlock>,
+        pageNumber: Int,
+        totalPages: Int,
         cairoTypeface: Typeface?,
         boldCairo: Typeface?,
-        totalPages: Int,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val headerPaint = Paint().apply {
             color = Color.rgb(46, 125, 50)
@@ -2819,350 +3004,82 @@ object PdfExporter {
 
         // رسم الشعار والترويسة
         drawLogo(canvas, context, left = 40f, top = 25f, targetWidth = 50f, targetHeight = 50f)
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 555f, 45f, headerPaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 45f, headerPaint)
         canvas.drawText("الكشافة الإسلامية الجزائرية", 555f, 65f, subtitlePaint)
         canvas.drawLine(40f, 85f, 555f, 85f, linePaint)
 
-        // عنوان التقرير
-        canvas.drawText("تقرير النشاط الكشفي", 297.5f, 110f, docTitlePaint)
+        // عنوان البطاقة
+        val docHeading = if (pageNumber == 1) "بطاقة تفاصيل النشاط الكشفي" else "بطاقة تفاصيل النشاط الكشفي (تتمة)"
+        canvas.drawText(docHeading, 297.5f, 110f, docTitlePaint)
         canvas.drawText("«${activity.title}»", 297.5f, 126f, activityTitlePaint)
 
         var currentY = 136f
 
-        // --- القسم 1: معلومات النشاط الأساسية ---
-        val dateFmt = SimpleDateFormat("yyyy/MM/dd", com.example.presentation.common.AppLocale.AR_DZ)
-        val startDateStr = if (activity.startDate > 0) dateFmt.format(Date(activity.startDate)) else "—"
-        val endDateStr = if (activity.endDate > 0) dateFmt.format(Date(activity.endDate)) else "—"
-        val dateDisplay = if (activity.isMultiDay()) "$startDateStr إلى $endDateStr" else startDateStr
-        val timeDisplay = if (activity.startTime.isNotBlank() || activity.endTime.isNotBlank()) {
-            "${activity.startTime.ifBlank { "—" }} - ${activity.endTime.ifBlank { "—" }}"
-        } else {
-            "خلال اليوم"
-        }
-        val locDisplay = activity.location.ifBlank { "المقر الكشفي" }
-        val respDisplay = activity.responsibleName.ifBlank { "قيادة السرب" }
+        if (pageNumber == 1) {
+            // --- القسم 1: معلومات النشاط الأساسية ---
+            val dateFmt = SimpleDateFormat("yyyy/MM/dd", com.example.presentation.common.AppLocale.AR_DZ)
+            val startDateStr = if (activity.startDate > 0) dateFmt.format(Date(activity.startDate)) else "—"
+            val endDateStr = if (activity.endDate > 0) dateFmt.format(Date(activity.endDate)) else "—"
+            val dateDisplay = if (activity.isMultiDay()) "$startDateStr إلى $endDateStr" else startDateStr
 
-        val sec1Height = 98f
-        canvas.drawRoundRect(40f, currentY, 555f, currentY + sec1Height, 8f, 8f, cardBgPaint)
-        canvas.drawRoundRect(40f, currentY, 555f, currentY + sec1Height, 8f, 8f, cardBorderPaint)
+            val formattedStartTime = if (activity.startTime.isNotBlank()) {
+                com.example.presentation.activity.ActivityFormatters.formatTimeArabic(activity.startTime)
+            } else ""
+            val formattedEndTime = if (activity.endTime.isNotBlank()) {
+                com.example.presentation.activity.ActivityFormatters.formatTimeArabic(activity.endTime)
+            } else ""
+            val timeDisplay = when {
+                formattedStartTime.isNotBlank() && formattedEndTime.isNotBlank() -> "$formattedStartTime - $formattedEndTime"
+                formattedStartTime.isNotBlank() -> formattedStartTime
+                formattedEndTime.isNotBlank() -> formattedEndTime
+                else -> "خلال اليوم"
+            }
 
-        canvas.drawText("معلومات النشاط الأساسية", 540f, currentY + 16f, sectionHeaderPaint)
-        canvas.drawLine(40f, currentY + 22f, 555f, currentY + 22f, separatorPaint)
+            val locDisplay = activity.location.ifBlank { "المقر الكشفي" }
+            val respDisplay = activity.responsibleName.ifBlank { "قيادة ${terms.groupNameDefinite}" }
 
-        canvas.drawText("نوع النشاط: ", 540f, currentY + 38f, labelBoldPaint)
-        canvas.drawText(activity.activityType.arabicLabel, 470f, currentY + 38f, valuePaint)
-        canvas.drawText("تاريخ النشاط: ", 270f, currentY + 38f, labelBoldPaint)
-        canvas.drawText(dateDisplay, 200f, currentY + 38f, valuePaint)
+            val sec1Height = 98f
+            canvas.drawRoundRect(40f, currentY, 555f, currentY + sec1Height, 8f, 8f, cardBgPaint)
+            canvas.drawRoundRect(40f, currentY, 555f, currentY + sec1Height, 8f, 8f, cardBorderPaint)
 
-        canvas.drawText("التوقيت: ", 540f, currentY + 54f, labelBoldPaint)
-        canvas.drawText(timeDisplay, 485f, currentY + 54f, valuePaint)
-        canvas.drawText("المكان: ", 270f, currentY + 54f, labelBoldPaint)
-        canvas.drawText(locDisplay, 225f, currentY + 54f, valuePaint)
-
-        canvas.drawText("القائد المسؤول: ", 540f, currentY + 70f, labelBoldPaint)
-        canvas.drawText(respDisplay, 450f, currentY + 70f, valuePaint)
-        canvas.drawText("حالة النشاط: ", 270f, currentY + 70f, labelBoldPaint)
-        canvas.drawText(activity.activityStatus.arabicLabel, 205f, currentY + 70f, valuePaint)
-
-        val contribText = if (activity.contributionRequired) "${activity.contributionDefaultAmount ?: 0} دج" else "بدون مساهمة"
-        canvas.drawText("مدة النشاط: ", 540f, currentY + 86f, labelBoldPaint)
-        canvas.drawText("${activity.durationDays()} يوم", 475f, currentY + 86f, valuePaint)
-        canvas.drawText("المساهمة المالية: ", 270f, currentY + 86f, labelBoldPaint)
-        canvas.drawText(contribText, 180f, currentY + 86f, valuePaint)
-
-        currentY += sec1Height + 10f
-
-        // --- القسم 2: الأهداف التربوية والأدوات واللوازم ---
-        val objText = activity.objectives.ifBlank { "لم تُحدد أهداف تربوية خاصة لهذا النشاط." }
-        val objLines = wrapText(objText, valuePaint, 490f).take(3)
-        val toolsText = activity.tools.ifBlank { "الأدوات الكشفية الاعتيادية." }
-        val toolLines = wrapText(toolsText, valuePaint, 490f).take(2)
-
-        val sec2Height = 30f + 14f + objLines.size * 13f + 14f + toolLines.size * 13f + 6f
-        canvas.drawRoundRect(40f, currentY, 555f, currentY + sec2Height, 8f, 8f, cardBgPaint)
-        canvas.drawRoundRect(40f, currentY, 555f, currentY + sec2Height, 8f, 8f, cardBorderPaint)
-
-        canvas.drawText("الأهداف التربوية والأدوات واللوازم", 540f, currentY + 16f, sectionHeaderPaint)
-        canvas.drawLine(40f, currentY + 22f, 555f, currentY + 22f, separatorPaint)
-
-        var yInSec2 = currentY + 36f
-        canvas.drawText("الأهداف التربوية:", 540f, yInSec2, labelBoldPaint)
-        yInSec2 += 13f
-        objLines.forEach { line ->
-            canvas.drawText(line, 535f, yInSec2, valuePaint)
-            yInSec2 += 13f
-        }
-
-        yInSec2 += 4f
-        canvas.drawText("الأدوات واللوازم:", 540f, yInSec2, labelBoldPaint)
-        yInSec2 += 13f
-        toolLines.forEach { line ->
-            canvas.drawText(line, 535f, yInSec2, valuePaint)
-            yInSec2 += 13f
-        }
-
-        currentY += sec2Height + 10f
-
-        // --- القسم 3: مواضيع الاجتماع التدريبي (إن وجدت) ---
-        if (meetingTopics.isNotEmpty()) {
-            val topicsToShow = meetingTopics.take(4)
-            val sec3Height = 28f + topicsToShow.size * 15f + 6f
-            canvas.drawRoundRect(40f, currentY, 555f, currentY + sec3Height, 8f, 8f, cardBgPaint)
-            canvas.drawRoundRect(40f, currentY, 555f, currentY + sec3Height, 8f, 8f, cardBorderPaint)
-
-            canvas.drawText("محاور ومواضيع الاجتماع التدريبي", 540f, currentY + 16f, sectionHeaderPaint)
+            canvas.drawText("معلومات النشاط الأساسية", 540f, currentY + 16f, sectionHeaderPaint)
             canvas.drawLine(40f, currentY + 22f, 555f, currentY + 22f, separatorPaint)
 
-            topicsToShow.forEachIndexed { idx, topic ->
-                canvas.drawText("${idx + 1}. $topic", 535f, currentY + 36f + idx * 15f, valuePaint)
-            }
-            currentY += sec3Height + 10f
+            canvas.drawText("نوع النشاط: ", 540f, currentY + 38f, labelBoldPaint)
+            canvas.drawText(activity.activityType.arabicLabel, 470f, currentY + 38f, valuePaint)
+            canvas.drawText("تاريخ النشاط: ", 270f, currentY + 38f, labelBoldPaint)
+            canvas.drawText(dateDisplay, 200f, currentY + 38f, valuePaint)
+
+            canvas.drawText("التوقيت: ", 540f, currentY + 54f, labelBoldPaint)
+            canvas.drawText(timeDisplay, 485f, currentY + 54f, valuePaint)
+            canvas.drawText("المكان: ", 270f, currentY + 54f, labelBoldPaint)
+            canvas.drawText(locDisplay, 225f, currentY + 54f, valuePaint)
+
+            canvas.drawText("القائد المسؤول: ", 540f, currentY + 70f, labelBoldPaint)
+            canvas.drawText(respDisplay, 450f, currentY + 70f, valuePaint)
+            canvas.drawText("حالة النشاط: ", 270f, currentY + 70f, labelBoldPaint)
+            canvas.drawText(activity.activityStatus.arabicLabel, 205f, currentY + 70f, valuePaint)
+
+            canvas.drawText("مدة النشاط: ", 540f, currentY + 86f, labelBoldPaint)
+            canvas.drawText("${activity.durationDays()} يوم", 475f, currentY + 86f, valuePaint)
+
+            currentY += sec1Height + 10f
         }
 
-        // --- القسم 4: التقرير الأدبي وخلاصة النشاط ---
-        val remainingForSec4 = maxOf(70f, 785f - currentY)
-        val reportContent = activity.finalReport.ifBlank { "لم يُسجل تقرير أدبي ختامي للنشاط بعد." }
-        val maxReportLines = maxOf(2, ((remainingForSec4 - 34f) / 14f).toInt())
-        val reportLines = wrapText(reportContent, valuePaint, 490f).take(maxReportLines)
-        val sec4Height = remainingForSec4
+        // رسم البطاقات النصية للصفحة الحالية
+        blocks.forEach { block ->
+            val cardHeight = 32f + block.lines.size * 14f
+            canvas.drawRoundRect(40f, currentY, 555f, currentY + cardHeight, 8f, 8f, cardBgPaint)
+            canvas.drawRoundRect(40f, currentY, 555f, currentY + cardHeight, 8f, 8f, cardBorderPaint)
 
-        canvas.drawRoundRect(40f, currentY, 555f, currentY + sec4Height, 8f, 8f, cardBgPaint)
-        canvas.drawRoundRect(40f, currentY, 555f, currentY + sec4Height, 8f, 8f, cardBorderPaint)
+            canvas.drawText(block.title, 540f, currentY + 16f, sectionHeaderPaint)
+            canvas.drawLine(40f, currentY + 22f, 555f, currentY + 22f, separatorPaint)
 
-        canvas.drawText("التقرير الأدبي وخلاصة النشاط", 540f, currentY + 16f, sectionHeaderPaint)
-        canvas.drawLine(40f, currentY + 22f, 555f, currentY + 22f, separatorPaint)
-
-        reportLines.forEachIndexed { idx, line ->
-            canvas.drawText(line, 535f, currentY + 36f + idx * 14f, valuePaint)
-        }
-
-        // تذييل الصفحة 1
-        canvas.drawLine(40f, 792f, 555f, 792f, Paint().apply { color = Color.LTGRAY; strokeWidth = 1f })
-        val footerPaint = Paint().apply {
-            color = Color.GRAY
-            textSize = 9.5f
-            typeface = cairoTypeface
-            isAntiAlias = true
-            textAlign = Paint.Align.RIGHT
-        }
-        val nowStr = SimpleDateFormat("yyyy/MM/dd", com.example.presentation.common.AppLocale.AR_DZ).format(Date())
-        canvas.drawText("تاريخ استخراج الوثيقة: $nowStr", 555f, 808f, footerPaint)
-        canvas.drawText("صفحة 1 من $totalPages | سرب النُّجُب المعتمد", 40f, 808f, Paint(footerPaint).apply { textAlign = Paint.Align.LEFT })
-    }
-
-    private fun drawActivityReportAttendancePage(
-        canvas: Canvas,
-        activity: Activity,
-        pageItems: List<ActivityReportAttendanceEntry>,
-        allItems: List<ActivityReportAttendanceEntry>,
-        startRowIndex: Int,
-        pageNumber: Int,
-        totalPages: Int,
-        isFirstAttendancePage: Boolean,
-        cairoTypeface: Typeface?,
-        boldCairo: Typeface?,
-        context: Context
-    ) {
-        val headerPaint = Paint().apply {
-            color = Color.rgb(46, 125, 50)
-            textSize = 18f
-            typeface = boldCairo
-            isFakeBoldText = true
-            isAntiAlias = true
-            textAlign = Paint.Align.RIGHT
-        }
-
-        val subtitlePaint = Paint().apply {
-            color = Color.rgb(200, 169, 81)
-            textSize = 12f
-            typeface = boldCairo
-            isFakeBoldText = true
-            isAntiAlias = true
-            textAlign = Paint.Align.RIGHT
-        }
-
-        val linePaint = Paint().apply {
-            color = Color.rgb(200, 169, 81)
-            strokeWidth = 2f
-            isAntiAlias = true
-        }
-
-        val docTitlePaint = Paint().apply {
-            color = Color.rgb(46, 125, 50)
-            textSize = 15f
-            typeface = boldCairo
-            isFakeBoldText = true
-            isAntiAlias = true
-            textAlign = Paint.Align.CENTER
-        }
-
-        val textPaint = Paint().apply {
-            color = Color.rgb(33, 33, 33)
-            textSize = 10f
-            typeface = cairoTypeface
-            isAntiAlias = true
-            textAlign = Paint.Align.RIGHT
-        }
-
-        val centerTextPaint = Paint().apply {
-            color = Color.rgb(33, 33, 33)
-            textSize = 10f
-            typeface = cairoTypeface
-            isAntiAlias = true
-            textAlign = Paint.Align.CENTER
-        }
-
-        val tableHeaderPaint = Paint().apply {
-            color = Color.rgb(46, 125, 50)
-            textSize = 10.5f
-            typeface = boldCairo
-            isFakeBoldText = true
-            isAntiAlias = true
-            textAlign = Paint.Align.CENTER
-        }
-
-        // رسم الشعار والترويسة
-        drawLogo(canvas, context, left = 40f, top = 25f, targetWidth = 50f, targetHeight = 50f)
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 555f, 45f, headerPaint)
-        canvas.drawText("الكشافة الإسلامية الجزائرية", 555f, 65f, subtitlePaint)
-        canvas.drawLine(40f, 85f, 555f, 85f, linePaint)
-
-        // عنوان الملحق
-        canvas.drawText("ملحق سجل الحضور والتقييم: ${activity.title}", 297.5f, 112f, docTitlePaint)
-
-        var currentY = 126f
-
-        // --- القسم 5: ملخص الحضور (في الصفحة الأولى فقط من الحضور) ---
-        if (isFirstAttendancePage) {
-            val summaryCardBg = Paint().apply {
-                color = Color.rgb(246, 249, 246)
-                style = Paint.Style.FILL
-                isAntiAlias = true
-            }
-            val summaryCardBorder = Paint().apply {
-                color = Color.rgb(215, 230, 215)
-                style = Paint.Style.STROKE
-                strokeWidth = 0.8f
-                isAntiAlias = true
-            }
-            val summaryHeight = 54f
-            canvas.drawRoundRect(40f, currentY, 555f, currentY + summaryHeight, 8f, 8f, summaryCardBg)
-            canvas.drawRoundRect(40f, currentY, 555f, currentY + summaryHeight, 8f, 8f, summaryCardBorder)
-
-            val summaryTitlePaint = Paint().apply {
-                color = Color.rgb(46, 125, 50)
-                textSize = 10.5f
-                typeface = boldCairo
-                isFakeBoldText = true
-                isAntiAlias = true
-                textAlign = Paint.Align.RIGHT
-            }
-            canvas.drawText("ملخص وإحصائيات الحضور", 540f, currentY + 16f, summaryTitlePaint)
-            canvas.drawLine(40f, currentY + 22f, 555f, currentY + 22f, Paint().apply { color = Color.rgb(220, 230, 220); strokeWidth = 0.8f })
-
-            val presentCount = allItems.count { it.status == AttendanceStatus.PRESENT }
-            val lateCount = allItems.count { it.status == AttendanceStatus.LATE || it.status == AttendanceStatus.VERY_LATE }
-            val excusedCount = allItems.count { it.status == AttendanceStatus.ABSENT_EXCUSED }
-            val unexcusedCount = allItems.count { it.status == AttendanceStatus.ABSENT_UNEXCUSED }
-            val totalCount = allItems.size
-
-            val statPaint = Paint().apply {
-                textSize = 10f
-                typeface = boldCairo
-                isFakeBoldText = true
-                isAntiAlias = true
-                textAlign = Paint.Align.RIGHT
+            block.lines.forEachIndexed { lineIdx, line ->
+                canvas.drawText(line, 535f, currentY + 36f + lineIdx * 14f, valuePaint)
             }
 
-            statPaint.color = Color.rgb(46, 125, 50)
-            canvas.drawText("حاضر: $presentCount", 540f, currentY + 40f, statPaint)
-
-            statPaint.color = Color.rgb(245, 124, 0)
-            canvas.drawText("متأخر: $lateCount", 430f, currentY + 40f, statPaint)
-
-            statPaint.color = Color.rgb(230, 81, 0)
-            canvas.drawText("بعذر: $excusedCount", 330f, currentY + 40f, statPaint)
-
-            statPaint.color = Color.RED
-            canvas.drawText("بدون عذر: $unexcusedCount", 240f, currentY + 40f, statPaint)
-
-            statPaint.color = Color.rgb(33, 33, 33)
-            canvas.drawText("المجموع: $totalCount شبل", 130f, currentY + 40f, statPaint)
-
-            currentY += summaryHeight + 12f
-        }
-
-        // --- القسم 6: جدول الحضور المفصل ---
-        val tableHeaderBg = Paint().apply {
-            color = Color.rgb(232, 245, 233)
-            style = Paint.Style.FILL
-            isAntiAlias = true
-        }
-        canvas.drawRoundRect(40f, currentY, 555f, currentY + 22f, 6f, 6f, tableHeaderBg)
-
-        canvas.drawText("#", 535f, currentY + 15f, tableHeaderPaint)
-        canvas.drawText("الاسم واللقب", 410f, currentY + 15f, Paint(tableHeaderPaint).apply { textAlign = Paint.Align.RIGHT })
-        canvas.drawText("الحالة", 185f, currentY + 15f, tableHeaderPaint)
-        canvas.drawText("النقاط", 80f, currentY + 15f, tableHeaderPaint)
-
-        currentY += 24f
-
-        if (pageItems.isEmpty()) {
-            val emptyPaint = Paint().apply {
-                color = Color.GRAY
-                textSize = 11f
-                typeface = cairoTypeface
-                isAntiAlias = true
-                textAlign = Paint.Align.CENTER
-            }
-            canvas.drawText("لم يتم تسجيل حضور لهذا النشاط حتى الآن.", 297.5f, currentY + 30f, emptyPaint)
-        } else {
-            val rowBgPaint = Paint().apply {
-                color = Color.rgb(249, 249, 249)
-                style = Paint.Style.FILL
-                isAntiAlias = true
-            }
-
-            val dividerPaint = Paint().apply {
-                color = Color.rgb(220, 220, 220)
-                strokeWidth = 0.8f
-            }
-
-            pageItems.forEachIndexed { i, item ->
-                val rowIndex = startRowIndex + i + 1
-                if (i % 2 == 1) {
-                    canvas.drawRect(40f, currentY, 555f, currentY + 20f, rowBgPaint)
-                }
-
-                canvas.drawText("$rowIndex", 535f, currentY + 14f, centerTextPaint)
-                canvas.drawText(item.scoutFullName, 510f, currentY + 14f, textPaint)
-
-                val statusText = item.status?.arabicLabel ?: "لم يُسجَّل"
-                val statusColor = when (item.status) {
-                    AttendanceStatus.PRESENT -> Color.rgb(46, 125, 50)
-                    AttendanceStatus.LATE -> Color.rgb(245, 124, 0)
-                    AttendanceStatus.VERY_LATE -> Color.rgb(230, 74, 25)
-                    AttendanceStatus.ABSENT_EXCUSED -> Color.rgb(230, 81, 0)
-                    AttendanceStatus.ABSENT_UNEXCUSED -> Color.RED
-                    null -> Color.GRAY
-                }
-                val statusPaint = Paint(centerTextPaint).apply {
-                    color = statusColor
-                    typeface = boldCairo
-                    isFakeBoldText = true
-                }
-                canvas.drawText(statusText, 185f, currentY + 14f, statusPaint)
-
-                val pointsStr = if (activity.activityType.usesPointsSystem()) {
-                    if (item.points > 0 || item.status != null) "${item.points}" else "—"
-                } else {
-                    "—"
-                }
-                canvas.drawText(pointsStr, 80f, currentY + 14f, centerTextPaint)
-
-                canvas.drawLine(40f, currentY + 20f, 555f, currentY + 20f, dividerPaint)
-                currentY += 20f
-            }
+            currentY += cardHeight + 10f
         }
 
         // تذييل الصفحة
@@ -3176,7 +3093,12 @@ object PdfExporter {
         }
         val nowStr = SimpleDateFormat("yyyy/MM/dd", com.example.presentation.common.AppLocale.AR_DZ).format(Date())
         canvas.drawText("تاريخ استخراج الوثيقة: $nowStr", 555f, 808f, footerPaint)
-        canvas.drawText("صفحة $pageNumber من $totalPages | سرب النُّجُب المعتمد", 40f, 808f, Paint(footerPaint).apply { textAlign = Paint.Align.LEFT })
+        canvas.drawText(
+            "صفحة $pageNumber من $totalPages | ${terms.groupName} ${terms.unitNameDefinite} المعتمد",
+            40f,
+            808f,
+            Paint(footerPaint).apply { textAlign = Paint.Align.LEFT }
+        )
     }
 
     private fun drawTrainingMeetingsMatrixLandscape(
@@ -3187,7 +3109,8 @@ object PdfExporter {
         pageNumber: Int,
         totalPages: Int,
         cairoTypeface: Typeface,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val boldCairo = Typeface.create(cairoTypeface, Typeface.BOLD)
 
@@ -3201,7 +3124,7 @@ object PdfExporter {
             isAntiAlias = true
             textAlign = Paint.Align.RIGHT
         }
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 818f, 32f, headerPaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 818f, 32f, headerPaint)
 
         val subtitlePaint = Paint().apply {
             color = Color.rgb(200, 169, 81)
@@ -3405,7 +3328,7 @@ object PdfExporter {
 
         val pageInfoPaint = Paint(footerPaint).apply { textAlign = Paint.Align.LEFT }
         val pageStr = if (totalPages > 1) "صفحة $pageNumber من $totalPages | " else ""
-        canvas.drawText("${pageStr}سرب النُّجُب — فوج محمد رحال", 24f, 576f, pageInfoPaint)
+        canvas.drawText("${pageStr}${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 24f, 576f, pageInfoPaint)
     }
 
     private fun truncateText(text: String, maxWidth: Float, paint: Paint): String {
@@ -3417,7 +3340,12 @@ object PdfExporter {
         return "$truncated…"
     }
 
-    private fun drawEmptyRegisterMatrixPage(canvas: Canvas, cairoTypeface: Typeface, context: Context) {
+    private fun drawEmptyRegisterMatrixPage(
+        canvas: Canvas,
+        cairoTypeface: Typeface,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val boldCairo = Typeface.create(cairoTypeface, Typeface.BOLD)
 
         drawLogo(canvas, context, left = 24f, top = 18f, targetWidth = 38f, targetHeight = 38f)
@@ -3436,7 +3364,7 @@ object PdfExporter {
             isAntiAlias = true
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText("سجل الاجتماعات التدريبية — سرب النُّجُب", 421f, 270f, titlePaint)
+        canvas.drawText("سجل الاجتماعات التدريبية — ${terms.groupName} ${terms.unitNameDefinite}", 421f, 270f, titlePaint)
         canvas.drawText("لا توجد اجتماعات تدريبية مسجلة بعد في التطبيق.", 421f, 305f, msgPaint)
 
         val footerLineY = 562f
@@ -3455,7 +3383,8 @@ object PdfExporter {
     fun exportProgressCardPdf(
         scout: Scout,
         badgeProgressList: List<BadgeProgress>,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoTypeface = try {
@@ -3467,13 +3396,13 @@ object PdfExporter {
         // الصفحة الأولى: شارة القبول + شارة الشبل المبتدئ
         val page1Info = PdfDocument.PageInfo.Builder(595, 842, 1).create()
         val page1 = pdfDocument.startPage(page1Info)
-        drawProgressCardPage1(page1.canvas, scout, badgeProgressList, cairoTypeface, context)
+        drawProgressCardPage1(page1.canvas, scout, badgeProgressList, cairoTypeface, context, terms)
         pdfDocument.finishPage(page1)
 
         // الصفحة الثانية: شارة الشبل الثاني + شارة الشبل الأول + الاعتماد
         val page2Info = PdfDocument.PageInfo.Builder(595, 842, 2).create()
         val page2 = pdfDocument.startPage(page2Info)
-        drawProgressCardPage2(page2.canvas, scout, badgeProgressList, cairoTypeface, context)
+        drawProgressCardPage2(page2.canvas, scout, badgeProgressList, cairoTypeface, context, terms)
         pdfDocument.finishPage(page2)
 
         val pdfFile = File(context.cacheDir, "progress_card_${scout.id}.pdf")
@@ -3484,7 +3413,12 @@ object PdfExporter {
         return pdfFile
     }
 
-    fun shareProgressCardPdf(file: File, scoutName: String, context: Context) {
+    fun shareProgressCardPdf(
+        file: File,
+        scoutName: String,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -3504,7 +3438,8 @@ object PdfExporter {
         scout: Scout,
         badgeProgressList: List<BadgeProgress>,
         typeface: Typeface,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val boldCairo = Typeface.create(typeface, Typeface.BOLD)
 
@@ -3550,7 +3485,7 @@ object PdfExporter {
         // شعار الترويسة
         drawLogo(canvas, context, left = 40f, top = 25f, targetWidth = 55f, targetHeight = 55f)
 
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال", 555f, 48f, titlePaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال", 555f, 48f, titlePaint)
         canvas.drawText("الكشافة الإسلامية الجزائرية", 555f, 68f, subtitlePaint)
         canvas.drawLine(40f, 95f, 555f, 95f, linePaint)
 
@@ -3562,11 +3497,11 @@ object PdfExporter {
             isAntiAlias = true
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText("بطاقة التقدم لشارات الكفاءة (مرحلة الأشبال)", 297f, 120f, docTitlePaint)
+        canvas.drawText("بطاقة التقدم لشارات الكفاءة (مرحلة ${terms.scoutPluralDefinite})", 297f, 120f, docTitlePaint)
 
         // قسم معلومات الشبل
         canvas.drawRoundRect(40f, 135f, 555f, 215f, 10f, 10f, boxPaint)
-        canvas.drawText("بيانات الشبل ومستوى التقدم", 540f, 155f, headerPaint)
+        canvas.drawText("بيانات ${terms.scoutSingularDefinite} ومستوى التقدم", 540f, 155f, headerPaint)
         canvas.drawLine(40f, 162f, 555f, 162f, Paint().apply { color = Color.LTGRAY; strokeWidth = 1f })
 
         val grantedCount = badgeProgressList.count { it.isGranted }
@@ -3588,7 +3523,7 @@ object PdfExporter {
         currentY = drawBadgeBox(canvas, "شارة القبول", badge1, currentY, 260f, typeface, boldCairo)
 
         val badge2 = badgeProgressList.firstOrNull { it.level == BadgeLevel.BEGINNER }
-        drawBadgeBox(canvas, "شارة الشبل المبتدئ", badge2, currentY + 15f, 260f, typeface, boldCairo)
+        drawBadgeBox(canvas, "شارة ${terms.scoutSingularDefinite} المبتدئ", badge2, currentY + 15f, 260f, typeface, boldCairo)
 
         // تذييل الصفحة 1
         canvas.drawLine(40f, 800f, 555f, 800f, Paint().apply { color = Color.LTGRAY; strokeWidth = 1f })
@@ -3610,7 +3545,8 @@ object PdfExporter {
         scout: Scout,
         badgeProgressList: List<BadgeProgress>,
         typeface: Typeface,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ) {
         val boldCairo = Typeface.create(typeface, Typeface.BOLD)
 
@@ -3635,16 +3571,16 @@ object PdfExporter {
         }
 
         // ترويسة الصفحة الثانية
-        canvas.drawText("سرب النُّجُب — فوج محمد رحال (بطاقة التقدم: ${scout.fullName})", 555f, 45f, headerPaint)
+        canvas.drawText("${terms.groupName} ${terms.unitNameDefinite} — فوج محمد رحال (بطاقة التقدم: ${scout.fullName})", 555f, 45f, headerPaint)
         canvas.drawLine(40f, 55f, 555f, 55f, linePaint)
 
         // رسم شارة 3: الثاني وشارة 4: الأول
         var currentY = 70f
         val badge3 = badgeProgressList.firstOrNull { it.level == BadgeLevel.SECOND }
-        currentY = drawBadgeBox(canvas, "شارة الشبل الثاني", badge3, currentY, 260f, typeface, boldCairo)
+        currentY = drawBadgeBox(canvas, "شارة ${terms.scoutSingularDefinite} الثاني", badge3, currentY, 260f, typeface, boldCairo)
 
         val badge4 = badgeProgressList.firstOrNull { it.level == BadgeLevel.FIRST }
-        currentY = drawBadgeBox(canvas, "شارة الشبل الأول", badge4, currentY + 15f, 260f, typeface, boldCairo)
+        currentY = drawBadgeBox(canvas, "شارة ${terms.scoutSingularDefinite} الأول", badge4, currentY + 15f, 260f, typeface, boldCairo)
 
         // قسم التوقيعات والاعتماد
         val signBoxTop = currentY + 20f
@@ -3657,7 +3593,7 @@ object PdfExporter {
         canvas.drawText("الاعتماد والمصادقة الرسمية", 540f, signBoxTop + 22f, headerPaint)
         canvas.drawLine(40f, signBoxTop + 30f, 555f, signBoxTop + 30f, Paint().apply { color = Color.LTGRAY; strokeWidth = 1f })
 
-        canvas.drawText("توقيع قائد السرب:", 540f, signBoxTop + 50f, textPaint)
+        canvas.drawText("توقيع قائد ${terms.groupNameDefinite}:", 540f, signBoxTop + 50f, textPaint)
         canvas.drawText("......................................", 540f, signBoxTop + 72f, textPaint)
 
         canvas.drawText("توقيع ومصادقة قائد الفوج:", 260f, signBoxTop + 50f, textPaint)
@@ -3788,7 +3724,8 @@ object PdfExporter {
 
     fun exportRawPointsPdf(
         scoutPointsList: List<ScoutRawPoints>,
-        context: Context
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
     ): File {
         val pdfDocument = PdfDocument()
         val cairoFont = getCairoTypeface(context)
@@ -3849,7 +3786,7 @@ object PdfExporter {
             yPos += 14f
             canvas.drawText("الكشافة الإسلامية الجزائرية — المحافظة الولائية لسطيف", pageWidth / 2f, yPos, nationalPaint)
             yPos += 14f
-            canvas.drawText("فوج محمد رحال — سرب النُّجُب للأشبال", pageWidth / 2f, yPos, nationalPaint)
+            canvas.drawText("فوج محمد رحال — ${terms.groupName} ${terms.unitNameDefinite} لـ${terms.scoutPluralDefinite}", pageWidth / 2f, yPos, nationalPaint)
             yPos += 20f
 
             drawLogo(canvas, context, left = leftMargin, top = 25f, targetWidth = 45f, targetHeight = 45f)
@@ -3860,11 +3797,11 @@ object PdfExporter {
                 typeface = cairoBold
                 textAlign = Paint.Align.CENTER
             }
-            canvas.drawText("سجل تقييم الأشبال (نقاط)", pageWidth / 2f, yPos, titlePaint)
+            canvas.drawText("سجل تقييم ${terms.scoutPluralDefinite} (نقاط)", pageWidth / 2f, yPos, titlePaint)
             yPos += 14f
 
             val sdf = SimpleDateFormat("dd/MM/yyyy", com.example.presentation.common.AppLocale.AR_DZ)
-            val subInfo = "تاريخ التقرير: ${sdf.format(Date())} | إجمالي الأشبال: ${scoutPointsList.size}"
+            val subInfo = "تاريخ التقرير: ${sdf.format(Date())} | إجمالي ${terms.scoutPluralDefinite}: ${scoutPointsList.size}"
             val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.GRAY
                 textSize = 8.5f
@@ -4043,7 +3980,7 @@ object PdfExporter {
                 typeface = cairoFont
                 textAlign = Paint.Align.CENTER
             }
-            canvas.drawText("صفحة ${pageIndex + 1} من $totalPages — سرب النُّجُب للأشبال", pageWidth / 2f, pageHeight - 20f, footerPaint)
+            canvas.drawText("صفحة ${pageIndex + 1} من $totalPages — ${terms.groupName} ${terms.unitNameDefinite} لـ${terms.scoutPluralDefinite}", pageWidth / 2f, pageHeight - 20f, footerPaint)
 
             pdfDocument.finishPage(page)
         }
@@ -4068,7 +4005,11 @@ object PdfExporter {
         }
     }
 
-    fun shareRawPointsPdf(file: File, context: Context) {
+    fun shareRawPointsPdf(
+        file: File,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
         val uri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
@@ -4076,11 +4017,1145 @@ object PdfExporter {
         )
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
-            putExtra(Intent.EXTRA_SUBJECT, "سجل تقييم الأشبال (نقاط) — سرب النُّجُب")
+            putExtra(Intent.EXTRA_SUBJECT, "سجل تقييم ${terms.scoutPluralDefinite} (نقاط) — ${terms.groupName} ${terms.unitNameDefinite}")
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "مشاركة سجل تقييم الأشبال كـ PDF"))
+        context.startActivity(Intent.createChooser(intent, "مشاركة سجل تقييم ${terms.scoutPluralDefinite} كـ PDF"))
+    }
+
+    // =========================================================================
+    // تقارير الحزمة العامة (General Reports PDF Exporters)
+    // =========================================================================
+
+    data class ActivitySummary(
+        val title: String,
+        val type: String,
+        val date: String,
+        val presentCount: Int,
+        val absentCount: Int,
+        val attendancePercentage: Double
+    )
+
+    private fun sharePdfFile(file: File, subject: String, chooserTitle: String, context: Context) {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, chooserTitle))
+    }
+
+    fun shareGeneralAttendancePdf(
+        file: File,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
+        sharePdfFile(file, "تقرير الحضور الشامل — ${terms.groupName} ${terms.unitNameDefinite}", "مشاركة تقرير الحضور الشامل كـ PDF", context)
+    }
+
+    fun shareActivitiesReportPdf(
+        file: File,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
+        sharePdfFile(file, "تقرير النشاط العام — ${terms.groupName} ${terms.unitNameDefinite}", "مشاركة تقرير النشاط العام كـ PDF", context)
+    }
+
+    fun shareProgressReportPdf(
+        file: File,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
+        sharePdfFile(file, "تقرير التقدم الشامل — ${terms.groupName} ${terms.unitNameDefinite}", "مشاركة تقرير التقدم الشامل كـ PDF", context)
+    }
+
+    fun shareLeadersEvaluationPdf(
+        file: File,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
+        sharePdfFile(file, "تقرير تقييم القادة — ${terms.groupName} ${terms.unitNameDefinite}", "مشاركة تقرير تقييم القادة كـ PDF", context)
+    }
+
+    private fun drawScoutPdfHeader(
+        canvas: Canvas,
+        pageWidth: Int,
+        title: String,
+        subInfo: String,
+        cairoFont: Typeface?,
+        cairoBold: Typeface?,
+        context: Context,
+        isLandscape: Boolean,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
+        val leftMargin = 24f
+        val rightMargin = (pageWidth - 24).toFloat()
+
+        // شعار الفوج
+        drawLogo(canvas, context, left = leftMargin, top = 16f, targetWidth = 42f, targetHeight = 42f)
+
+        // ترويسة وطنية وكشفية في الوسط
+        var yPos = 22f
+        val nationalPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.DKGRAY
+            textSize = 9.5f
+            typeface = cairoFont
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText("الجمهورية الجزائرية الديمقراطية الشعبية", pageWidth / 2f, yPos, nationalPaint)
+        yPos += 13f
+        canvas.drawText("الكشافة الإسلامية الجزائرية — المحافظة الولائية لسطيف", pageWidth / 2f, yPos, nationalPaint)
+        yPos += 13f
+        val unitPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(46, 125, 50)
+            textSize = 10f
+            typeface = cairoBold
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText("فوج محمد رحال — ${terms.groupName} ${terms.unitNameDefinite} لـ${terms.scoutPluralDefinite}", pageWidth / 2f, yPos, unitPaint)
+        yPos += 18f
+
+        // عنوان التقرير البارز
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(27, 94, 32)
+            textSize = if (isLandscape) 16f else 15f
+            typeface = cairoBold
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText(title, pageWidth / 2f, yPos, titlePaint)
+        yPos += 14f
+
+        // معلومات التاريخ والإحصاء
+        if (subInfo.isNotBlank()) {
+            val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.GRAY
+                textSize = 8.5f
+                typeface = cairoFont
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText(subInfo, pageWidth / 2f, yPos, subPaint)
+            yPos += 10f
+        }
+
+        // خط فاصل ذهبي
+        val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(200, 169, 81)
+            strokeWidth = 1.2f
+        }
+        canvas.drawLine(leftMargin, yPos, rightMargin, yPos, dividerPaint)
+    }
+
+    private fun drawScoutPdfFooter(
+        canvas: Canvas,
+        pageWidth: Int,
+        pageHeight: Int,
+        currentPage: Int,
+        totalPages: Int,
+        cairoFont: Typeface?,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
+        val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.GRAY
+            textSize = 8.5f
+            typeface = cairoFont
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText(
+            "صفحة $currentPage من $totalPages — ${terms.groupName} ${terms.unitNameDefinite} لـ${terms.scoutPluralDefinite} (فوج محمد رحال سطيف)",
+            pageWidth / 2f,
+            pageHeight - 16f,
+            footerPaint
+        )
+    }
+
+    /**
+     * 1) تقرير الحضور الشامل (مصفوفة A4 أفقي)
+     */
+    fun exportGeneralAttendancePdf(
+        scouts: List<Scout>,
+        activities: List<Activity>,
+        attendanceMap: Map<String, Map<String, String>>,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ): File {
+        val pdfDocument = PdfDocument()
+        val cairoFont = getCairoTypeface(context) ?: Typeface.DEFAULT
+        val cairoBold = getBoldCairoTypeface(cairoFont) ?: Typeface.DEFAULT_BOLD
+
+        val pageWidth = 842
+        val pageHeight = 595
+        val leftMargin = 24f
+        val rightMargin = 818f
+        val totalAvailableWidth = rightMargin - leftMargin
+
+        val activeScouts = scouts.filter { it.isActive }
+        val rowsPerPage = 16
+        val maxActivitiesPerPage = 6
+        val activityChunks = if (activities.isNotEmpty()) activities.chunked(maxActivitiesPerPage) else listOf(emptyList())
+        val scoutChunks = if (activeScouts.isNotEmpty()) activeScouts.chunked(rowsPerPage) else listOf(emptyList())
+        val totalPages = maxOf(1, activityChunks.size * scoutChunks.size)
+
+        val nameColWidth = 140f
+        val totalColWidth = 55f
+        val pctColWidth = 55f
+
+        val sdf = SimpleDateFormat("dd/MM/yyyy", com.example.presentation.common.AppLocale.AR_DZ)
+        val shortDateFormat = SimpleDateFormat("dd/MM", com.example.presentation.common.AppLocale.AR_DZ)
+
+        var pageNumber = 1
+        for (activityChunk in activityChunks) {
+            val actCount = activityChunk.size
+            val availableActWidth = totalAvailableWidth - nameColWidth - totalColWidth - pctColWidth
+            val actColWidth = if (actCount > 0) availableActWidth / actCount else 0f
+            val tableWidth = nameColWidth + (actColWidth * actCount) + totalColWidth + pctColWidth
+            val tableLeft = leftMargin + (totalAvailableWidth - tableWidth) / 2f
+            val tableRight = tableLeft + tableWidth
+
+            for (scoutChunk in scoutChunks) {
+                val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+                val page = pdfDocument.startPage(pageInfo)
+                val canvas = page.canvas
+
+                val subInfo = "تاريخ التقرير: ${sdf.format(Date())} | إجمالي ${terms.scoutPluralDefinite}: ${activeScouts.size} | إجمالي الأنشطة: ${activities.size}"
+                drawScoutPdfHeader(canvas, pageWidth, "تقرير الحضور الشامل", subInfo, cairoFont, cairoBold, context, isLandscape = true, terms = terms)
+
+                val tableTop = 86f
+                val headerHeight = 36f
+                val rowHeight = 24f
+
+                val headerBg = Paint().apply {
+                    color = Color.rgb(232, 245, 233)
+                    style = Paint.Style.FILL
+                }
+                val borderPaint = Paint().apply {
+                    color = Color.rgb(200, 214, 201)
+                    style = Paint.Style.STROKE
+                    strokeWidth = 0.8f
+                }
+                canvas.drawRect(tableLeft, tableTop, tableRight, tableTop + headerHeight, headerBg)
+                canvas.drawRect(tableLeft, tableTop, tableRight, tableTop + headerHeight, borderPaint)
+
+                var currentX = tableRight
+
+                // ترويسة اسم الشبل
+                val thPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.rgb(27, 94, 32)
+                    textSize = 9.5f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.CENTER
+                }
+                currentX -= nameColWidth
+                canvas.drawText("الاسم واللقب", currentX + nameColWidth / 2f, tableTop + 22f, thPaint)
+                canvas.drawLine(currentX, tableTop, currentX, tableTop + headerHeight, borderPaint)
+
+                // ترويسات الأنشطة
+                val actTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.rgb(27, 94, 32)
+                    textSize = 8.5f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.CENTER
+                }
+                val actDatePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.DKGRAY
+                    textSize = 8f
+                    typeface = cairoFont
+                    textAlign = Paint.Align.CENTER
+                }
+                for (act in activityChunk) {
+                    currentX -= actColWidth
+                    val actDateStr = if (act.startDate > 0) shortDateFormat.format(Date(act.startDate)) else "—"
+                    val truncatedTitle = truncateText(act.title, actColWidth - 6f, actTitlePaint)
+                    canvas.drawText(truncatedTitle, currentX + actColWidth / 2f, tableTop + 15f, actTitlePaint)
+                    canvas.drawText(actDateStr, currentX + actColWidth / 2f, tableTop + 28f, actDatePaint)
+                    canvas.drawLine(currentX, tableTop, currentX, tableTop + headerHeight, borderPaint)
+                }
+
+                // ترويسة المجموع
+                currentX -= totalColWidth
+                canvas.drawText("المجموع", currentX + totalColWidth / 2f, tableTop + 22f, thPaint)
+                canvas.drawLine(currentX, tableTop, currentX, tableTop + headerHeight, borderPaint)
+
+                // ترويسة النسبة
+                currentX -= pctColWidth
+                canvas.drawText("النسبة", currentX + pctColWidth / 2f, tableTop + 22f, thPaint)
+
+                // صفوف بيانات الأشبال
+                var currentY = tableTop + headerHeight
+                scoutChunk.forEachIndexed { rIdx, scout ->
+                    val isEven = rIdx % 2 == 0
+                    val rowBgColor = if (isEven) Color.WHITE else Color.rgb(248, 249, 250)
+                    val rowBg = Paint().apply { color = rowBgColor; style = Paint.Style.FILL }
+                    canvas.drawRect(tableLeft, currentY, tableRight, currentY + rowHeight, rowBg)
+                    canvas.drawRect(tableLeft, currentY, tableRight, currentY + rowHeight, borderPaint)
+
+                    var rowX = tableRight
+
+                    // 1) الاسم
+                    rowX -= nameColWidth
+                    val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.BLACK
+                        textSize = 9f
+                        typeface = cairoBold
+                        textAlign = Paint.Align.RIGHT
+                    }
+                    val scoutName = truncateText(scout.fullName, nameColWidth - 14f, namePaint)
+                    canvas.drawText(scoutName, tableRight - 8f, currentY + 16f, namePaint)
+                    canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                    // 2) خلايا الأنشطة
+                    val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        textSize = 8.5f
+                        typeface = cairoBold
+                        textAlign = Paint.Align.CENTER
+                    }
+                    for (act in activityChunk) {
+                        rowX -= actColWidth
+                        val status = attendanceMap[scout.id]?.get(act.id).orEmpty()
+                        val (label, textColor) = when {
+                            status.contains("present", true) || status.contains("حاضر") -> "حاضر" to Color.rgb(46, 125, 50)
+                            status.contains("very_late", true) || status.contains("جداً") -> "متأخر+" to Color.rgb(230, 74, 25)
+                            status.contains("late", true) || status.contains("متأخر") -> "متأخر" to Color.rgb(245, 124, 0)
+                            status.contains("excused", true) || status.contains("عذر") -> "بعذر" to Color.rgb(251, 140, 0)
+                            status.contains("absent", true) || status.contains("غائب") -> "غائب" to Color.rgb(211, 47, 47)
+                            else -> "—" to Color.GRAY
+                        }
+                        statusPaint.color = textColor
+                        canvas.drawText(label, rowX + actColWidth / 2f, currentY + 16f, statusPaint)
+                        canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+                    }
+
+                    // حساب الحضور الكلي والنسبة
+                    val scoutMap = attendanceMap[scout.id].orEmpty()
+                    val totalAttended = activities.count { act ->
+                        val st = scoutMap[act.id].orEmpty()
+                        st.contains("present", true) || st.contains("late", true) || st.contains("حاضر") || st.contains("متأخر")
+                    }
+                    val pct = if (activities.isNotEmpty()) (totalAttended.toDouble() * 100.0 / activities.size) else 0.0
+
+                    // 3) المجموع
+                    rowX -= totalColWidth
+                    val totalTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.rgb(27, 94, 32)
+                        textSize = 9.5f
+                        typeface = cairoBold
+                        textAlign = Paint.Align.CENTER
+                    }
+                    canvas.drawText("$totalAttended", rowX + totalColWidth / 2f, currentY + 16f, totalTextPaint)
+                    canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                    // 4) النسبة
+                    rowX -= pctColWidth
+                    val pctText = String.format(Locale.US, "%.0f%%", pct)
+                    canvas.drawText(pctText, rowX + pctColWidth / 2f, currentY + 16f, totalTextPaint)
+
+                    currentY += rowHeight
+                }
+
+                // دليل الرموز في الأسفل
+                val legendPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.DKGRAY
+                    textSize = 8f
+                    typeface = cairoFont
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText(
+                    "دليل الرموز: حاضر (أخضر) | متأخر (برتقالي) | غائب بعذر (كهرماني) | غائب بدون عذر (أحمر)",
+                    pageWidth / 2f,
+                    pageHeight - 34f,
+                    legendPaint
+                )
+
+                drawScoutPdfFooter(canvas, pageWidth, pageHeight, pageNumber, totalPages, cairoFont, terms = terms)
+
+                pdfDocument.finishPage(page)
+                pageNumber++
+            }
+        }
+
+        val file = File(context.cacheDir, "general_attendance_report_${System.currentTimeMillis()}.pdf")
+        FileOutputStream(file).use { outputStream ->
+            pdfDocument.writeTo(outputStream)
+        }
+        pdfDocument.close()
+        return file
+    }
+
+    /**
+     * 2) تقرير النشاط العام (قائمة جدولية A4 عمودي)
+     */
+    fun exportActivitiesReportPdf(
+        activities: List<ActivitySummary>,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ): File {
+        val pdfDocument = PdfDocument()
+        val cairoFont = getCairoTypeface(context) ?: Typeface.DEFAULT
+        val cairoBold = getBoldCairoTypeface(cairoFont) ?: Typeface.DEFAULT_BOLD
+
+        val pageWidth = 595
+        val pageHeight = 842
+        val leftMargin = 25f
+        val rightMargin = 570f
+        val tableWidth = 545f
+
+        val rowsPerPage = 20
+        val activityChunks = if (activities.isNotEmpty()) activities.chunked(rowsPerPage) else listOf(emptyList())
+        val totalPages = maxOf(1, activityChunks.size)
+
+        val sdf = SimpleDateFormat("dd/MM/yyyy", com.example.presentation.common.AppLocale.AR_DZ)
+
+        // حسابات الأعمدة (عرض كلي 545f من اليمين إلى اليسار)
+        val colNameWidth = 165f
+        val colTypeWidth = 80f
+        val colDateWidth = 75f
+        val colPresWidth = 75f
+        val colAbsWidth = 75f
+        val colRateWidth = 75f
+
+        activityChunks.forEachIndexed { pageIndex, chunk ->
+            val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageIndex + 1).create()
+            val page = pdfDocument.startPage(pageInfo)
+            val canvas = page.canvas
+
+            val subInfo = "تاريخ التقرير: ${sdf.format(Date())} | إجمالي الأنشطة المنجزة: ${activities.size}"
+            drawScoutPdfHeader(canvas, pageWidth, "تقرير النشاط العام", subInfo, cairoFont, cairoBold, context, isLandscape = false, terms = terms)
+
+            var tableTop = 86f
+
+            // في الصفحة الأولى، رسم بطاقة ملخص إحصائي أنيقة
+            if (pageIndex == 0 && activities.isNotEmpty()) {
+                val totalAtt = activities.sumOf { it.presentCount }
+                val avgRate = activities.map { it.attendancePercentage }.average()
+
+                val summaryRect = RectF(leftMargin, tableTop, rightMargin, tableTop + 36f)
+                val summaryBg = Paint().apply {
+                    color = Color.rgb(241, 248, 233)
+                    style = Paint.Style.FILL
+                }
+                val summaryBorder = Paint().apply {
+                    color = Color.rgb(200, 230, 201)
+                    style = Paint.Style.STROKE
+                    strokeWidth = 0.8f
+                }
+                canvas.drawRoundRect(summaryRect, 6f, 6f, summaryBg)
+                canvas.drawRoundRect(summaryRect, 6f, 6f, summaryBorder)
+
+                val statPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.rgb(27, 94, 32)
+                    textSize = 9f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.CENTER
+                }
+                val statValPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.BLACK
+                    textSize = 9.5f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.CENTER
+                }
+
+                val thirdW = tableWidth / 3f
+                // بطاقة 1: عدد الأنشطة
+                canvas.drawText("إجمالي الأنشطة: ${activities.size}", leftMargin + thirdW * 2.5f, tableTop + 22f, statValPaint)
+                // بطاقة 2: مجموع الحضور
+                canvas.drawText("مجموع الحاضرين: $totalAtt", leftMargin + thirdW * 1.5f, tableTop + 22f, statValPaint)
+                // بطاقة 3: متوسط النسبة
+                val avgFormatted = String.format(Locale.US, "%.1f%%", avgRate)
+                canvas.drawText("متوسط نسبة الحضور: $avgFormatted", leftMargin + thirdW * 0.5f, tableTop + 22f, statPaint)
+
+                tableTop += 46f
+            }
+
+            val headerHeight = 28f
+            val rowHeight = 24f
+
+            val headerBg = Paint().apply {
+                color = Color.rgb(232, 245, 233)
+                style = Paint.Style.FILL
+            }
+            val borderPaint = Paint().apply {
+                color = Color.rgb(200, 214, 201)
+                style = Paint.Style.STROKE
+                strokeWidth = 0.8f
+            }
+            canvas.drawRect(leftMargin, tableTop, rightMargin, tableTop + headerHeight, headerBg)
+            canvas.drawRect(leftMargin, tableTop, rightMargin, tableTop + headerHeight, borderPaint)
+
+            var curX = rightMargin
+
+            val thPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(27, 94, 32)
+                textSize = 9f
+                typeface = cairoBold
+                textAlign = Paint.Align.CENTER
+            }
+
+            // 1) اسم النشاط
+            curX -= colNameWidth
+            canvas.drawText("اسم النشاط", curX + colNameWidth / 2f, tableTop + 18f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 2) نوع النشاط
+            curX -= colTypeWidth
+            canvas.drawText("نوع النشاط", curX + colTypeWidth / 2f, tableTop + 18f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 3) التاريخ
+            curX -= colDateWidth
+            canvas.drawText("التاريخ", curX + colDateWidth / 2f, tableTop + 18f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 4) عدد الحاضرين
+            curX -= colPresWidth
+            canvas.drawText("الحاضرين", curX + colPresWidth / 2f, tableTop + 18f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 5) عدد الغائبين
+            curX -= colAbsWidth
+            canvas.drawText("الغائبين", curX + colAbsWidth / 2f, tableTop + 18f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 6) نسبة الحضور
+            curX -= colRateWidth
+            canvas.drawText("نسبة الحضور", curX + colRateWidth / 2f, tableTop + 18f, thPaint)
+
+            // صفوف الأنشطة
+            var currentY = tableTop + headerHeight
+            chunk.forEachIndexed { rIdx, item ->
+                val isEven = rIdx % 2 == 0
+                val rowBgColor = if (isEven) Color.WHITE else Color.rgb(248, 249, 250)
+                val rowBg = Paint().apply { color = rowBgColor; style = Paint.Style.FILL }
+                canvas.drawRect(leftMargin, currentY, rightMargin, currentY + rowHeight, rowBg)
+                canvas.drawRect(leftMargin, currentY, rightMargin, currentY + rowHeight, borderPaint)
+
+                var rowX = rightMargin
+
+                // 1) اسم النشاط
+                rowX -= colNameWidth
+                val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.BLACK
+                    textSize = 9f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.RIGHT
+                }
+                val truncatedTitle = truncateText(item.title, colNameWidth - 14f, titlePaint)
+                canvas.drawText(truncatedTitle, rightMargin - 8f, currentY + 16f, titlePaint)
+                canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                // 2) نوع النشاط
+                rowX -= colTypeWidth
+                val typePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.DKGRAY
+                    textSize = 8.5f
+                    typeface = cairoFont
+                    textAlign = Paint.Align.CENTER
+                }
+                val truncatedType = truncateText(item.type, colTypeWidth - 8f, typePaint)
+                canvas.drawText(truncatedType, rowX + colTypeWidth / 2f, currentY + 16f, typePaint)
+                canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                // 3) التاريخ
+                rowX -= colDateWidth
+                val datePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.DKGRAY
+                    textSize = 8.5f
+                    typeface = cairoFont
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText(item.date, rowX + colDateWidth / 2f, currentY + 16f, datePaint)
+                canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                // 4) عدد الحاضرين
+                rowX -= colPresWidth
+                val presPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.rgb(46, 125, 50)
+                    textSize = 9.5f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText("${item.presentCount}", rowX + colPresWidth / 2f, currentY + 16f, presPaint)
+                canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                // 5) عدد الغائبين
+                rowX -= colAbsWidth
+                val absPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.rgb(211, 47, 47)
+                    textSize = 9.5f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText("${item.absentCount}", rowX + colAbsWidth / 2f, currentY + 16f, absPaint)
+                canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                // 6) نسبة الحضور
+                rowX -= colRateWidth
+                val ratePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.rgb(27, 94, 32)
+                    textSize = 9.5f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.CENTER
+                }
+                val rateStr = String.format(Locale.US, "%.0f%%", item.attendancePercentage)
+                canvas.drawText(rateStr, rowX + colRateWidth / 2f, currentY + 16f, ratePaint)
+
+                currentY += rowHeight
+            }
+
+            drawScoutPdfFooter(canvas, pageWidth, pageHeight, pageIndex + 1, totalPages, cairoFont, terms = terms)
+
+            pdfDocument.finishPage(page)
+        }
+
+        val file = File(context.cacheDir, "activities_report_${System.currentTimeMillis()}.pdf")
+        FileOutputStream(file).use { outputStream ->
+            pdfDocument.writeTo(outputStream)
+        }
+        pdfDocument.close()
+        return file
+    }
+
+    /**
+     * 3) تقرير التقدم الشامل (مصفوفة شارات الكفاءة والهواية A4 أفقي)
+     */
+    fun exportProgressReportPdf(
+        scouts: List<Scout>,
+        badgeMap: Map<String, List<String>>,
+        hobbyCountMap: Map<String, Int>,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ): File {
+        val pdfDocument = PdfDocument()
+        val cairoFont = getCairoTypeface(context) ?: Typeface.DEFAULT
+        val cairoBold = getBoldCairoTypeface(cairoFont) ?: Typeface.DEFAULT_BOLD
+
+        val pageWidth = 842
+        val pageHeight = 595
+        val leftMargin = 24f
+        val rightMargin = 818f
+        val tableWidth = rightMargin - leftMargin // 794f
+
+        val activeScouts = scouts.filter { it.isActive }
+        val rowsPerPage = 16
+        val scoutChunks = if (activeScouts.isNotEmpty()) activeScouts.chunked(rowsPerPage) else listOf(emptyList())
+        val totalPages = maxOf(1, scoutChunks.size)
+
+        // توزيع الأعمدة (المجموع 794f من اليمين إلى اليسار)
+        val colNameWidth = 174f
+        val colAcceptWidth = 120f
+        val colBeginWidth = 120f
+        val colSecondWidth = 120f
+        val colFirstWidth = 120f
+        val colHobbyWidth = 140f
+
+        val sdf = SimpleDateFormat("dd/MM/yyyy", com.example.presentation.common.AppLocale.AR_DZ)
+
+        scoutChunks.forEachIndexed { pageIndex, chunk ->
+            val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageIndex + 1).create()
+            val page = pdfDocument.startPage(pageInfo)
+            val canvas = page.canvas
+
+            val totalHobbies = activeScouts.sumOf { hobbyCountMap[it.id] ?: 0 }
+            val subInfo = "تاريخ التقرير: ${sdf.format(Date())} | إجمالي ${terms.scoutPluralDefinite}: ${activeScouts.size} | إجمالي شارات الهواية الممنوحة: $totalHobbies"
+            drawScoutPdfHeader(canvas, pageWidth, "تقرير التقدم الشامل", subInfo, cairoFont, cairoBold, context, isLandscape = true, terms = terms)
+
+            val tableTop = 86f
+            val headerHeight = 32f
+            val rowHeight = 24f
+
+            val headerBg = Paint().apply {
+                color = Color.rgb(232, 245, 233)
+                style = Paint.Style.FILL
+            }
+            val borderPaint = Paint().apply {
+                color = Color.rgb(200, 214, 201)
+                style = Paint.Style.STROKE
+                strokeWidth = 0.8f
+            }
+            canvas.drawRect(leftMargin, tableTop, rightMargin, tableTop + headerHeight, headerBg)
+            canvas.drawRect(leftMargin, tableTop, rightMargin, tableTop + headerHeight, borderPaint)
+
+            var curX = rightMargin
+
+            val thPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(27, 94, 32)
+                textSize = 9.5f
+                typeface = cairoBold
+                textAlign = Paint.Align.CENTER
+            }
+
+            // 1) اسم الشبل
+            curX -= colNameWidth
+            canvas.drawText("الاسم واللقب", curX + colNameWidth / 2f, tableTop + 20f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 2) شارة القبول
+            curX -= colAcceptWidth
+            canvas.drawText("شارة القبول", curX + colAcceptWidth / 2f, tableTop + 20f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 3) شارة المبتدئ
+            curX -= colBeginWidth
+            canvas.drawText("شارة المبتدئ", curX + colBeginWidth / 2f, tableTop + 20f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 4) شارة الثاني
+            curX -= colSecondWidth
+            canvas.drawText("شارة الثاني", curX + colSecondWidth / 2f, tableTop + 20f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 5) شارة الأول
+            curX -= colFirstWidth
+            canvas.drawText("شارة الأول", curX + colFirstWidth / 2f, tableTop + 20f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 6) شارات الهواية
+            curX -= colHobbyWidth
+            canvas.drawText("شارات الهواية (العدد)", curX + colHobbyWidth / 2f, tableTop + 20f, thPaint)
+
+            // صفوف الأشبال
+            var currentY = tableTop + headerHeight
+            chunk.forEachIndexed { rIdx, scout ->
+                val isEven = rIdx % 2 == 0
+                val rowBgColor = if (isEven) Color.WHITE else Color.rgb(248, 249, 250)
+                val rowBg = Paint().apply { color = rowBgColor; style = Paint.Style.FILL }
+                canvas.drawRect(leftMargin, currentY, rightMargin, currentY + rowHeight, rowBg)
+                canvas.drawRect(leftMargin, currentY, rightMargin, currentY + rowHeight, borderPaint)
+
+                var rowX = rightMargin
+
+                // 1) اسم الشبل
+                rowX -= colNameWidth
+                val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.BLACK
+                    textSize = 9.5f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.RIGHT
+                }
+                val scoutName = truncateText(scout.fullName, colNameWidth - 14f, namePaint)
+                canvas.drawText(scoutName, rightMargin - 8f, currentY + 16f, namePaint)
+                canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                val scoutBadges = badgeMap[scout.id].orEmpty()
+
+                fun drawBadgeCell(colW: Float, isGranted: Boolean) {
+                    rowX -= colW
+                    if (isGranted) {
+                        val badgePillPaint = Paint().apply {
+                            color = Color.rgb(232, 245, 233)
+                            style = Paint.Style.FILL
+                        }
+                        val pillRect = RectF(rowX + colW / 2f - 28f, currentY + 4f, rowX + colW / 2f + 28f, currentY + rowHeight - 4f)
+                        canvas.drawRoundRect(pillRect, 6f, 6f, badgePillPaint)
+
+                        val grantedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.rgb(46, 125, 50)
+                            textSize = 9f
+                            typeface = cairoBold
+                            textAlign = Paint.Align.CENTER
+                        }
+                        canvas.drawText("ممنوحة ✓", rowX + colW / 2f, currentY + 16f, grantedPaint)
+                    } else {
+                        val absentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.rgb(180, 180, 180)
+                            textSize = 9.5f
+                            typeface = cairoFont
+                            textAlign = Paint.Align.CENTER
+                        }
+                        canvas.drawText("—", rowX + colW / 2f, currentY + 16f, absentPaint)
+                    }
+                    canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+                }
+
+                // 2) شارة القبول
+                val hasAcceptance = scoutBadges.any { it.contains("ACCEPTANCE", true) || it.contains("قبول") }
+                drawBadgeCell(colAcceptWidth, hasAcceptance)
+
+                // 3) شارة المبتدئ
+                val hasBeginner = scoutBadges.any { it.contains("BEGINNER", true) || it.contains("مبتدئ") }
+                drawBadgeCell(colBeginWidth, hasBeginner)
+
+                // 4) شارة الثاني
+                val hasSecond = scoutBadges.any { it.contains("SECOND", true) || it.contains("ثاني") }
+                drawBadgeCell(colSecondWidth, hasSecond)
+
+                // 5) شارة الأول
+                val hasFirst = scoutBadges.any { it.contains("FIRST", true) || it.contains("أول") }
+                drawBadgeCell(colFirstWidth, hasFirst)
+
+                // 6) شارات الهواية
+                rowX -= colHobbyWidth
+                val hobbyCount = hobbyCountMap[scout.id] ?: 0
+                val hobbyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = if (hobbyCount > 0) Color.rgb(27, 94, 32) else Color.rgb(150, 150, 150)
+                    textSize = 9.5f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.CENTER
+                }
+                val hobbyText = if (hobbyCount > 0) "$hobbyCount شارات" else "0"
+                canvas.drawText(hobbyText, rowX + colHobbyWidth / 2f, currentY + 16f, hobbyPaint)
+
+                currentY += rowHeight
+            }
+
+            drawScoutPdfFooter(canvas, pageWidth, pageHeight, pageIndex + 1, totalPages, cairoFont, terms = terms)
+
+            pdfDocument.finishPage(page)
+        }
+
+        val file = File(context.cacheDir, "progress_report_${System.currentTimeMillis()}.pdf")
+        FileOutputStream(file).use { outputStream ->
+            pdfDocument.writeTo(outputStream)
+        }
+        pdfDocument.close()
+        return file
+    }
+
+    /**
+     * 4) تقرير تقييم القادة (مصفوفة A4 أفقي)
+     */
+    fun exportLeadersEvaluationPdf(
+        scoutNames: List<String>,
+        leaderNames: List<String>,
+        matrixData: Map<String, Map<String, String>>,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ): File {
+        val pdfDocument = PdfDocument()
+        val cairoFont = getCairoTypeface(context) ?: Typeface.DEFAULT
+        val cairoBold = getBoldCairoTypeface(cairoFont) ?: Typeface.DEFAULT_BOLD
+
+        val pageWidth = 842
+        val pageHeight = 595
+        val leftMargin = 24f
+        val rightMargin = 818f
+        val totalAvailableWidth = rightMargin - leftMargin // 794f
+
+        val rowsPerPage = 16
+        val maxLeadersPerPage = 5
+        val leaderChunks = if (leaderNames.isNotEmpty()) leaderNames.chunked(maxLeadersPerPage) else listOf(emptyList())
+        val scoutChunks = if (scoutNames.isNotEmpty()) scoutNames.chunked(rowsPerPage) else listOf(emptyList())
+        val totalPages = maxOf(1, leaderChunks.size * scoutChunks.size)
+
+        val colNameWidth = 154f
+        val colOverallWidth = 90f
+
+        val sdf = SimpleDateFormat("dd/MM/yyyy", com.example.presentation.common.AppLocale.AR_DZ)
+
+        var pageNumber = 1
+        for (leaderChunk in leaderChunks) {
+            val leaderCount = leaderChunk.size
+            val availableLeaderWidth = totalAvailableWidth - colNameWidth - colOverallWidth
+            val leaderColWidth = if (leaderCount > 0) availableLeaderWidth / leaderCount else 0f
+            val tableWidth = colNameWidth + (leaderColWidth * leaderCount) + colOverallWidth
+            val tableLeft = leftMargin + (totalAvailableWidth - tableWidth) / 2f
+            val tableRight = tableLeft + tableWidth
+
+            for (scoutChunk in scoutChunks) {
+                val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+                val page = pdfDocument.startPage(pageInfo)
+                val canvas = page.canvas
+
+                val subInfo = "تاريخ التقرير: ${sdf.format(Date())} | إجمالي ${terms.scoutPluralDefinite}: ${scoutNames.size} | إجمالي القادة المقيّمين: ${leaderNames.size}"
+                drawScoutPdfHeader(canvas, pageWidth, "تقرير تقييم القادة", subInfo, cairoFont, cairoBold, context, isLandscape = true, terms = terms)
+
+                val tableTop = 86f
+                val headerHeight = 32f
+                val rowHeight = 24f
+
+                val headerBg = Paint().apply {
+                    color = Color.rgb(232, 245, 233)
+                    style = Paint.Style.FILL
+                }
+                val borderPaint = Paint().apply {
+                    color = Color.rgb(200, 214, 201)
+                    style = Paint.Style.STROKE
+                    strokeWidth = 0.8f
+                }
+                canvas.drawRect(tableLeft, tableTop, tableRight, tableTop + headerHeight, headerBg)
+                canvas.drawRect(tableLeft, tableTop, tableRight, tableTop + headerHeight, borderPaint)
+
+                var currentX = tableRight
+
+                val thPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.rgb(27, 94, 32)
+                    textSize = 9.5f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.CENTER
+                }
+
+                // 1) اسم الشبل
+                currentX -= colNameWidth
+                canvas.drawText("اسم ${terms.scoutSingularDefinite}", currentX + colNameWidth / 2f, tableTop + 20f, thPaint)
+                canvas.drawLine(currentX, tableTop, currentX, tableTop + headerHeight, borderPaint)
+
+                // 2) أعمدة القادة
+                val leaderThPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.rgb(27, 94, 32)
+                    textSize = 9f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.CENTER
+                }
+                for (leader in leaderChunk) {
+                    currentX -= leaderColWidth
+                    val truncatedLeader = truncateText(leader, leaderColWidth - 8f, leaderThPaint)
+                    canvas.drawText(truncatedLeader, currentX + leaderColWidth / 2f, tableTop + 20f, leaderThPaint)
+                    canvas.drawLine(currentX, tableTop, currentX, tableTop + headerHeight, borderPaint)
+                }
+
+                // 3) المعدل العام للقادة
+                currentX -= colOverallWidth
+                canvas.drawText("المعدل العام", currentX + colOverallWidth / 2f, tableTop + 20f, thPaint)
+
+                // صفوف الأشبال
+                var currentY = tableTop + headerHeight
+                scoutChunk.forEachIndexed { rIdx, scoutName ->
+                    val isEven = rIdx % 2 == 0
+                    val rowBgColor = if (isEven) Color.WHITE else Color.rgb(248, 249, 250)
+                    val rowBg = Paint().apply { color = rowBgColor; style = Paint.Style.FILL }
+                    canvas.drawRect(tableLeft, currentY, tableRight, currentY + rowHeight, rowBg)
+                    canvas.drawRect(tableLeft, currentY, tableRight, currentY + rowHeight, borderPaint)
+
+                    var rowX = tableRight
+
+                    // 1) اسم الشبل
+                    rowX -= colNameWidth
+                    val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.BLACK
+                        textSize = 9.5f
+                        typeface = cairoBold
+                        textAlign = Paint.Align.RIGHT
+                    }
+                    val truncatedName = truncateText(scoutName, colNameWidth - 14f, namePaint)
+                    canvas.drawText(truncatedName, tableRight - 8f, currentY + 16f, namePaint)
+                    canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                    val scoutScores = matrixData[scoutName].orEmpty()
+
+                    // 2) درجات القادة
+                    val scorePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        textSize = 9f
+                        typeface = cairoBold
+                        textAlign = Paint.Align.CENTER
+                    }
+                    for (leader in leaderChunk) {
+                        rowX -= leaderColWidth
+                        val score = scoutScores[leader] ?: "—"
+                        scorePaint.color = if (score != "—") Color.rgb(33, 33, 33) else Color.rgb(180, 180, 180)
+                        canvas.drawText(score, rowX + leaderColWidth / 2f, currentY + 16f, scorePaint)
+                        canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+                    }
+
+                    // 3) المعدل العام
+                    rowX -= colOverallWidth
+                    val overall = scoutScores["المعدل العام"] ?: scoutScores["overall"] ?: "—"
+                    val overallPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = if (overall != "—") Color.rgb(27, 94, 32) else Color.rgb(180, 180, 180)
+                        textSize = 9.5f
+                        typeface = cairoBold
+                        textAlign = Paint.Align.CENTER
+                    }
+                    canvas.drawText(overall, rowX + colOverallWidth / 2f, currentY + 16f, overallPaint)
+
+                    currentY += rowHeight
+                }
+
+                drawScoutPdfFooter(canvas, pageWidth, pageHeight, pageNumber, totalPages, cairoFont, terms = terms)
+
+                pdfDocument.finishPage(page)
+                pageNumber++
+            }
+        }
+
+        val file = File(context.cacheDir, "leaders_evaluation_report_${System.currentTimeMillis()}.pdf")
+        FileOutputStream(file).use { outputStream ->
+            pdfDocument.writeTo(outputStream)
+        }
+        pdfDocument.close()
+        return file
+    }
+
+    fun shareAuditLogPdf(
+        file: File,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
+        sharePdfFile(file, "سجل العمليات — ${terms.groupName} ${terms.unitNameDefinite}", "مشاركة سجل العمليات كـ PDF", context)
+    }
+
+    /**
+     * 5) تقرير سجل العمليات والتدقيق (A4 عمودي)
+     * جدول: التاريخ والوقت، القائد، العملية، البيان والهدف
+     */
+    fun exportAuditLogPdf(
+        logs: List<ActivityLog>,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ): File {
+        val pdfDocument = PdfDocument()
+        val cairoFont = getCairoTypeface(context) ?: Typeface.DEFAULT
+        val cairoBold = getBoldCairoTypeface(cairoFont) ?: Typeface.DEFAULT_BOLD
+
+        val pageWidth = 595
+        val pageHeight = 842
+        val leftMargin = 25f
+        val rightMargin = 570f
+        val tableWidth = 545f
+
+        val rowsPerPage = 22
+        val logChunks = if (logs.isNotEmpty()) logs.chunked(rowsPerPage) else listOf(emptyList())
+        val totalPages = maxOf(1, logChunks.size)
+
+        val sdf = SimpleDateFormat("dd/MM/yyyy", com.example.presentation.common.AppLocale.AR_DZ)
+        val timeFormat = SimpleDateFormat("dd/MM/yyyy hh:mm a", com.example.presentation.common.AppLocale.AR_DZ)
+
+        // توزيع الأعمدة (المجموع 545f من اليمين إلى اليسار):
+        // 1) البيان والتفاصيل (215f)
+        // 2) العملية (80f)
+        // 3) القائد (120f)
+        // 4) التاريخ والوقت (130f)
+        val colDetailsWidth = 215f
+        val colActionWidth = 80f
+        val colLeaderWidth = 120f
+        val colDateWidth = 130f
+
+        logChunks.forEachIndexed { pageIndex, chunk ->
+            val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageIndex + 1).create()
+            val page = pdfDocument.startPage(pageInfo)
+            val canvas = page.canvas
+
+            val subInfo = "تاريخ التقرير: ${sdf.format(Date())} | إجمالي العمليات المسجلة: ${logs.size}"
+            drawScoutPdfHeader(canvas, pageWidth, "سجل العمليات والتدقيق", subInfo, cairoFont, cairoBold, context, isLandscape = false, terms = terms)
+
+            val tableTop = 86f
+            val headerHeight = 28f
+            val rowHeight = 24f
+
+            val headerBg = Paint().apply {
+                color = Color.rgb(232, 245, 233)
+                style = Paint.Style.FILL
+            }
+            val borderPaint = Paint().apply {
+                color = Color.rgb(200, 214, 201)
+                style = Paint.Style.STROKE
+                strokeWidth = 0.8f
+            }
+            canvas.drawRect(leftMargin, tableTop, rightMargin, tableTop + headerHeight, headerBg)
+            canvas.drawRect(leftMargin, tableTop, rightMargin, tableTop + headerHeight, borderPaint)
+
+            var curX = rightMargin
+
+            val thPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(27, 94, 32)
+                textSize = 9f
+                typeface = cairoBold
+                textAlign = Paint.Align.CENTER
+            }
+
+            // 1) التفاصيل والهدف
+            curX -= colDetailsWidth
+            canvas.drawText("البيان / الهدف", curX + colDetailsWidth / 2f, tableTop + 18f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 2) نوع العملية
+            curX -= colActionWidth
+            canvas.drawText("العملية", curX + colActionWidth / 2f, tableTop + 18f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 3) القائد المنفذ
+            curX -= colLeaderWidth
+            canvas.drawText("القائد", curX + colLeaderWidth / 2f, tableTop + 18f, thPaint)
+            canvas.drawLine(curX, tableTop, curX, tableTop + headerHeight, borderPaint)
+
+            // 4) التاريخ والوقت
+            curX -= colDateWidth
+            canvas.drawText("التاريخ والوقت", curX + colDateWidth / 2f, tableTop + 18f, thPaint)
+
+            // صفوف العمليات
+            var currentY = tableTop + headerHeight
+            chunk.forEachIndexed { rIdx, log ->
+                val isEven = rIdx % 2 == 0
+                val rowBgColor = if (isEven) Color.WHITE else Color.rgb(248, 249, 250)
+                val rowBg = Paint().apply { color = rowBgColor; style = Paint.Style.FILL }
+                canvas.drawRect(leftMargin, currentY, rightMargin, currentY + rowHeight, rowBg)
+                canvas.drawRect(leftMargin, currentY, rightMargin, currentY + rowHeight, borderPaint)
+
+                var rowX = rightMargin
+
+                // 1) التفاصيل والهدف
+                rowX -= colDetailsWidth
+                val detailsPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.BLACK
+                    textSize = 8.5f
+                    typeface = cairoFont
+                    textAlign = Paint.Align.RIGHT
+                }
+                val targetText = if (log.targetName.isNotBlank()) log.targetName else log.targetType
+                val truncatedDetails = truncateText(targetText, colDetailsWidth - 14f, detailsPaint)
+                canvas.drawText(truncatedDetails, rightMargin - 8f, currentY + 16f, detailsPaint)
+                canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                // 2) العملية
+                rowX -= colActionWidth
+                val (actionArabic, actionColor) = when (log.action.lowercase()) {
+                    "add", "create", "grant" -> "إضافة" to Color.rgb(46, 125, 50)
+                    "update", "edit", "modify", "archive" -> "تعديل" to Color.rgb(245, 124, 0)
+                    "delete", "remove", "revoke", "cancel" -> "حذف" to Color.rgb(211, 47, 47)
+                    "mark_done" -> "إتمام" to Color.rgb(46, 125, 50)
+                    else -> log.action to Color.DKGRAY
+                }
+                val actionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = actionColor
+                    textSize = 9f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.CENTER
+                }
+                canvas.drawText(actionArabic, rowX + colActionWidth / 2f, currentY + 16f, actionPaint)
+                canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                // 3) القائد
+                rowX -= colLeaderWidth
+                val leaderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.rgb(33, 33, 33)
+                    textSize = 8.5f
+                    typeface = cairoBold
+                    textAlign = Paint.Align.RIGHT
+                }
+                val leaderName = log.userName.ifBlank { "قائد كشفي" }
+                val truncatedLeader = truncateText(leaderName, colLeaderWidth - 12f, leaderPaint)
+                canvas.drawText(truncatedLeader, rowX + colLeaderWidth - 6f, currentY + 16f, leaderPaint)
+                canvas.drawLine(rowX, currentY, rowX, currentY + rowHeight, borderPaint)
+
+                // 4) التاريخ والوقت
+                rowX -= colDateWidth
+                val datePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.DKGRAY
+                    textSize = 8f
+                    typeface = cairoFont
+                    textAlign = Paint.Align.CENTER
+                }
+                val formattedTime = if (log.timestamp > 0L) timeFormat.format(Date(log.timestamp)) else "—"
+                canvas.drawText(formattedTime, rowX + colDateWidth / 2f, currentY + 16f, datePaint)
+
+                currentY += rowHeight
+            }
+
+            drawScoutPdfFooter(canvas, pageWidth, pageHeight, pageIndex + 1, totalPages, cairoFont, terms = terms)
+
+            pdfDocument.finishPage(page)
+        }
+
+        val file = File(context.cacheDir, "audit_log_${System.currentTimeMillis()}.pdf")
+        FileOutputStream(file).use { outputStream ->
+            pdfDocument.writeTo(outputStream)
+        }
+        pdfDocument.close()
+        return file
     }
 }
 

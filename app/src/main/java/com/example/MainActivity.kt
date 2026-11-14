@@ -66,10 +66,26 @@ class MainActivity : ComponentActivity() {
                 fontScale = 1.0f // Always 1.0f
             )
 
+            val brandingSettings by appContainer.brandingRepository.observeBranding()
+                .collectAsState(initial = com.example.domain.settings.BrandingSettings())
+
+            androidx.compose.runtime.LaunchedEffect(brandingSettings.logoBase64) {
+                com.example.presentation.reports.PdfExporter.currentLogoBase64 = brandingSettings.logoBase64
+            }
+
+            val customTerms by appContainer.termsRepository.observeTerms()
+                .collectAsState(initial = com.example.domain.settings.CustomTerms())
+
+            androidx.compose.runtime.LaunchedEffect(customTerms) {
+                com.example.presentation.reports.PdfExporter.currentTerms = customTerms
+            }
+
             CompositionLocalProvider(
                 LocalAppDensity provides scaledDensity,
                 LocalDensity provides scaledDensity,
-                LocalOnZoomClick provides { showZoomDialog = true }
+                LocalOnZoomClick provides { showZoomDialog = true },
+                com.example.presentation.common.LocalAppLogo provides brandingSettings.logoBase64,
+                com.example.presentation.common.LocalAppTerms provides customTerms
             ) {
                 val themeMode by appContainer.themePreferences.getThemeMode()
                     .collectAsState(initial = appContainer.themePreferences.getCurrentThemeMode())

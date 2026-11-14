@@ -42,6 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.domain.scout.Scout
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import com.example.presentation.common.AppAlertDialog
 
 /**
@@ -54,6 +56,7 @@ fun ScoutPickerDialog(
     onScoutSelected: (Scout) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     var searchQuery by remember { mutableStateOf("") }
 
     val filteredScouts = remember(scouts, searchQuery) {
@@ -72,7 +75,7 @@ fun ScoutPickerDialog(
         shape = RoundedCornerShape(20.dp),
         title = {
             Text(
-                text = stringResource(id = R.string.scout_picker_title),
+                text = replaceCustomWords(stringResource(id = R.string.scout_picker_title), terms),
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -127,7 +130,7 @@ fun ScoutPickerDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (searchQuery.isEmpty()) "لا يوجد أشبال مسجلين" else "لا توجد نتائج مطابقة للبحث",
+                            text = if (searchQuery.isEmpty()) replaceCustomWords("لا يوجد ${terms.scoutPlural} مسجلين", terms) else "لا توجد نتائج مطابقة للبحث",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

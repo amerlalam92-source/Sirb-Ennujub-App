@@ -1,7 +1,12 @@
 package com.example.data.finance
 
+import android.util.Log
+import com.example.data.firestore.safeInt
+import com.example.data.firestore.safeLong
+import com.example.data.firestore.safeNullableInt
+import com.example.data.firestore.safeNullableString
+import com.example.data.firestore.safeString
 import com.example.domain.finance.ExpenseCategory
-import com.example.domain.finance.FinanceContribution
 import com.example.domain.finance.FinanceSettings
 import com.example.domain.finance.FinanceSubscription
 import com.example.domain.finance.FinanceTransaction
@@ -24,7 +29,6 @@ class FinanceFirestoreDataSource(
     companion object {
         const val COLLECTION_TRANSACTIONS = "finance_transactions"
         const val COLLECTION_SUBSCRIPTIONS = "finance_subscriptions"
-        const val COLLECTION_CONTRIBUTIONS = "finance_contributions"
         const val COLLECTION_SETTINGS = "finance_settings"
         const val DOC_SETTINGS_DEFAULTS = "defaults"
     }
@@ -35,17 +39,14 @@ class FinanceFirestoreDataSource(
     private val subscriptionsCollection
         get() = firestore.collection(COLLECTION_SUBSCRIPTIONS)
 
-    private val contributionsCollection
-        get() = firestore.collection(COLLECTION_CONTRIBUTIONS)
-
-    private val settingsDoc
-        get() = firestore.collection(COLLECTION_SETTINGS).document(DOC_SETTINGS_DEFAULTS)
+    private fun getSettingsDoc(unitId: String? = null) =
+        firestore.collection(COLLECTION_SETTINGS).document(DOC_SETTINGS_DEFAULTS)
 
     // =============================================================
     // Transactions (المعاملات المالية)
     // =============================================================
 
-    fun observeAllTransactions(): Flow<List<FinanceTransaction>> = callbackFlow {
+    fun observeAllTransactions(unitId: String? = null): Flow<List<FinanceTransaction>> = callbackFlow {
         val listenerRegistration = transactionsCollection
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -61,10 +62,8 @@ class FinanceFirestoreDataSource(
         awaitClose { listenerRegistration.remove() }
     }
 
-    fun observeTransactionsBetween(from: Long, to: Long): Flow<List<FinanceTransaction>> = callbackFlow {
+    fun observeTransactionsBetween(from: Long, to: Long, unitId: String? = null): Flow<List<FinanceTransaction>> = callbackFlow {
         val listenerRegistration = transactionsCollection
-            .whereGreaterThanOrEqualTo("date", from)
-            .whereLessThanOrEqualTo("date", to)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     trySend(emptyList())
@@ -72,6 +71,7 @@ class FinanceFirestoreDataSource(
                 }
                 val list = snapshot?.documents
                     ?.mapNotNull { mapDocumentToTransaction(it) }
+                    ?.filter { it.date in from..to }
                     ?.sortedByDescending { it.date }
                     ?: emptyList()
                 trySend(list)
@@ -79,9 +79,8 @@ class FinanceFirestoreDataSource(
         awaitClose { listenerRegistration.remove() }
     }
 
-    fun observeTransactionsByType(type: String): Flow<List<FinanceTransaction>> = callbackFlow {
+    fun observeTransactionsByType(type: String, unitId: String? = null): Flow<List<FinanceTransaction>> = callbackFlow {
         val listenerRegistration = transactionsCollection
-            .whereEqualTo("type", type)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     trySend(emptyList())
@@ -89,6 +88,7 @@ class FinanceFirestoreDataSource(
                 }
                 val list = snapshot?.documents
                     ?.mapNotNull { mapDocumentToTransaction(it) }
+                    ?.filter { it.type.key == type }
                     ?.sortedByDescending { it.date }
                     ?: emptyList()
                 trySend(list)
@@ -137,23 +137,8 @@ class FinanceFirestoreDataSource(
     // Subscriptions (اشتراكات الأشبال)
     // =============================================================
 
-    fun observeSubscriptionsForActivity(activityId: String): Flow<List<FinanceSubscription>> = callbackFlow {
+    fun observeSubscriptionsForActivity(activityId: String, unitId: String? = null): Flow<List<FinanceSubscription>> = callbackFlow {
         val listenerRegistration = subscriptionsCollection
-            .whereEqualTo("activityId", activityId)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    trySend(emptyList())
-                    return@addSnapshotListener
-                }
-                val list = snapshot?.documents?.mapNotNull { mapDocumentToSubscription(it) } ?: emptyList()
-                trySend(list)
-            }
-        awaitClose { listenerRegistration.remove() }
-    }
-
-    fun observeSubscriptionsForScout(scoutId: String): Flow<List<FinanceSubscription>> = callbackFlow {
-        val listenerRegistration = subscriptionsCollection
-            .whereEqualTo("scoutId", scoutId)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     trySend(emptyList())
@@ -161,6 +146,23 @@ class FinanceFirestoreDataSource(
                 }
                 val list = snapshot?.documents
                     ?.mapNotNull { mapDocumentToSubscription(it) }
+                    ?.filter { it.activityId == activityId }
+                    ?: emptyList()
+                trySend(list)
+            }
+        awaitClose { listenerRegistration.remove() }
+    }
+
+    fun observeSubscriptionsForScout(scoutId: String, unitId: String? = null): Flow<List<FinanceSubscription>> = callbackFlow {
+        val listenerRegistration = subscriptionsCollection
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+                val list = snapshot?.documents
+                    ?.mapNotNull { mapDocumentToSubscription(it) }
+                    ?.filter { it.scoutId == scoutId }
                     ?.sortedByDescending { it.activityDate }
                     ?: emptyList()
                 trySend(list)
@@ -168,7 +170,7 @@ class FinanceFirestoreDataSource(
         awaitClose { listenerRegistration.remove() }
     }
 
-    fun observeAllSubscriptions(): Flow<List<FinanceSubscription>> = callbackFlow {
+    fun observeAllSubscriptions(unitId: String? = null): Flow<List<FinanceSubscription>> = callbackFlow {
         val listenerRegistration = subscriptionsCollection
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -182,9 +184,25 @@ class FinanceFirestoreDataSource(
     }
 
     suspend fun getSubscription(activityId: String, scoutId: String): FinanceSubscription? {
-        val docId = "${activityId}_${scoutId}"
-        val doc = subscriptionsCollection.document(docId).get().await()
-        return if (doc.exists()) mapDocumentToSubscription(doc) else null
+        return try {
+            val docId = "${activityId}_${scoutId}"
+            val doc = subscriptionsCollection.document(docId).get().await()
+            if (doc.exists()) mapDocumentToSubscription(doc) else null
+        } catch (e: Exception) {
+            Log.w("FinanceFirestoreDS", "Error getting subscription ${activityId}_$scoutId", e)
+            null
+        }
+    }
+
+    suspend fun getSubscriptionById(subscriptionId: String): FinanceSubscription? {
+        if (subscriptionId.isBlank()) return null
+        return try {
+            val doc = subscriptionsCollection.document(subscriptionId).get().await()
+            if (doc.exists()) mapDocumentToSubscription(doc) else null
+        } catch (e: Exception) {
+            Log.w("FinanceFirestoreDS", "Error getting subscription by id $subscriptionId", e)
+            null
+        }
     }
 
     suspend fun upsertSubscription(sub: FinanceSubscription): Result<Unit> {
@@ -209,99 +227,12 @@ class FinanceFirestoreDataSource(
     }
 
     // =============================================================
-    // Contributions (مساهمات الأنشطة الكبرى)
-    // =============================================================
-
-    fun observeAllContributions(): Flow<List<FinanceContribution>> = callbackFlow {
-        val listenerRegistration = contributionsCollection
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    trySend(emptyList())
-                    return@addSnapshotListener
-                }
-                val list = snapshot?.documents?.mapNotNull { mapDocumentToContribution(it) } ?: emptyList()
-                trySend(list)
-            }
-        awaitClose { listenerRegistration.remove() }
-    }
-
-    fun observeContributionsForActivity(activityId: String): Flow<List<FinanceContribution>> = callbackFlow {
-        val listenerRegistration = contributionsCollection
-            .whereEqualTo("activityId", activityId)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    trySend(emptyList())
-                    return@addSnapshotListener
-                }
-                val list = snapshot?.documents?.mapNotNull { mapDocumentToContribution(it) } ?: emptyList()
-                trySend(list)
-            }
-        awaitClose { listenerRegistration.remove() }
-    }
-
-    fun observeContributionsForScout(scoutId: String): Flow<List<FinanceContribution>> = callbackFlow {
-        val listenerRegistration = contributionsCollection
-            .whereEqualTo("scoutId", scoutId)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    trySend(emptyList())
-                    return@addSnapshotListener
-                }
-                val list = snapshot?.documents?.mapNotNull { mapDocumentToContribution(it) } ?: emptyList()
-                trySend(list)
-            }
-        awaitClose { listenerRegistration.remove() }
-    }
-
-    suspend fun getContribution(activityId: String, scoutId: String): FinanceContribution? {
-        val docId = "${activityId}_${scoutId}"
-        val doc = contributionsCollection.document(docId).get().await()
-        return if (doc.exists()) mapDocumentToContribution(doc) else null
-    }
-
-    suspend fun upsertContribution(contribution: FinanceContribution): Result<Unit> {
-        val docId = if (contribution.id.isNotBlank()) contribution.id else "${contribution.activityId}_${contribution.scoutId}"
-        val finalContribution = contribution.copy(id = docId)
-        return try {
-            contributionsCollection.document(docId).set(mapContributionToMap(finalContribution)).await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    suspend fun upsertContributionsBatch(contributions: List<FinanceContribution>): Result<Unit> {
-        if (contributions.isEmpty()) return Result.success(Unit)
-        return try {
-            val batch = firestore.batch()
-            for (contrib in contributions) {
-                val docId = if (contrib.id.isNotBlank()) contrib.id else "${contrib.activityId}_${contrib.scoutId}"
-                val finalContrib = contrib.copy(id = docId)
-                batch.set(contributionsCollection.document(docId), mapContributionToMap(finalContrib))
-            }
-            batch.commit().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    suspend fun deleteContribution(activityId: String, scoutId: String): Result<Unit> {
-        val docId = "${activityId}_${scoutId}"
-        return try {
-            contributionsCollection.document(docId).delete().await()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    // =============================================================
     // Settings (إعدادات المالية)
     // =============================================================
 
-    fun observeSettings(): Flow<FinanceSettings> = callbackFlow {
-        val listenerRegistration = settingsDoc.addSnapshotListener { snapshot, error ->
+    fun observeSettings(unitId: String? = null): Flow<FinanceSettings> = callbackFlow {
+        val docRef = getSettingsDoc(unitId)
+        val listenerRegistration = docRef.addSnapshotListener { snapshot, error ->
             if (error != null || snapshot == null || !snapshot.exists()) {
                 val defaults = FinanceSettings(
                     presentAmount = 20,
@@ -314,19 +245,25 @@ class FinanceFirestoreDataSource(
                 )
                 // إذا لم تكن الإعدادات موجودة مسبقاً، نقوم بتهيئتها افتراضياً
                 if (snapshot != null && !snapshot.exists()) {
-                    settingsDoc.set(mapSettingsToMap(defaults))
+                    docRef.set(mapSettingsToMap(defaults))
                 }
                 trySend(defaults)
                 return@addSnapshotListener
             }
-            trySend(mapDocumentToSettings(snapshot))
+            try {
+                trySend(mapDocumentToSettings(snapshot))
+            } catch (e: Exception) {
+                Log.w("FinanceFirestoreDS", "Error mapping finance settings", e)
+                trySend(FinanceSettings())
+            }
         }
         awaitClose { listenerRegistration.remove() }
     }
 
-    suspend fun getSettings(): FinanceSettings {
+    suspend fun getSettings(unitId: String? = null): FinanceSettings {
+        val docRef = getSettingsDoc(unitId)
         return try {
-            val doc = settingsDoc.get().await()
+            val doc = docRef.get().await()
             if (doc.exists()) {
                 mapDocumentToSettings(doc)
             } else {
@@ -339,7 +276,7 @@ class FinanceFirestoreDataSource(
                     openingBalance = 0,
                     currency = "دج"
                 )
-                settingsDoc.set(mapSettingsToMap(defaults)).await()
+                docRef.set(mapSettingsToMap(defaults)).await()
                 defaults
             }
         } catch (_: Exception) {
@@ -355,10 +292,10 @@ class FinanceFirestoreDataSource(
         }
     }
 
-    suspend fun updateSettings(settings: FinanceSettings): Result<Unit> {
+    suspend fun updateSettings(settings: FinanceSettings, unitId: String? = null): Result<Unit> {
         return try {
             val updated = settings.copy(updatedAt = System.currentTimeMillis())
-            settingsDoc.set(mapSettingsToMap(updated)).await()
+            getSettingsDoc(unitId).set(mapSettingsToMap(updated)).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -369,25 +306,33 @@ class FinanceFirestoreDataSource(
     // Mappers
     // =============================================================
 
-    private fun mapDocumentToTransaction(doc: DocumentSnapshot): FinanceTransaction {
-        val typeKey = doc.getString("type") ?: FinanceTransactionType.EXPENSE.key
-        val type = FinanceTransactionType.fromKey(typeKey)
-        val categoryKey = doc.getString("category")
-        val category = ExpenseCategory.fromKey(categoryKey)
-        val amountLong = doc.getLong("amount") ?: 0L
+    private fun mapDocumentToTransaction(doc: DocumentSnapshot): FinanceTransaction? {
+        return try {
+            val typeKey = doc.safeString("type", FinanceTransactionType.EXPENSE.key)
+            val type = FinanceTransactionType.fromKey(typeKey)
+            val categoryKey = doc.safeNullableString("category")
+            val category = ExpenseCategory.fromKey(categoryKey)
+            val now = System.currentTimeMillis()
 
-        return FinanceTransaction(
-            id = doc.id,
-            type = type,
-            amount = amountLong.toInt(),
-            date = doc.getLong("date") ?: System.currentTimeMillis(),
-            description = doc.getString("description") ?: "",
-            category = category,
-            source = doc.getString("source"),
-            createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis(),
-            createdBy = doc.getString("createdBy") ?: "",
-            createdByName = doc.getString("createdByName") ?: ""
-        )
+            FinanceTransaction(
+                id = doc.id,
+                type = type,
+                amount = doc.safeInt("amount", 0),
+                date = doc.safeLong("date", now),
+                description = doc.safeString("description"),
+                category = category,
+                source = doc.safeNullableString("source"),
+                scoutId = doc.safeNullableString("scoutId"),
+                relatedActivityId = doc.safeNullableString("relatedActivityId"),
+                unitId = doc.safeNullableString("unitId"),
+                createdAt = doc.safeLong("createdAt", now),
+                createdBy = doc.safeString("createdBy"),
+                createdByName = doc.safeString("createdByName")
+            )
+        } catch (e: Exception) {
+            Log.w("FinanceFirestoreDS", "Failed to map transaction ${doc.id}", e)
+            null
+        }
     }
 
     private fun mapTransactionToMap(tx: FinanceTransaction): Map<String, Any?> {
@@ -397,6 +342,9 @@ class FinanceFirestoreDataSource(
             "amount" to tx.amount,
             "date" to tx.date,
             "description" to tx.description.trim(),
+            "scoutId" to tx.scoutId,
+            "relatedActivityId" to tx.relatedActivityId,
+            "unitId" to tx.unitId,
             "createdAt" to tx.createdAt,
             "createdBy" to tx.createdBy,
             "createdByName" to tx.createdByName
@@ -414,30 +362,53 @@ class FinanceFirestoreDataSource(
         return map
     }
 
-    private fun mapDocumentToSubscription(doc: DocumentSnapshot): FinanceSubscription {
-        val statusKey = doc.getString("attendanceStatus") ?: SubscriptionStatus.PRESENT.key
-        val status = SubscriptionStatus.fromKey(statusKey)
-        val req = doc.getLong("requiredAmount")?.toInt() ?: 0
-        val paid = doc.getLong("paidAmount")?.toInt() ?: 0
-        val computedDebt = (req - paid).coerceAtLeast(0)
+    private fun mapDocumentToSubscription(doc: DocumentSnapshot): FinanceSubscription? {
+        return try {
+            val statusKey = doc.safeNullableString("attendanceStatus")
+                ?: doc.safeNullableString("status")
+                ?: SubscriptionStatus.PRESENT.key
+            val status = SubscriptionStatus.fromKey(statusKey)
+            val req = doc.safeInt("requiredAmount", 0)
+            val paid = doc.safeInt("paidAmount", 0)
+            val computedDebt = (req - paid).coerceAtLeast(0)
+            val debt = doc.safeNullableInt("debtAmount") ?: computedDebt
 
-        return FinanceSubscription(
-            id = doc.id,
-            scoutId = doc.getString("scoutId") ?: "",
-            scoutFullName = doc.getString("scoutFullName") ?: "",
-            activityId = doc.getString("activityId") ?: "",
-            activityTitle = doc.getString("activityTitle") ?: "",
-            activityDate = doc.getLong("activityDate") ?: 0L,
-            attendanceStatus = status,
-            requiredAmount = req,
-            paidAmount = paid,
-            debtAmount = doc.getLong("debtAmount")?.toInt() ?: computedDebt,
-            notes = doc.getString("notes"),
-            recordedAt = doc.getLong("recordedAt") ?: System.currentTimeMillis(),
-            recordedBy = doc.getString("recordedBy") ?: "",
-            recordedByName = doc.getString("recordedByName") ?: "",
-            updatedAt = doc.getLong("updatedAt") ?: System.currentTimeMillis()
-        )
+            val actDate = doc.safeLong("activityDate", 0L)
+            val recAt = doc.safeLong("recordedAt", System.currentTimeMillis())
+            val updAt = doc.safeLong("updatedAt", recAt)
+
+            val parts = doc.id.split("_")
+            val fallbackActivityId = if (parts.size >= 2) parts[0] else ""
+            val fallbackScoutId = if (parts.size >= 2) parts.subList(1, parts.size).joinToString("_") else ""
+
+            val rawActivityId = doc.safeString("activityId")
+            val effectiveActivityId = rawActivityId.ifBlank { fallbackActivityId }
+
+            val rawScoutId = doc.safeString("scoutId")
+            val effectiveScoutId = rawScoutId.ifBlank { fallbackScoutId }
+
+            FinanceSubscription(
+                id = doc.id,
+                scoutId = effectiveScoutId,
+                scoutFullName = doc.safeNullableString("scoutFullName") ?: doc.safeString("scoutName"),
+                activityId = effectiveActivityId,
+                activityTitle = doc.safeNullableString("activityTitle") ?: doc.safeString("title"),
+                activityDate = actDate,
+                attendanceStatus = status,
+                requiredAmount = req,
+                paidAmount = paid,
+                debtAmount = debt,
+                notes = doc.safeNullableString("notes"),
+                unitId = doc.safeNullableString("unitId"),
+                recordedAt = recAt,
+                recordedBy = doc.safeString("recordedBy"),
+                recordedByName = doc.safeString("recordedByName"),
+                updatedAt = updAt
+            )
+        } catch (e: Exception) {
+            Log.w("FinanceFirestoreDS", "Failed to map subscription ${doc.id}", e)
+            null
+        }
     }
 
     private fun mapSubscriptionToMap(sub: FinanceSubscription): Map<String, Any?> {
@@ -453,6 +424,7 @@ class FinanceFirestoreDataSource(
             "paidAmount" to sub.paidAmount,
             "debtAmount" to sub.debtAmount,
             "notes" to sub.notes,
+            "unitId" to sub.unitId,
             "recordedAt" to sub.recordedAt,
             "recordedBy" to sub.recordedBy,
             "recordedByName" to sub.recordedByName,
@@ -461,21 +433,26 @@ class FinanceFirestoreDataSource(
     }
 
     private fun mapDocumentToSettings(doc: DocumentSnapshot): FinanceSettings {
-        val rawExcused = doc.getLong("absentExcusedAmount")?.toInt()
-        val veryLate = doc.getLong("veryLateAmount")?.toInt()
-        // إذا كانت القيمة المحفوظة سابقاً 40 (القيمة الافتراضية القديمة)، يتم تحويلها إلى 20
-        val excused = if (rawExcused == null || (rawExcused == 40 && (veryLate == null || veryLate == 40))) 20 else rawExcused
-        return FinanceSettings(
-            presentAmount = doc.getLong("presentAmount")?.toInt() ?: 20,
-            lateAmount = doc.getLong("lateAmount")?.toInt() ?: 30,
-            veryLateAmount = veryLate ?: 40,
-            absentExcusedAmount = excused,
-            absentUnexcusedAmount = doc.getLong("absentUnexcusedAmount")?.toInt() ?: 50,
-            openingBalance = doc.getLong("openingBalance")?.toInt() ?: 0,
-            currency = doc.getString("currency") ?: "دج",
-            updatedAt = doc.getLong("updatedAt") ?: System.currentTimeMillis(),
-            updatedBy = doc.getString("updatedBy") ?: ""
-        )
+        return try {
+            val rawExcused = doc.safeNullableInt("absentExcusedAmount")
+            val veryLate = doc.safeNullableInt("veryLateAmount")
+            // إذا كانت القيمة المحفوظة سابقاً 40 (القيمة الافتراضية القديمة)، يتم تحويلها إلى 20
+            val excused = if (rawExcused == null || (rawExcused == 40 && (veryLate == null || veryLate == 40))) 20 else rawExcused
+            FinanceSettings(
+                presentAmount = doc.safeInt("presentAmount", 20),
+                lateAmount = doc.safeInt("lateAmount", 30),
+                veryLateAmount = veryLate ?: 40,
+                absentExcusedAmount = excused,
+                absentUnexcusedAmount = doc.safeInt("absentUnexcusedAmount", 50),
+                openingBalance = doc.safeInt("openingBalance", 0),
+                currency = doc.safeString("currency", "دج"),
+                updatedAt = doc.safeLong("updatedAt", System.currentTimeMillis()),
+                updatedBy = doc.safeString("updatedBy")
+            )
+        } catch (e: Exception) {
+            Log.w("FinanceFirestoreDS", "Failed to map finance settings", e)
+            FinanceSettings()
+        }
     }
 
     private fun mapSettingsToMap(settings: FinanceSettings): Map<String, Any?> {
@@ -492,45 +469,4 @@ class FinanceFirestoreDataSource(
         )
     }
 
-    private fun mapDocumentToContribution(doc: DocumentSnapshot): FinanceContribution {
-        val req = doc.getLong("requiredAmount")?.toInt() ?: 0
-        val paid = doc.getLong("paidAmount")?.toInt() ?: 0
-        val computedDebt = (req - paid).coerceAtLeast(0)
-
-        return FinanceContribution(
-            id = doc.id,
-            scoutId = doc.getString("scoutId") ?: "",
-            scoutFullName = doc.getString("scoutFullName") ?: "",
-            activityId = doc.getString("activityId") ?: "",
-            activityTitle = doc.getString("activityTitle") ?: "",
-            activityDate = doc.getLong("activityDate") ?: 0L,
-            requiredAmount = req,
-            paidAmount = paid,
-            debtAmount = doc.getLong("debtAmount")?.toInt() ?: computedDebt,
-            notes = doc.getString("notes"),
-            recordedAt = doc.getLong("recordedAt") ?: System.currentTimeMillis(),
-            recordedBy = doc.getString("recordedBy") ?: "",
-            recordedByName = doc.getString("recordedByName") ?: "",
-            updatedAt = doc.getLong("updatedAt") ?: System.currentTimeMillis()
-        )
-    }
-
-    private fun mapContributionToMap(contribution: FinanceContribution): Map<String, Any?> {
-        return hashMapOf(
-            "id" to contribution.id,
-            "scoutId" to contribution.scoutId,
-            "scoutFullName" to contribution.scoutFullName,
-            "activityId" to contribution.activityId,
-            "activityTitle" to contribution.activityTitle,
-            "activityDate" to contribution.activityDate,
-            "requiredAmount" to contribution.requiredAmount,
-            "paidAmount" to contribution.paidAmount,
-            "debtAmount" to contribution.debtAmount,
-            "notes" to contribution.notes,
-            "recordedAt" to contribution.recordedAt,
-            "recordedBy" to contribution.recordedBy,
-            "recordedByName" to contribution.recordedByName,
-            "updatedAt" to contribution.updatedAt
-        )
-    }
 }

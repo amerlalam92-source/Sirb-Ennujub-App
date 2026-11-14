@@ -23,6 +23,8 @@ import com.example.domain.attendance.AttendanceRepository
 import com.example.domain.attendance.AttendanceRow
 import com.example.domain.attendance.usecases.GetAttendanceForActivityUseCase
 import com.example.domain.attendance.usecases.GetAttendanceRowsForActivityUseCase
+import com.example.domain.settings.CustomTerms
+import com.example.domain.settings.TermsRepository
 import java.util.Calendar
 import java.util.LinkedHashMap
 import kotlinx.coroutines.flow.Flow
@@ -54,8 +56,21 @@ class ActivityViewModel(
     private val deleteActivityUseCase: DeleteActivityUseCase,
     private val attendanceRepository: AttendanceRepository? = null,
     private val getAttendanceForActivityUseCase: GetAttendanceForActivityUseCase? = null,
-    private val getAttendanceRowsForActivityUseCase: GetAttendanceRowsForActivityUseCase? = null
+    private val getAttendanceRowsForActivityUseCase: GetAttendanceRowsForActivityUseCase? = null,
+    private val termsRepository: TermsRepository? = null
 ) : ViewModel() {
+
+    private var currentTerms = CustomTerms()
+
+    init {
+        termsRepository?.let { repo ->
+            viewModelScope.launch {
+                repo.observeTerms().collect { terms ->
+                    currentTerms = terms
+                }
+            }
+        }
+    }
 
     // معرفات الأنشطة التي تم تسجيل حضور لها مسبقاً (لتجنب N استعلامات)
     val recordedAttendanceActivityIds: StateFlow<Set<String>> = attendanceRepository?.observeRecordedActivityIds()
@@ -72,20 +87,13 @@ class ActivityViewModel(
 
     fun shareActivityFullReport(context: Context, activity: Activity) {
         viewModelScope.launch {
-            val attendanceRows = getAttendanceRowsForActivityUseCase?.invoke(activity.id)?.let { flow ->
-                try {
-                    flow.first()
-                } catch (_: Exception) {
-                    emptyList()
-                }
-            } ?: emptyList()
-            val file = com.example.presentation.reports.PdfExporter.exportActivityFullReportPdf(
+            val file = com.example.presentation.reports.PdfExporter.exportActivityDetailsPdf(
                 activity = activity,
-                attendanceRows = attendanceRows,
                 meetingTopics = activity.meetingTopics,
-                context = context
+                context = context,
+                terms = currentTerms
             )
-            com.example.presentation.reports.PdfExporter.shareActivityPdf(file, activity.title, context)
+            com.example.presentation.reports.PdfExporter.shareActivityPdf(file, activity.title, context, terms = currentTerms)
         }
     }
 
@@ -227,6 +235,7 @@ class ActivityViewModel(
                         meetingTopics = topics,
                         finalReport = activity.finalReport,
                         collectSubscriptions = activity.collectSubscriptions,
+                        customSubscriptionAmountInput = activity.customSubscriptionAmount?.toString() ?: "",
                         isLoading = false
                     )
                 } else {
@@ -251,7 +260,15 @@ class ActivityViewModel(
             } else {
                 current.meetingTopics
             }
-            current.copy(type = type, typeError = null, generalError = null, meetingTopics = updatedTopics)
+            val isTrainingMeeting = type == ActivityType.TRAINING_MEETING.key
+            val newCustomAmount = if (isTrainingMeeting) "" else current.customSubscriptionAmountInput
+            current.copy(
+                type = type,
+                typeError = null,
+                generalError = null,
+                meetingTopics = updatedTopics,
+                customSubscriptionAmountInput = newCustomAmount
+            )
         }
     }
 
@@ -327,7 +344,18 @@ class ActivityViewModel(
     }
 
     fun onFormCollectSubscriptionsChanged(collect: Boolean) {
-        _formUiState.update { it.copy(collectSubscriptions = collect) }
+        _formUiState.update { current ->
+            val newCustomAmount = if (!collect) "" else current.customSubscriptionAmountInput
+            current.copy(
+                collectSubscriptions = collect,
+                customSubscriptionAmountInput = newCustomAmount
+            )
+        }
+    }
+
+    fun onFormCustomSubscriptionAmountChanged(amount: String) {
+        val filtered = amount.filter { it.isDigit() }
+        _formUiState.update { it.copy(customSubscriptionAmountInput = filtered) }
     }
 
     /**
@@ -381,6 +409,13 @@ class ActivityViewModel(
                 emptyList()
             }
 
+            val isNonTraining = state.type != ActivityType.TRAINING_MEETING.key
+            val customAmount = if (isNonTraining && state.collectSubscriptions) {
+                state.customSubscriptionAmountInput.toIntOrNull()
+            } else {
+                null
+            }
+
             val activityToSave = Activity(
                 id = state.id,
                 title = title,
@@ -397,7 +432,8 @@ class ActivityViewModel(
                 notes = state.notes.trim(),
                 meetingTopics = cleanedTopics,
                 finalReport = state.finalReport.trim(),
-                collectSubscriptions = state.collectSubscriptions
+                collectSubscriptions = state.collectSubscriptions,
+                customSubscriptionAmount = customAmount
             )
 
             val result = if (state.id.isBlank()) {
@@ -536,7 +572,8 @@ class ActivityViewModel(
         private val deleteActivityUseCase: DeleteActivityUseCase,
         private val attendanceRepository: AttendanceRepository? = null,
         private val getAttendanceForActivityUseCase: GetAttendanceForActivityUseCase? = null,
-        private val getAttendanceRowsForActivityUseCase: GetAttendanceRowsForActivityUseCase? = null
+        private val getAttendanceRowsForActivityUseCase: GetAttendanceRowsForActivityUseCase? = null,
+        private val termsRepository: TermsRepository? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -553,7 +590,8 @@ class ActivityViewModel(
                 deleteActivityUseCase,
                 attendanceRepository,
                 getAttendanceForActivityUseCase,
-                getAttendanceRowsForActivityUseCase
+                getAttendanceRowsForActivityUseCase,
+                termsRepository
             ) as T
         }
     }

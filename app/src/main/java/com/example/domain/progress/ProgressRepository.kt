@@ -29,6 +29,7 @@ interface ProgressRepository {
 
     // الشارات الممنوحة (Scout Badges)
     fun observeScoutBadges(scoutId: String): Flow<List<ScoutBadge>>
+    fun observeAllScoutBadges(): Flow<List<ScoutBadge>>
     suspend fun grantBadge(
         scoutId: String,
         level: BadgeLevel,

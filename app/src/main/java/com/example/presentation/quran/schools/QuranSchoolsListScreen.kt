@@ -49,6 +49,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.domain.quran.QuranSchool
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 
 /**
  * شاشة دليل المدارس القرآنية
@@ -61,6 +63,7 @@ fun QuranSchoolsListScreen(
     showTopBar: Boolean = true,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -226,7 +229,10 @@ fun QuranSchoolsListScreen(
                                 onEdit = { school -> editingSchool = school },
                                 onDelete = { school ->
                                     if (schoolItem.enrolledScoutsCount > 0) {
-                                        cannotDeleteMessage = "لا يمكن حذف المدرسة القرآنية \"${school.name}\" لوجود ${schoolItem.enrolledScoutsCount} شبل مسجل بها. يمكنك أرشفة المدرسة بدلاً من ذلك."
+                                        cannotDeleteMessage = replaceCustomWords(
+                                            "لا يمكن حذف المدرسة القرآنية \"${school.name}\" لوجود ${schoolItem.enrolledScoutsCount} ${terms.scoutSingular} مسجل بها. يمكنك أرشفة المدرسة بدلاً من ذلك.",
+                                            terms
+                                        )
                                     } else {
                                         schoolToDelete = school
                                     }

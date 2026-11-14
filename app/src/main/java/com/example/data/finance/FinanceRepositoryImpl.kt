@@ -1,8 +1,8 @@
 package com.example.data.finance
 
 import com.example.data.log.ActivityLogDataSource
+import com.example.data.scout.ScoutFirestoreDataSource
 import com.example.domain.auth.AuthRepository
-import com.example.domain.finance.FinanceContribution
 import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.FinanceSettings
 import com.example.domain.finance.FinanceSubscription
@@ -18,6 +18,9 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 
@@ -27,10 +30,17 @@ import kotlinx.coroutines.tasks.await
  */
 class FinanceRepositoryImpl(
     private val dataSource: FinanceFirestoreDataSource,
+    private val scoutDataSource: ScoutFirestoreDataSource,
     private val activityLogDataSource: ActivityLogDataSource,
     private val authRepository: AuthRepository,
     private val firestore: FirebaseFirestore
 ) : FinanceRepository {
+
+    private fun observeActiveScoutIds(): Flow<Set<String>> {
+        return scoutDataSource.observeScouts().map { scouts ->
+            scouts.filter { it.isActive }.map { it.id }.toSet()
+        }
+    }
 
     // =============================================================
     // Transactions (المعاملات المالية)
@@ -50,7 +60,9 @@ class FinanceRepositoryImpl(
 
     override suspend fun addTransaction(tx: FinanceTransaction): Result<String> {
         val currentUser = authRepository.currentUser
+        val currentUnitId = tx.unitId ?: authRepository.getCurrentLeader()?.unitId
         val prepared = tx.copy(
+            unitId = currentUnitId,
             createdBy = currentUser?.uid ?: "",
             createdByName = currentUser?.displayName ?: "قائد كشفي",
             createdAt = if (tx.createdAt > 0) tx.createdAt else System.currentTimeMillis()
@@ -64,7 +76,9 @@ class FinanceRepositoryImpl(
                 action = "add",
                 targetType = "finance_transaction",
                 targetId = generatedId,
-                targetName = "${prepared.type.arabicLabel}: ${prepared.amount} دج"
+                targetName = "${prepared.type.arabicLabel}: ${prepared.amount} دج",
+                details = "المبلغ: ${prepared.amount} دج | البيان: ${prepared.description.ifBlank { prepared.type.arabicLabel }}",
+                unitId = currentUnitId
             )
         }
         return result
@@ -72,7 +86,9 @@ class FinanceRepositoryImpl(
 
     override suspend fun updateTransaction(tx: FinanceTransaction): Result<Unit> {
         val currentUser = authRepository.currentUser
-        val result = dataSource.updateTransaction(tx)
+        val currentUnitId = tx.unitId ?: authRepository.getCurrentLeader()?.unitId
+        val prepared = tx.copy(unitId = currentUnitId)
+        val result = dataSource.updateTransaction(prepared)
         if (result.isSuccess) {
             activityLogDataSource.logActivity(
                 userId = currentUser?.uid ?: "",
@@ -80,14 +96,62 @@ class FinanceRepositoryImpl(
                 action = "update",
                 targetType = "finance_transaction",
                 targetId = tx.id,
-                targetName = "${tx.type.arabicLabel}: ${tx.amount} دج"
+                targetName = "${tx.type.arabicLabel}: ${tx.amount} دج",
+                details = "المبلغ المحدث: ${tx.amount} دج | البيان: ${tx.description.ifBlank { tx.type.arabicLabel }}",
+                unitId = currentUnitId
             )
         }
         return result
     }
 
+    override suspend fun upsertTransaction(transaction: FinanceTransaction): Result<Unit> {
+        val currentUser = authRepository.currentUser
+        val currentUnitId = transaction.unitId ?: authRepository.getCurrentLeader()?.unitId
+        val exists = if (transaction.id.isNotBlank()) {
+            try {
+                firestore.collection(FinanceFirestoreDataSource.COLLECTION_TRANSACTIONS)
+                    .document(transaction.id)
+                    .get()
+                    .await()
+                    .exists()
+            } catch (_: Exception) {
+                false
+            }
+        } else {
+            false
+        }
+
+        val prepared = transaction.copy(
+            unitId = currentUnitId,
+            createdBy = if (transaction.createdBy.isNotBlank()) transaction.createdBy else (currentUser?.uid ?: ""),
+            createdByName = if (transaction.createdByName.isNotBlank()) transaction.createdByName else (currentUser?.displayName ?: "قائد كشفي"),
+            createdAt = if (transaction.createdAt > 0) transaction.createdAt else System.currentTimeMillis()
+        )
+
+        return if (exists) {
+            updateTransaction(prepared)
+        } else {
+            addTransaction(prepared).map { }
+        }
+    }
+
     override suspend fun deleteTransaction(id: String): Result<Unit> {
-        return dataSource.deleteTransaction(id)
+        val currentUser = authRepository.currentUser
+        val result = dataSource.deleteTransaction(id)
+        if (result.isSuccess) {
+            val currentUnitId = authRepository.getCurrentLeader()?.unitId
+            activityLogDataSource.logActivity(
+                userId = currentUser?.uid ?: "",
+                userName = currentUser?.displayName ?: "قائد كشفي",
+                action = "delete",
+                targetType = "finance_transaction",
+                targetId = id,
+                targetName = "معاملة مالية",
+                details = "تم حذف المعاملة المالية",
+                unitId = currentUnitId
+            )
+        }
+        return result
     }
 
     // =============================================================
@@ -95,7 +159,12 @@ class FinanceRepositoryImpl(
     // =============================================================
 
     override fun observeSubscriptionsForActivity(activityId: String): Flow<List<FinanceSubscription>> {
-        return dataSource.observeSubscriptionsForActivity(activityId)
+        return combine(
+            dataSource.observeSubscriptionsForActivity(activityId),
+            observeActiveScoutIds()
+        ) { subscriptions, activeScoutIds ->
+            subscriptions.filter { it.scoutId in activeScoutIds }
+        }
     }
 
     override fun observeSubscriptionsForScout(scoutId: String): Flow<List<FinanceSubscription>> {
@@ -103,27 +172,75 @@ class FinanceRepositoryImpl(
     }
 
     override fun observeAllSubscriptions(): Flow<List<FinanceSubscription>> {
-        return dataSource.observeAllSubscriptions()
+        return combine(
+            dataSource.observeAllSubscriptions(),
+            observeActiveScoutIds()
+        ) { subscriptions, activeScoutIds ->
+            subscriptions.filter { it.scoutId in activeScoutIds }
+        }
     }
 
     override suspend fun upsertSubscription(sub: FinanceSubscription): Result<Unit> {
         val currentUser = authRepository.currentUser
         val existing = dataSource.getSubscription(sub.activityId, sub.scoutId)
+        val currentUnitId = sub.unitId ?: existing?.unitId ?: authRepository.getCurrentLeader()?.unitId
         val prepared = sub.copy(
+            unitId = currentUnitId,
             debtAmount = (sub.requiredAmount - sub.paidAmount).coerceAtLeast(0),
             recordedBy = if (sub.recordedBy.isNotBlank()) sub.recordedBy else (currentUser?.uid ?: ""),
             recordedByName = if (sub.recordedByName.isNotBlank()) sub.recordedByName else (currentUser?.displayName ?: "قائد كشفي"),
             updatedAt = System.currentTimeMillis()
         )
+
+        val changes = mutableListOf<String>()
+
+        fun isChanged(oldVal: String?, newVal: String?): Boolean {
+            return oldVal?.trim().orEmpty() != newVal?.trim().orEmpty()
+        }
+
+        if (existing != null) {
+            if (existing.paidAmount != prepared.paidAmount) {
+                changes.add("المدفوع: من ${existing.paidAmount} دج إلى ${prepared.paidAmount} دج")
+            }
+            if (existing.requiredAmount != prepared.requiredAmount) {
+                changes.add("المطلوب: من ${existing.requiredAmount} دج إلى ${prepared.requiredAmount} دج")
+            }
+            if (existing.debtAmount != prepared.debtAmount) {
+                changes.add("المتبقي: من ${existing.debtAmount} دج إلى ${prepared.debtAmount} دج")
+            }
+            if (existing.attendanceStatus != prepared.attendanceStatus) {
+                changes.add("حالة الحضور: من '${existing.attendanceStatus.arabicLabel}' إلى '${prepared.attendanceStatus.arabicLabel}'")
+            }
+            if (isChanged(existing.notes, prepared.notes)) {
+                changes.add("الملاحظات: من '${existing.notes.orEmpty()}' إلى '${prepared.notes.orEmpty()}'")
+            }
+            // إذا لم يتم تغيير أي حقل، لا يتم حفظ أي شيء في Firestore ولا يسجل أي عملية في سجل الأنشطة
+            if (changes.isEmpty()) {
+                return Result.success(Unit)
+            }
+        }
+
         val result = dataSource.upsertSubscription(prepared)
         if (result.isSuccess) {
+            val statusLabel = when {
+                prepared.paidAmount >= prepared.requiredAmount -> "مسدد"
+                prepared.paidAmount > 0 -> "مدفوع جزئياً"
+                else -> "غير مدفوع"
+            }
+            val detailsText = if (existing != null) {
+                changes.joinToString(" | ")
+            } else {
+                "تسجيل اشتراك جديد: المطلوب: ${prepared.requiredAmount} دج | المدفوع: ${prepared.paidAmount} دج | الحالة: $statusLabel"
+            }
             activityLogDataSource.logActivity(
                 userId = currentUser?.uid ?: "",
                 userName = currentUser?.displayName ?: "قائد كشفي",
                 action = if (existing == null) "add" else "update",
                 targetType = "finance_subscription",
                 targetId = prepared.id,
-                targetName = "اشتراك: ${prepared.scoutFullName}"
+                targetName = "اشتراك: ${prepared.scoutFullName}",
+                details = detailsText,
+                unitId = currentUnitId
             )
         }
         return result
@@ -131,6 +248,8 @@ class FinanceRepositoryImpl(
 
     override suspend fun deleteSubscription(activityId: String, scoutId: String): Result<Unit> {
         val currentUser = authRepository.currentUser
+        val existing = dataSource.getSubscription(activityId, scoutId)
+        val currentUnitId = existing?.unitId ?: authRepository.getCurrentLeader()?.unitId
         val result = dataSource.deleteSubscription(activityId, scoutId)
         if (result.isSuccess) {
             activityLogDataSource.logActivity(
@@ -139,13 +258,16 @@ class FinanceRepositoryImpl(
                 action = "delete",
                 targetType = "finance_subscription",
                 targetId = "${activityId}_${scoutId}",
-                targetName = "اشتراك شبل"
+                targetName = "اشتراك شبل",
+                details = "تم حذف سجل اشتراك الشبل في النشاط",
+                unitId = currentUnitId
             )
         }
         return result
     }
 
     override suspend fun getRequiredAmountFor(activityId: String, status: SubscriptionStatus): Int {
+        val currentUnitId = authRepository.getCurrentLeader()?.unitId
         return try {
             if (activityId.isNotBlank()) {
                 val doc = firestore.collection("activities").document(activityId).get().await()
@@ -162,10 +284,10 @@ class FinanceRepositoryImpl(
                     }
                 }
             }
-            val settings = dataSource.getSettings()
+            val settings = dataSource.getSettings(currentUnitId)
             settings.requiredAmountFor(status)
         } catch (_: Exception) {
-            val settings = dataSource.getSettings()
+            val settings = dataSource.getSettings(currentUnitId)
             settings.requiredAmountFor(status)
         }
     }
@@ -185,6 +307,7 @@ class FinanceRepositoryImpl(
             val leaderUid = currentUser?.uid ?: ""
             val leaderName = currentUser?.displayName ?: "قائد كشفي"
 
+            val currentUnitId = authRepository.getCurrentLeader()?.unitId
             if (existing == null) {
                 val newSub = FinanceSubscription(
                     id = "${activityId}_${scoutId}",
@@ -198,6 +321,7 @@ class FinanceRepositoryImpl(
                     paidAmount = 0,
                     debtAmount = required,
                     notes = null,
+                    unitId = currentUnitId,
                     recordedAt = System.currentTimeMillis(),
                     recordedBy = leaderUid,
                     recordedByName = leaderName,
@@ -210,6 +334,7 @@ class FinanceRepositoryImpl(
                     attendanceStatus = attendanceStatus,
                     requiredAmount = required,
                     debtAmount = updatedDebt,
+                    unitId = existing.unitId ?: currentUnitId,
                     updatedAt = System.currentTimeMillis()
                 )
                 upsertSubscription(updatedSub)
@@ -220,137 +345,110 @@ class FinanceRepositoryImpl(
         }
     }
 
-    // =============================================================
-    // Contributions (مساهمات الأنشطة الكبرى)
-    // =============================================================
-
-    override fun observeContributionsForActivity(activityId: String): Flow<List<FinanceContribution>> {
-        return dataSource.observeContributionsForActivity(activityId)
-    }
-
-    override fun observeContributionsForScout(scoutId: String): Flow<List<FinanceContribution>> {
-        return dataSource.observeContributionsForScout(scoutId)
-    }
-
-    override fun observeAllContributions(): Flow<List<FinanceContribution>> {
-        return dataSource.observeAllContributions()
-    }
-
-    override suspend fun getContribution(activityId: String, scoutId: String): FinanceContribution? {
-        return dataSource.getContribution(activityId, scoutId)
-    }
-
-    override suspend fun upsertContribution(contribution: FinanceContribution): Result<Unit> {
-        val currentUser = authRepository.currentUser
-        val prepared = contribution.copy(
-            updatedAt = System.currentTimeMillis(),
-            recordedBy = contribution.recordedBy.ifBlank { currentUser?.uid ?: "" },
-            recordedByName = contribution.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" }
-        )
-        val result = dataSource.upsertContribution(prepared)
-        if (result.isSuccess) {
-            activityLogDataSource.logActivity(
-                userId = currentUser?.uid ?: "",
-                userName = currentUser?.displayName ?: "قائد كشفي",
-                action = "upsert",
-                targetType = "finance_contribution",
-                targetId = prepared.id,
-                targetName = "مساهمة ${prepared.scoutFullName} في ${prepared.activityTitle}"
-            )
-        }
-        return result
-    }
-
-    override suspend fun upsertContributionsBatch(contributions: List<FinanceContribution>): Result<Unit> {
-        if (contributions.isEmpty()) return Result.success(Unit)
-        val currentUser = authRepository.currentUser
-        val preparedList = contributions.map { contrib ->
-            val docId = if (contrib.id.isNotBlank()) contrib.id else "${contrib.activityId}_${contrib.scoutId}"
-            contrib.copy(
-                id = docId,
-                updatedAt = System.currentTimeMillis(),
-                recordedBy = contrib.recordedBy.ifBlank { currentUser?.uid ?: "" },
-                recordedByName = contrib.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" }
-            )
-        }
-        val result = dataSource.upsertContributionsBatch(preparedList)
-        if (result.isSuccess) {
-            activityLogDataSource.logActivity(
-                userId = currentUser?.uid ?: "",
-                userName = currentUser?.displayName ?: "قائد كشفي",
-                action = "upsert_batch",
-                targetType = "finance_contribution",
-                targetId = preparedList.firstOrNull()?.activityId ?: "",
-                targetName = "إضافة ${preparedList.size} مشارك في مساهمات النشاط"
-            )
-        }
-        return result
-    }
-
-    override suspend fun deleteContribution(activityId: String, scoutId: String): Result<Unit> {
-        val currentUser = authRepository.currentUser
-        val existing = dataSource.getContribution(activityId, scoutId)
-        val result = dataSource.deleteContribution(activityId, scoutId)
-        if (result.isSuccess && existing != null) {
-            activityLogDataSource.logActivity(
-                userId = currentUser?.uid ?: "",
-                userName = currentUser?.displayName ?: "قائد كشفي",
-                action = "delete",
-                targetType = "finance_contribution",
-                targetId = existing.id,
-                targetName = "حذف مساهمة ${existing.scoutFullName} في ${existing.activityTitle}"
-            )
-        }
-        return result
-    }
-
-    override suspend fun recordContributionPayment(
-        activityId: String,
-        scoutId: String,
-        amountPaidNow: Int,
-        notes: String?
-    ): Result<Unit> {
+    override suspend fun payScoutDebts(scoutId: String, amountToPay: Int): Result<Unit> {
+        if (amountToPay <= 0 || scoutId.isBlank()) return Result.success(Unit)
         return try {
-            val existing = dataSource.getContribution(activityId, scoutId)
-                ?: return Result.failure(IllegalStateException("Contribution not found"))
-            val currentUser = authRepository.currentUser
-            val leaderUid = currentUser?.uid ?: ""
-            val leaderName = currentUser?.displayName ?: "قائد كشفي"
+            val subs = dataSource.observeSubscriptionsForScout(scoutId).first()
+            val unpaid = subs.filter { it.paidAmount < it.requiredAmount && it.debtAmount > 0 }
+                .sortedBy { it.activityDate }
 
-            val newPaid = (existing.paidAmount + amountPaidNow).coerceAtMost(existing.requiredAmount)
-            val newDebt = (existing.requiredAmount - newPaid).coerceAtLeast(0)
-            val updated = existing.copy(
-                paidAmount = newPaid,
-                debtAmount = newDebt,
-                notes = notes ?: existing.notes,
-                updatedAt = System.currentTimeMillis()
-            )
-            dataSource.upsertContribution(updated)
+            var remainingPayment = amountToPay
+            for (sub in unpaid) {
+                if (remainingPayment <= 0) break
+                val currentDebt = (sub.requiredAmount - sub.paidAmount).coerceAtLeast(0)
+                if (currentDebt <= 0) continue
 
-            // تسجيل معاملة إيراد في finance_transactions تلقائياً
-            if (amountPaidNow > 0) {
-                val tx = FinanceTransaction(
-                    type = FinanceTransactionType.CONTRIBUTION,
-                    amount = amountPaidNow,
-                    date = System.currentTimeMillis(),
-                    description = "مساهمة: ${existing.activityTitle} - ${existing.scoutFullName}",
-                    source = existing.scoutFullName,
-                    createdBy = leaderUid,
-                    createdByName = leaderName
+                val toPay = minOf(remainingPayment, currentDebt)
+                val newPaid = sub.paidAmount + toPay
+                val newDebt = (sub.requiredAmount - newPaid).coerceAtLeast(0)
+
+                val updatedSub = sub.copy(
+                    paidAmount = newPaid,
+                    debtAmount = newDebt,
+                    updatedAt = System.currentTimeMillis()
                 )
-                dataSource.addTransaction(tx)
+                upsertSubscription(updatedSub)
+                remainingPayment -= toPay
             }
-
-            activityLogDataSource.logActivity(
-                userId = leaderUid,
-                userName = leaderName,
-                action = "payment",
-                targetType = "finance_contribution",
-                targetId = updated.id,
-                targetName = "تسديد مساهمة: ${existing.scoutFullName} ($amountPaidNow دج)"
-            )
             Result.success(Unit)
         } catch (e: Exception) {
+            Log.e("FinanceRepo", "Error paying scout debts: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun rollbackScoutDebts(scoutId: String, amountToRollback: Int): Result<Unit> {
+        if (amountToRollback <= 0 || scoutId.isBlank()) return Result.success(Unit)
+        return try {
+            val subs = dataSource.observeSubscriptionsForScout(scoutId).first()
+            val paidSubs = subs.filter { it.paidAmount > 0 }
+                .sortedBy { it.activityDate }
+
+            var remainingRollback = amountToRollback
+            for (sub in paidSubs) {
+                if (remainingRollback <= 0) break
+                val toRollback = minOf(sub.paidAmount, remainingRollback)
+                if (toRollback <= 0) continue
+
+                val newPaid = (sub.paidAmount - toRollback).coerceAtLeast(0)
+                val newDebt = sub.debtAmount + toRollback
+
+                val updatedSub = sub.copy(
+                    paidAmount = newPaid,
+                    debtAmount = newDebt,
+                    updatedAt = System.currentTimeMillis()
+                )
+                val updateResult = upsertSubscription(updatedSub)
+                if (updateResult.isFailure) {
+                    return Result.failure(
+                        updateResult.exceptionOrNull() ?: Exception("فشل استعادة دين الاشتراك")
+                    )
+                }
+                remainingRollback -= toRollback
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e("FinanceRepo", "Error rolling back scout debts: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun updateSubscriptionDebtManually(subscriptionId: String, newDebtAmount: Int): Result<Unit> {
+        if (subscriptionId.isBlank()) {
+            return Result.failure(IllegalArgumentException("معرف الاشتراك مفقود"))
+        }
+        return try {
+            val existing = dataSource.getSubscriptionById(subscriptionId)
+                ?: return Result.failure(Exception("الاشتراك غير موجود"))
+
+            val currentUser = authRepository.currentUser
+            val currentUnitId = existing.unitId ?: authRepository.getCurrentLeader()?.unitId
+            val sanitizedDebt = newDebtAmount.coerceAtLeast(0)
+            val newPaidAmount = (existing.requiredAmount - sanitizedDebt).coerceAtLeast(0)
+            val oldDebt = existing.debtAmount
+
+            val updatedSub = existing.copy(
+                paidAmount = newPaidAmount,
+                debtAmount = sanitizedDebt,
+                unitId = currentUnitId,
+                updatedAt = System.currentTimeMillis()
+            )
+            val result = dataSource.upsertSubscription(updatedSub)
+            if (result.isSuccess) {
+                activityLogDataSource.logActivity(
+                    userId = currentUser?.uid ?: "",
+                    userName = currentUser?.displayName ?: "قائد كشفي",
+                    action = "manual_finance_adjustment",
+                    targetType = "finance_subscription",
+                    targetId = subscriptionId,
+                    targetName = "${existing.scoutFullName} - ${existing.activityTitle.ifBlank { "نشاط" }}",
+                    details = "تعديل يدوي: من $oldDebt إلى $sanitizedDebt",
+                    unitId = currentUnitId
+                )
+            }
+            result
+        } catch (e: Exception) {
+            Log.e("FinanceRepo", "Error updating subscription debt manually: ${e.message}", e)
             Result.failure(e)
         }
     }
@@ -365,19 +463,21 @@ class FinanceRepositoryImpl(
 
     override suspend fun updateSettings(settings: FinanceSettings): Result<Unit> {
         val currentUser = authRepository.currentUser
+        val currentUnitId = authRepository.getCurrentLeader()?.unitId
         val prepared = settings.copy(
             updatedBy = currentUser?.displayName ?: "قائد كشفي",
             updatedAt = System.currentTimeMillis()
         )
-        val result = dataSource.updateSettings(prepared)
+        val result = dataSource.updateSettings(prepared, currentUnitId)
         if (result.isSuccess) {
             activityLogDataSource.logActivity(
                 userId = currentUser?.uid ?: "",
                 userName = currentUser?.displayName ?: "قائد كشفي",
                 action = "update",
                 targetType = "finance_settings",
-                targetId = "defaults",
-                targetName = "إعدادات المالية وسلّم الاشتراكات"
+                targetId = if (!currentUnitId.isNullOrBlank()) "${currentUnitId}_defaults" else "defaults",
+                targetName = "إعدادات المالية وسلّم الاشتراكات",
+                unitId = currentUnitId
             )
         }
         return result
@@ -387,8 +487,13 @@ class FinanceRepositoryImpl(
     // Computed (الإحصائيات والملخصات المحسوبة)
     // =============================================================
 
-    private fun observeValidActivityIds(): Flow<Set<String>> = callbackFlow {
-        val listenerRegistration = firestore.collection("activities")
+    private fun observeValidActivityIds(unitId: String?): Flow<Set<String>> = callbackFlow {
+        val baseQuery = if (!unitId.isNullOrBlank()) {
+            firestore.collection("activities").whereEqualTo("unitId", unitId)
+        } else {
+            firestore.collection("activities")
+        }
+        val listenerRegistration = baseQuery
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     trySend(emptySet())
@@ -404,35 +509,30 @@ class FinanceRepositoryImpl(
         return combine(
             dataSource.observeAllTransactions(),
             dataSource.observeAllSubscriptions(),
-            dataSource.observeAllContributions(),
             dataSource.observeSettings(),
-            observeValidActivityIds()
-        ) { transactions, subscriptions, contributions, settings, validActivityIds ->
-            val validSubscriptions = subscriptions.filter { it.activityId.isNotBlank() && it.activityId in validActivityIds }
-            val validContributions = contributions.filter { it.activityId.isNotBlank() && it.activityId in validActivityIds }
-            computeSummaryInMemory(transactions, validSubscriptions, validContributions, settings)
+            observeActiveScoutIds()
+        ) { transactions, subscriptions, settings, activeScoutIds ->
+            val validSubscriptions = subscriptions.filter { it.activityId.isNotBlank() }
+            computeSummaryInMemory(transactions, validSubscriptions, settings, activeScoutIds)
         }
     }
 
     override fun observeScoutDebts(): Flow<List<ScoutDebt>> {
         return combine(
             dataSource.observeAllSubscriptions(),
-            dataSource.observeAllContributions(),
-            observeValidActivityIds()
-        ) { subscriptions, contributions, validActivityIds ->
-            val validSubs = subscriptions.filter { it.activityId.isNotBlank() && it.activityId in validActivityIds }
-            val validContribs = contributions.filter { it.activityId.isNotBlank() && it.activityId in validActivityIds }
-            val scoutIds = (validSubs.map { it.scoutId } + validContribs.map { it.scoutId }).distinct()
+            observeActiveScoutIds()
+        ) { subscriptions, activeScoutIds ->
+            val validSubs = subscriptions.filter {
+                it.activityId.isNotBlank() && it.scoutId in activeScoutIds
+            }
+            val scoutIds = validSubs.map { it.scoutId }.distinct()
             scoutIds.map { scoutId ->
                 val subsForScout = validSubs.filter { it.scoutId == scoutId }
-                val contribsForScout = validContribs.filter { it.scoutId == scoutId }
-                val fullName = subsForScout.firstOrNull()?.scoutFullName
-                    ?: contribsForScout.firstOrNull()?.scoutFullName
-                    ?: ""
-                val totalReq = subsForScout.sumOf { it.requiredAmount } + contribsForScout.sumOf { it.requiredAmount }
-                val totalPaid = subsForScout.sumOf { it.paidAmount } + contribsForScout.sumOf { it.paidAmount }
-                val totalDebt = subsForScout.sumOf { it.debtAmount } + contribsForScout.sumOf { it.debtAmount }
-                val unpaidCount = subsForScout.count { it.debtAmount > 0 } + contribsForScout.count { it.debtAmount > 0 }
+                val fullName = subsForScout.firstOrNull()?.scoutFullName ?: ""
+                val totalReq = subsForScout.sumOf { it.requiredAmount }
+                val totalPaid = subsForScout.sumOf { it.paidAmount }
+                val totalDebt = subsForScout.sumOf { it.debtAmount }
+                val unpaidCount = subsForScout.count { it.debtAmount > 0 }
                 ScoutDebt(
                     scoutId = scoutId,
                     scoutFullName = fullName,
@@ -448,27 +548,23 @@ class FinanceRepositoryImpl(
     override fun observeTotalOutstandingDebt(): Flow<Int> {
         return combine(
             dataSource.observeAllSubscriptions(),
-            dataSource.observeAllContributions(),
-            observeValidActivityIds()
-        ) { subscriptions, contributions, validActivityIds ->
-            val validSubs = subscriptions.filter { it.activityId.isNotBlank() && it.activityId in validActivityIds }
-            val validContribs = contributions.filter { it.activityId.isNotBlank() && it.activityId in validActivityIds }
-            validSubs.sumOf { it.debtAmount } + validContribs.sumOf { it.debtAmount }
+            observeActiveScoutIds()
+        ) { subscriptions, activeScoutIds ->
+            val validSubs = subscriptions.filter {
+                it.activityId.isNotBlank() && it.scoutId in activeScoutIds
+            }
+            validSubs.sumOf { it.debtAmount }
         }
     }
 
     private fun computeSummaryInMemory(
         transactions: List<FinanceTransaction>,
         subscriptions: List<FinanceSubscription>,
-        contributions: List<FinanceContribution>,
-        settings: FinanceSettings
+        settings: FinanceSettings,
+        activeScoutIds: Set<String>
     ): FinanceSummary {
         val donations = transactions
             .filter { it.type == FinanceTransactionType.DONATION }
-            .sumOf { it.amount }
-
-        val txContributions = transactions
-            .filter { it.type == FinanceTransactionType.CONTRIBUTION }
             .sumOf { it.amount }
 
         val txOpeningBalance = transactions
@@ -477,15 +573,18 @@ class FinanceRepositoryImpl(
 
         val effectiveOpeningBalance = if (txOpeningBalance > 0) txOpeningBalance else settings.openingBalance
 
+        // إجمالي مبالغ الاشتراكات المدفوعة يظل يشمل السجلات التاريخية للحفاظ على رصيد الخزينة العام دقيقاً
         val subscriptionsPaid = subscriptions.sumOf { it.paidAmount }
 
-        val totalIncome = donations + txContributions + effectiveOpeningBalance + subscriptionsPaid
+        val totalIncome = donations + effectiveOpeningBalance + subscriptionsPaid
         val totalExpenses = transactions
             .filter { it.type == FinanceTransactionType.EXPENSE }
             .sumOf { it.amount }
 
         val balance = totalIncome - totalExpenses
-        val totalDebt = subscriptions.sumOf { it.debtAmount } + contributions.sumOf { it.debtAmount }
+        val totalDebt = subscriptions
+            .filter { it.scoutId in activeScoutIds }
+            .sumOf { it.debtAmount }
 
         val cal = Calendar.getInstance()
         cal.set(Calendar.DAY_OF_MONTH, 1)
@@ -550,20 +649,21 @@ class FinanceRepositoryImpl(
                 deletedCount += subsToDelete.size
             }
 
-            // 3. Check Finance Contributions
-            val contribsSnapshot = firestore.collection("finance_contributions").get().await()
-            val contribsToDelete = contribsSnapshot.documents.filter { 
-                val actId = it.getString("activityId")
-                actId != null && !validActivityIds.contains(actId)
+
+
+            // 4. Check Finance Transactions linked to deleted activities (activityId or targetId)
+            val txSnapshot = firestore.collection("finance_transactions").get().await()
+            val txToDelete = txSnapshot.documents.filter { doc ->
+                val actId = doc.getString("activityId") ?: doc.getString("targetId")
+                !actId.isNullOrBlank() && !validActivityIds.contains(actId)
             }
-            // Batch delete
-            if (contribsToDelete.isNotEmpty()) {
-                contribsToDelete.chunked(500).forEach { chunk ->
+            if (txToDelete.isNotEmpty()) {
+                txToDelete.chunked(500).forEach { chunk ->
                     val batch = firestore.batch()
                     chunk.forEach { batch.delete(it.reference) }
                     batch.commit().await()
                 }
-                deletedCount += contribsToDelete.size
+                deletedCount += txToDelete.size
             }
 
             Result.success(deletedCount)
@@ -581,12 +681,21 @@ class FinanceRepositoryImpl(
                 .get()
                 .await()
 
-            val contribsSnapshot = firestore.collection("finance_contributions")
+
+
+            val txByActivityId = firestore.collection("finance_transactions")
                 .whereEqualTo("activityId", activityId)
                 .get()
                 .await()
 
-            val allDocs = subsSnapshot.documents + contribsSnapshot.documents
+            val txByTargetId = firestore.collection("finance_transactions")
+                .whereEqualTo("targetId", activityId)
+                .get()
+                .await()
+
+            val allDocs = (subsSnapshot.documents + txByActivityId.documents + txByTargetId.documents)
+                .distinctBy { it.id }
+
             if (allDocs.isNotEmpty()) {
                 allDocs.chunked(500).forEach { chunk ->
                     val batch = firestore.batch()

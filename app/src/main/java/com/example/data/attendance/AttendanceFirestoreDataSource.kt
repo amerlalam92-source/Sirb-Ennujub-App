@@ -1,5 +1,11 @@
 package com.example.data.attendance
 
+import android.util.Log
+import com.example.data.firestore.safeInt
+import com.example.data.firestore.safeLong
+import com.example.data.firestore.safeNullableInt
+import com.example.data.firestore.safeNullableString
+import com.example.data.firestore.safeString
 import com.example.domain.attendance.Attendance
 import com.example.domain.attendance.AttendancePointsSettings
 import com.example.domain.attendance.AttendanceStatus
@@ -62,7 +68,7 @@ class AttendanceFirestoreDataSource(
                     return@addSnapshotListener
                 }
                 val set = snapshot?.documents?.mapNotNull { doc ->
-                    doc.getString("activityId") ?: doc.reference.parent.parent?.id
+                    doc.safeNullableString("activityId") ?: doc.reference.parent.parent?.id
                 }?.toSet() ?: emptySet()
                 trySend(set)
             }
@@ -158,7 +164,8 @@ class AttendanceFirestoreDataSource(
     fun observePointsSettings(): Flow<AttendancePointsSettings> = callbackFlow {
         val listenerRegistration = settingsDoc.addSnapshotListener { snapshot, error ->
             if (error != null) {
-                close(error)
+                Log.w("AttendanceFirestoreDS", "Error observing points settings", error)
+                trySend(AttendancePointsSettings())
                 return@addSnapshotListener
             }
             if (snapshot != null && snapshot.exists()) {
@@ -185,24 +192,31 @@ class AttendanceFirestoreDataSource(
         }
     }
 
-    private fun mapDocumentToAttendance(doc: DocumentSnapshot, defaultActivityId: String? = null): Attendance {
-        val actId = doc.getString("activityId")
-            ?: defaultActivityId
-            ?: doc.reference.parent.parent?.id
-            ?: ""
-        val scId = doc.getString("scoutId") ?: doc.id
-        return Attendance(
-            activityId = actId,
-            scoutId = scId,
-            scoutFullName = doc.getString("scoutFullName") ?: "",
-            status = doc.getString("status") ?: AttendanceStatus.PRESENT.key,
-            points = doc.getLong("points")?.toInt() ?: 0,
-            activityDate = doc.getLong("activityDate") ?: 0L,
-            recordedBy = doc.getString("recordedBy") ?: "",
-            recordedByName = doc.getString("recordedByName") ?: "",
-            recordedAt = doc.getLong("recordedAt") ?: System.currentTimeMillis(),
-            updatedAt = doc.getLong("updatedAt") ?: System.currentTimeMillis()
-        )
+    private fun mapDocumentToAttendance(doc: DocumentSnapshot, defaultActivityId: String? = null): Attendance? {
+        return try {
+            val actId = doc.safeNullableString("activityId")
+                ?: defaultActivityId
+                ?: doc.reference.parent.parent?.id
+                ?: ""
+            val scId = doc.safeNullableString("scoutId") ?: doc.id
+            val now = System.currentTimeMillis()
+            Attendance(
+                activityId = actId,
+                scoutId = scId,
+                scoutFullName = doc.safeString("scoutFullName"),
+                status = doc.safeString("status", AttendanceStatus.PRESENT.key),
+                points = doc.safeInt("points", 0),
+                activityDate = doc.safeLong("activityDate", 0L),
+                unitId = doc.safeNullableString("unitId"),
+                recordedBy = doc.safeString("recordedBy"),
+                recordedByName = doc.safeString("recordedByName"),
+                recordedAt = doc.safeLong("recordedAt", now),
+                updatedAt = doc.safeLong("updatedAt", now)
+            )
+        } catch (e: Exception) {
+            Log.w("AttendanceFirestoreDS", "Failed to map attendance ${doc.id}", e)
+            null
+        }
     }
 
     private fun mapAttendanceToMap(attendance: Attendance): Map<String, Any?> {
@@ -213,6 +227,7 @@ class AttendanceFirestoreDataSource(
             "status" to attendance.status,
             "points" to attendance.points,
             "activityDate" to attendance.activityDate,
+            "unitId" to attendance.unitId,
             "recordedBy" to attendance.recordedBy,
             "recordedByName" to attendance.recordedByName,
             "recordedAt" to attendance.recordedAt,
@@ -221,33 +236,38 @@ class AttendanceFirestoreDataSource(
     }
 
     private fun mapDocumentToSettings(doc: DocumentSnapshot): AttendancePointsSettings {
-        // إذا كانت الحقول الجديدة متوفرة نأخذها، وإلا نستنتجها أو نأخذ الافتراضيات
-        val basePoints = doc.getLong("basePoints")?.toInt() ?: 10
-        val earlyBonus = doc.getLong("earlyBonus")?.toInt()
-            ?: ((doc.getLong("presentPoints")?.toInt() ?: 12) - basePoints).coerceAtLeast(0)
-        val lateDeduction = doc.getLong("lateDeduction")?.toInt()
-            ?: (basePoints - (doc.getLong("latePoints")?.toInt() ?: 7)).coerceAtLeast(0)
-        val veryLateDeduction = doc.getLong("veryLateDeduction")?.toInt()
-            ?: (basePoints - (doc.getLong("veryLatePoints")?.toInt() ?: 2)).coerceAtLeast(0)
-        val excusedDeduction = doc.getLong("excusedDeduction")?.toInt()
-            ?: (basePoints - (doc.getLong("absentExcusedPoints")?.toInt() ?: 4)).coerceAtLeast(0)
-        val unexcusedDeduction = doc.getLong("unexcusedDeduction")?.toInt()
-            ?: (basePoints - (doc.getLong("absentUnexcusedPoints")?.toInt() ?: 0)).coerceAtLeast(0)
-        val kafaaBadgePoints = doc.getLong("kafaaBadgePoints")?.toInt() ?: 10
-        val extraHobbyBadgePoints = doc.getLong("extraHobbyBadgePoints")?.toInt() ?: 5
+        return try {
+            // إذا كانت الحقول الجديدة متوفرة نأخذها، وإلا نستنتجها أو نأخذ الافتراضيات
+            val basePoints = doc.safeInt("basePoints", 10)
+            val earlyBonus = doc.safeNullableInt("earlyBonus")
+                ?: (doc.safeInt("presentPoints", 12) - basePoints).coerceAtLeast(0)
+            val lateDeduction = doc.safeNullableInt("lateDeduction")
+                ?: (basePoints - doc.safeInt("latePoints", 7)).coerceAtLeast(0)
+            val veryLateDeduction = doc.safeNullableInt("veryLateDeduction")
+                ?: (basePoints - doc.safeInt("veryLatePoints", 2)).coerceAtLeast(0)
+            val excusedDeduction = doc.safeNullableInt("excusedDeduction")
+                ?: (basePoints - doc.safeInt("absentExcusedPoints", 4)).coerceAtLeast(0)
+            val unexcusedDeduction = doc.safeNullableInt("unexcusedDeduction")
+                ?: (basePoints - doc.safeInt("absentUnexcusedPoints", 0)).coerceAtLeast(0)
+            val kafaaBadgePoints = doc.safeInt("kafaaBadgePoints", 10)
+            val extraHobbyBadgePoints = doc.safeInt("extraHobbyBadgePoints", 5)
 
-        return AttendancePointsSettings(
-            basePoints = basePoints,
-            earlyBonus = earlyBonus,
-            lateDeduction = lateDeduction,
-            veryLateDeduction = veryLateDeduction,
-            excusedDeduction = excusedDeduction,
-            unexcusedDeduction = unexcusedDeduction,
-            kafaaBadgePoints = kafaaBadgePoints,
-            extraHobbyBadgePoints = extraHobbyBadgePoints,
-            updatedAt = doc.getLong("updatedAt") ?: System.currentTimeMillis(),
-            updatedBy = doc.getString("updatedBy") ?: ""
-        )
+            AttendancePointsSettings(
+                basePoints = basePoints,
+                earlyBonus = earlyBonus,
+                lateDeduction = lateDeduction,
+                veryLateDeduction = veryLateDeduction,
+                excusedDeduction = excusedDeduction,
+                unexcusedDeduction = unexcusedDeduction,
+                kafaaBadgePoints = kafaaBadgePoints,
+                extraHobbyBadgePoints = extraHobbyBadgePoints,
+                updatedAt = doc.safeLong("updatedAt", System.currentTimeMillis()),
+                updatedBy = doc.safeString("updatedBy")
+            )
+        } catch (e: Exception) {
+            Log.w("AttendanceFirestoreDS", "Failed to map attendance points settings", e)
+            AttendancePointsSettings()
+        }
     }
 
     private fun mapSettingsToMap(settings: AttendancePointsSettings): Map<String, Any?> {

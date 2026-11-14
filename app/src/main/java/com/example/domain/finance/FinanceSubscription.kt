@@ -16,6 +16,7 @@ data class FinanceSubscription(
     val paidAmount: Int = 0,
     val debtAmount: Int = (requiredAmount - paidAmount).coerceAtLeast(0),
     val notes: String? = null,
+    val unitId: String? = null,
     val recordedAt: Long = System.currentTimeMillis(),
     val recordedBy: String = "",
     val recordedByName: String = "",

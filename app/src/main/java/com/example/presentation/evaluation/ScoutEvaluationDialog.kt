@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Gavel
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Remove
@@ -65,20 +66,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import com.example.R
+import com.example.domain.evaluation.CriteriaType
 import com.example.domain.evaluation.EvaluationCriteria
 import com.example.domain.evaluation.ScoutEvaluation
 import com.example.domain.scout.Scout
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import com.example.presentation.common.AppAlertDialog
 import com.example.presentation.common.AppDialog
 
 /**
- * نافذة حوار تقييم الشبل الكشفي (Scout Evaluation Dialog)
- * الميزات:
- * 1. درجة افتراضية كاملة (maxScore) عند التقييم لأول مرة.
- * 2. عدادات (+/-) مع شبكة FlowRow من عمودين ودعم .imePadding() و .verticalScroll().
- * 3. في التقييم الفصلي: عرض المحفوظ المسجل من المدرسة القرآنية وإدخال "المقدار المطلوب اختباره" مع إخفاء العقوبة.
- * 4. قفل التعديل التلقائي بعد مرور 7 أيام (أسبوع) من تاريخ الإنشاء، مع إظهار تحذير بارز وتعطيل جميع أزرار التعديل والحفظ والحذف.
- * 5. زر حذف التقييم مع حوار تأكيد (يظهر فقط إذا كان هناك تقييم مسجل وغير مقفل).
+ * نافذة حوار التقييم الفصلي للشبل الكشفي (Scout Evaluation Dialog)
+ * تعرض 6 معايير من 20:
+ * - 4 معايير خاصة بكل قائد (الأخلاق، المشاركة، الاهتمام، الانضباط).
+ * - معيارين مشتركين (حفظ القرآن، تقييم الكراس).
+ * القائد الرئيسي (isMainLeader) يرى قائمة القراءة فقط لدرجات القادة الآخرين تحت كل معيار من معايير القائد الأربعة.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -87,26 +89,52 @@ fun ScoutEvaluationDialog(
     criteriaList: List<EvaluationCriteria>,
     existingEvaluation: ScoutEvaluation?,
     isSaving: Boolean,
-    showPenalty: Boolean = true,
+    showPenalty: Boolean = false,
+    isMainLeader: Boolean = false,
+    otherLeadersEvaluations: List<ScoutEvaluation> = emptyList(),
+    leaderNames: Map<String, String> = emptyMap(),
+    initialSharedScores: Map<String, Int> = emptyMap(),
+    initialTestedAmount: String? = null,
     currentMemorized: String? = null,
     onSave: (scoresMap: Map<String, Int>, penaltyAmount: Int, penaltyReason: String?, testedAmount: String?) -> Unit,
     onDelete: ((String) -> Unit)? = null,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     // التحقق من قفل التعديل بعد 7 أيام (التقييمات الجديدة existingEvaluation == null لا تقفل أبداً)
     val isLocked = remember(existingEvaluation) {
         existingEvaluation != null &&
                 (System.currentTimeMillis() - existingEvaluation.createdAt) > (7 * 24 * 60 * 60 * 1000L)
     }
 
-    // خريطة درجات المعايير (CriteriaId -> Int score):
-    // إذا كان التقييم لأول مرة تكون الدرجة الافتراضية هي criteria.maxScore (مثلاً 20/20)
-    // إذا كان تعديلاً يتم تحميل الدرجات السابقة المحفوظة
-    val scoresState = remember(criteriaList, existingEvaluation) {
+    val (leaderCriteria, sharedCriteria) = remember(criteriaList) {
+        val shared = mutableListOf<EvaluationCriteria>()
+        val leader = mutableListOf<EvaluationCriteria>()
+        criteriaList.forEach { criteria ->
+            val isShared = isSharedCriteria(criteria)
+            if (isShared) {
+                shared.add(criteria)
+            } else {
+                leader.add(criteria)
+            }
+        }
+        leader to shared
+    }
+
+    // خريطة درجات المعايير (CriteriaId -> Int score)
+    val scoresState = remember(criteriaList, existingEvaluation, initialSharedScores) {
         mutableStateMapOf<String, Int>().apply {
             criteriaList.forEach { criteria ->
-                val initialScore = existingEvaluation?.criteriaScores?.get(criteria.id) ?: criteria.maxScore
+                val isShared = isSharedCriteria(criteria)
+                val initialScore = if (isShared) {
+                    initialSharedScores[criteria.id]
+                        ?: existingEvaluation?.criteriaScores?.get(criteria.id)
+                        ?: criteria.maxScore
+                } else {
+                    existingEvaluation?.criteriaScores?.get(criteria.id)
+                        ?: criteria.maxScore
+                }
                 put(criteria.id, initialScore.coerceIn(0, criteria.maxScore))
             }
         }
@@ -118,8 +146,8 @@ fun ScoutEvaluationDialog(
     var penaltyReason by remember(existingEvaluation) {
         mutableStateOf(existingEvaluation?.penaltyReason ?: "")
     }
-    var testedAmount by remember(existingEvaluation) {
-        mutableStateOf(existingEvaluation?.testedAmount ?: "")
+    var testedAmount by remember(existingEvaluation, initialTestedAmount) {
+        mutableStateOf(existingEvaluation?.testedAmount ?: initialTestedAmount ?: "")
     }
 
     var showDeleteConfirmation by remember { mutableStateOf(false) }
@@ -146,6 +174,9 @@ fun ScoutEvaluationDialog(
             (sumCriteria - penaltyAmount)
         }
     }
+    val maxTotalScore = remember(criteriaList) {
+        criteriaList.sumOf { it.maxScore }
+    }
 
     // حوار تأكيد الحذف
     if (showDeleteConfirmation && existingEvaluation != null && onDelete != null) {
@@ -158,7 +189,7 @@ fun ScoutEvaluationDialog(
                 )
             },
             text = {
-                Text(text = stringResource(id = R.string.confirm_delete_evaluation))
+                Text(text = replaceCustomWords(stringResource(id = R.string.confirm_delete_evaluation), terms))
             },
             confirmButton = {
                 Button(
@@ -309,8 +340,8 @@ fun ScoutEvaluationDialog(
                     }
                 }
 
-                // في التقييم الفصلي: عرض المحفوظ المسجل وحقل المقدار المطلوب اختباره
-                if (!showPenalty && !currentMemorized.isNullOrBlank()) {
+                // عرض المحفوظ المسجل وحقل المقدار المطلوب اختباره
+                if (!currentMemorized.isNullOrBlank()) {
                     Surface(
                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
                         shape = RoundedCornerShape(12.dp),
@@ -336,29 +367,21 @@ fun ScoutEvaluationDialog(
                             )
                         }
                     }
-
-                    OutlinedTextField(
-                        value = testedAmount,
-                        onValueChange = { testedAmount = it },
-                        enabled = !isLocked && !isSaving,
-                        readOnly = isLocked,
-                        label = { Text(stringResource(id = R.string.eval_tested_amount_label)) },
-                        placeholder = { Text(stringResource(id = R.string.eval_tested_amount_hint)) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 14.dp)
-                            .testTag("tested_amount_input")
-                    )
                 }
 
-                // قسم معايير التقييم
-                Text(
-                    text = stringResource(id = R.string.evaluation_criteria_section_title),
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(bottom = 8.dp)
+                OutlinedTextField(
+                    value = testedAmount,
+                    onValueChange = { testedAmount = it },
+                    enabled = !isLocked && !isSaving,
+                    readOnly = isLocked,
+                    label = { Text(stringResource(id = R.string.eval_tested_amount_label)) },
+                    placeholder = { Text(stringResource(id = R.string.eval_tested_amount_hint)) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 14.dp)
+                        .testTag("tested_amount_input")
                 )
 
                 if (criteriaList.isEmpty()) {
@@ -369,29 +392,83 @@ fun ScoutEvaluationDialog(
                         modifier = Modifier.padding(vertical = 12.dp)
                     )
                 } else {
-                    // شبكة العدادات من عمودين باستخدام FlowRow
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        maxItemsInEachRow = 2,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        criteriaList.forEach { criteria ->
-                            val currentScore = scoresState[criteria.id] ?: criteria.maxScore
-                            CriteriaStepper(
-                                criteria = criteria,
-                                currentScore = currentScore,
-                                enabled = !isLocked && !isSaving,
-                                onScoreChange = { newScore ->
-                                    scoresState[criteria.id] = newScore
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
+                    // 1. معايير القائد الأربعة (الأخلاق، المشاركة، الاهتمام، الانضباط)
+                    if (leaderCriteria.isNotEmpty()) {
+                        Text(
+                            text = stringResource(id = R.string.evaluation_leader_criteria_section),
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            maxItemsInEachRow = 2,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            leaderCriteria.forEach { criteria ->
+                                val currentScore = scoresState[criteria.id] ?: criteria.maxScore
+                                val otherLeaderScores = if (isMainLeader) {
+                                    otherLeadersEvaluations.mapNotNull { otherEval ->
+                                        val score = otherEval.criteriaScores[criteria.id] ?: return@mapNotNull null
+                                        val name = leaderNames[otherEval.leaderId]?.takeIf { it.isNotBlank() }
+                                            ?: otherEval.leaderName.takeIf { it.isNotBlank() }
+                                            ?: "قائد"
+                                        name to score
+                                    }
+                                } else {
+                                    emptyList()
+                                }
+
+                                CriteriaStepper(
+                                    criteria = criteria,
+                                    currentScore = currentScore,
+                                    enabled = !isLocked && !isSaving,
+                                    otherLeaderScores = otherLeaderScores,
+                                    onScoreChange = { newScore ->
+                                        scoresState[criteria.id] = newScore
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+
+                    // 2. المعايير المشتركة (حفظ القرآن وتقييم الكراس)
+                    if (sharedCriteria.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            text = stringResource(id = R.string.evaluation_shared_criteria_section),
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            maxItemsInEachRow = 2,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            sharedCriteria.forEach { criteria ->
+                                val currentScore = scoresState[criteria.id] ?: criteria.maxScore
+                                CriteriaStepper(
+                                    criteria = criteria,
+                                    currentScore = currentScore,
+                                    enabled = !isLocked && !isSaving,
+                                    otherLeaderScores = emptyList(),
+                                    onScoreChange = { newScore ->
+                                        scoresState[criteria.id] = newScore
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
                     }
                 }
 
-                // قسم الخصم الإضافي (العقوبة) — خاص بتبويب الأنشطة فقط
+                // قسم الخصم الإضافي (احتياطي فقط إذا فُعّل صراحةً)
                 if (showPenalty) {
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -471,12 +548,12 @@ fun ScoutEvaluationDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "الدرجة النهائية المحسوبة:",
+                            text = "المجموع الكلي للنقاط:",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = stringResource(id = R.string.evaluation_total_preview, totalScorePreview),
+                            text = if (maxTotalScore > 0) "$totalScorePreview / $maxTotalScore" else stringResource(id = R.string.evaluation_total_preview, totalScorePreview),
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = if (totalScorePreview >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                         )
@@ -570,14 +647,27 @@ fun ScoutEvaluationDialog(
     }
 }
 
+private fun isSharedCriteria(criteria: EvaluationCriteria): Boolean {
+    return criteria.type == EvaluationCriteria.TYPE_QURAN ||
+            criteria.type == CriteriaType.QURAN.name ||
+            criteria.type == CriteriaType.QURAN.value ||
+            criteria.type == EvaluationCriteria.TYPE_NOTEBOOK ||
+            criteria.type == CriteriaType.NOTEBOOK.name ||
+            criteria.type == CriteriaType.NOTEBOOK.value ||
+            criteria.name.contains("قرآن") ||
+            criteria.name.contains("حفظ") ||
+            criteria.name.contains("كراس")
+}
+
 /**
- * مكون عداد المعيار (+/-) مع مراعاة قفل التعديل
+ * مكون عداد المعيار (+/-) مع مراعاة قفل التعديل وعرض درجات القادة الآخرين للقائد الرئيسي فقط
  */
 @Composable
 private fun CriteriaStepper(
     criteria: EvaluationCriteria,
     currentScore: Int,
     enabled: Boolean = true,
+    otherLeaderScores: List<Pair<String, Int>> = emptyList(),
     onScoreChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -668,6 +758,69 @@ private fun CriteriaStepper(
                         contentDescription = "Plus",
                         modifier = Modifier.size(18.dp)
                     )
+                }
+            }
+
+            if (otherLeaderScores.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("other_leaders_scores_${criteria.id}")
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Groups,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = stringResource(id = R.string.evaluation_other_leaders_scores_title),
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.tertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        otherLeaderScores.forEach { (leaderName, score) ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = leaderName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "$score/${criteria.maxScore}",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

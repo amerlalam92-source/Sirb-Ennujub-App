@@ -29,13 +29,32 @@ data class AttendanceEntryUiState(
     val isLoading: Boolean = false,
     val isSaving: Boolean = false,
     val isFinished: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val isFinanceSectionVisible: Boolean = false,
+    val previousDebtRequired: Int = 0,
+    val previousDebtPaid: Int = 0,
+    val todaySubRequired: Int = 0,
+    val todaySubPaid: Int = 0,
+    val totalPaidToday: Int = 0,
+    val overpaymentCredit: Int = 0,
+    val quickInputAmount: String = "",
+    val selectedStatus: AttendanceStatus? = null,
+    val canPay: Boolean = false,
+    val snackbarMessage: String? = null
 ) {
+    val currentScoutDebt: Int
+        get() = previousDebtRequired
+
+    val todayRequiredAmount: Int
+        get() = todaySubRequired
+
+    val paidAmountInput: String
+        get() = if (totalPaidToday > 0) totalPaidToday.toString() else ""
     val currentScout: Scout?
         get() = scoutsQueue.getOrNull(currentIndex)
 
     val currentStatus: AttendanceStatus?
-        get() = currentScout?.let { recordedStatuses[it.id] }
+        get() = selectedStatus ?: currentScout?.let { recordedStatuses[it.id] }
 
     val totalScouts: Int
         get() = scoutsQueue.size

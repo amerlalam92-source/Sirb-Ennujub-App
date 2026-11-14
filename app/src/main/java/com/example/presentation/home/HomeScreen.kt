@@ -2,6 +2,9 @@ package com.example.presentation.home
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import com.example.presentation.common.AppLogo
+import com.example.presentation.common.LocalAppTerms
+import com.example.presentation.common.replaceCustomWords
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,10 +32,12 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PendingActions
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DrawerValue
@@ -47,6 +52,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
@@ -77,6 +83,7 @@ import com.example.domain.activity.ActivityRepository
 import com.example.domain.auth.AuthRepository
 import com.example.domain.scout.ScoutRepository
 import com.example.navigation.Routes
+import com.example.presentation.common.AppAlertDialog
 import com.example.presentation.common.CustomTopAppBar
 import com.example.presentation.common.ThemeToggleButton
 import kotlinx.coroutines.launch
@@ -105,6 +112,8 @@ fun HomeScreen(
     onNavigateToFinance: () -> Unit = {},
     onNavigateToEvaluation: () -> Unit = {},
     onNavigateToEvaluationMatrix: () -> Unit = {},
+    onNavigateToLeaderManagement: () -> Unit = {},
+    onNavigateToAuditLog: () -> Unit = {},
     viewModel: HomeViewModel? = null,
     themePreferences: ThemePreferences? = null,
     modifier: Modifier = Modifier
@@ -112,6 +121,7 @@ fun HomeScreen(
     val context = LocalContext.current
     val appContainer = (context.applicationContext as ScoutApplication).container
     val effectiveThemePreferences = themePreferences ?: appContainer.themePreferences
+    val terms = LocalAppTerms.current
 
     val currentUser = authRepository.currentUser
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -126,6 +136,11 @@ fun HomeScreen(
     val leaderPhotoUrl by (viewModel?.leaderPhotoUrl ?: kotlinx.coroutines.flow.flowOf(currentUser?.photoUrl?.toString()))
         .collectAsStateWithLifecycle(initialValue = currentUser?.photoUrl?.toString())
 
+    val isMainLeader by (viewModel?.isMainLeader ?: kotlinx.coroutines.flow.flowOf(false))
+        .collectAsStateWithLifecycle(initialValue = false)
+    val stageTerms by (viewModel?.stageTerms ?: kotlinx.coroutines.flow.flowOf(com.example.presentation.common.StageTerms()))
+        .collectAsStateWithLifecycle(initialValue = com.example.presentation.common.StageTerms())
+
     // مراقبة حية لعدد الأشبال من Firestore بدون أي رقم ثابت
     val scoutsList by scoutRepository.observeScouts().collectAsStateWithLifecycle(initialValue = emptyList())
     val activeScoutsCount = scoutsList.count { it.isActive }
@@ -134,9 +149,12 @@ fun HomeScreen(
     val upcomingActivities by activityRepository.observeUpcomingActivities().collectAsStateWithLifecycle(initialValue = emptyList())
     val upcomingActivitiesCount = upcomingActivities.count { it.isUpcoming() }
 
-    // مراقبة حية لعدد الأشبال المسجلين في المدارس القرآنية
+    // مراقبة حية لعدد الأشبال المسجلين في المدارس القرآنية (النشطين فقط)
+    val activeScoutIds = remember(scoutsList) {
+        scoutsList.filter { it.isActive }.map { it.id }.toSet()
+    }
     val quranEnrollments by appContainer.observeAllEnrollmentsUseCase().collectAsStateWithLifecycle(initialValue = emptyList())
-    val quranEnrolledCount = quranEnrollments.size
+    val quranEnrolledCount = quranEnrollments.count { it.scoutId in activeScoutIds }
 
     // مراقبة حية لعدد الاشتراكات غير المسددة بانتظار التحصيل
     val pendingSubscriptionsCount by (viewModel?.pendingSubscriptionsCount ?: kotlinx.coroutines.flow.flowOf(0))
@@ -170,6 +188,8 @@ fun HomeScreen(
                 AppDrawerContent(
                     currentRoute = Routes.HOME,
                     leaderName = leaderFullName,
+                    isMainLeader = isMainLeader,
+                    stageTerms = stageTerms,
                     onNavigate = { route ->
                         scope.launch { drawerState.close() }
                         when (route) {
@@ -184,9 +204,11 @@ fun HomeScreen(
                             Routes.FINANCE_HOME -> onNavigateToFinance()
                             Routes.EVALUATION_SCREEN -> onNavigateToEvaluation()
                             Routes.EVALUATION_MATRIX -> onNavigateToEvaluationMatrix()
-                            Routes.SETTINGS -> onNavigateToSettings()
-                            Routes.REPORTS_PLACEHOLDER -> onNavigateToReports()
+                            Routes.SETTINGS, Routes.SETTINGS_HUB -> onNavigateToSettings()
+                            Routes.REPORTS_SCREEN -> onNavigateToReports()
+                            Routes.AUDIT_LOG -> onNavigateToAuditLog()
                             Routes.ABOUT -> onNavigateToAbout()
+                            Routes.LEADER_MANAGEMENT -> onNavigateToLeaderManagement()
                         }
                     },
                     onLogout = {
@@ -203,12 +225,11 @@ fun HomeScreen(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 CustomTopAppBar(
-                    title = stringResource(id = R.string.app_name),
-                    subtitle = stringResource(id = R.string.scout_group_name),
+                    title = replaceCustomWords("${terms.groupName} ${terms.unitNameDefinite}", terms),
+                    subtitle = replaceCustomWords("${terms.groupName} ${terms.unitNameDefinite}", terms),
                     logo = {
-                        Image(
-                            painter = painterResource(id = R.drawable.ennujub_logo),
-                            contentDescription = "شعار سرب النُّجُب",
+                        AppLogo(
+                            contentDescription = replaceCustomWords("${terms.groupName} ${terms.unitNameDefinite}", terms),
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(CircleShape)
@@ -223,7 +244,7 @@ fun HomeScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Menu,
-                                contentDescription = "القائمة الرئيسية",
+                                contentDescription = replaceCustomWords("القائمة الرئيسية", terms),
                                 tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -351,9 +372,8 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.width(16.dp))
 
                             // [الجهة اليسرى في RTL - شعار سرب النُّجُب (مقتطع دائرياً 72dp)]
-                            Image(
-                                painter = painterResource(id = R.drawable.ennujub_logo),
-                                contentDescription = "شعار سرب النُّجُب",
+                            AppLogo(
+                                contentDescription = replaceCustomWords("شعار ${terms.groupNameDefinite}", terms),
                                 modifier = Modifier
                                     .size(72.dp)
                                     .clip(CircleShape)
@@ -400,7 +420,7 @@ fun HomeScreen(
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = stringResource(id = R.string.home_scouts_card_title),
+                                    text = replaceCustomWords("سجل ${terms.scoutPluralDefinite}", terms),
                                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 2,
@@ -408,7 +428,7 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = stringResource(id = R.string.home_scouts_card_desc),
+                                    text = replaceCustomWords("إدارة السجلات والبيانات الشخصية لأفراد ${terms.groupNameDefinite}", terms),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 3,
@@ -420,7 +440,7 @@ fun HomeScreen(
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
                                     Text(
-                                        text = stringResource(id = R.string.home_scouts_count_format, activeScoutsCount),
+                                        text = replaceCustomWords("$activeScoutsCount ${terms.scoutSingular} نشط", terms),
                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -476,7 +496,7 @@ fun HomeScreen(
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = stringResource(id = R.string.home_activities_card_title),
+                                    text = replaceCustomWords(stringResource(id = R.string.home_activities_card_title), terms),
                                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 2,
@@ -484,7 +504,7 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = stringResource(id = R.string.home_activities_card_desc),
+                                    text = replaceCustomWords(stringResource(id = R.string.home_activities_card_desc), terms),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 3,
@@ -496,7 +516,7 @@ fun HomeScreen(
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
                                     Text(
-                                        text = stringResource(id = R.string.home_activities_count_format, upcomingActivitiesCount),
+                                        text = replaceCustomWords(stringResource(id = R.string.home_activities_count_format, upcomingActivitiesCount), terms),
                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -552,7 +572,7 @@ fun HomeScreen(
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = stringResource(id = R.string.attendance_picker_title),
+                                    text = replaceCustomWords(stringResource(id = R.string.attendance_picker_title), terms),
                                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 2,
@@ -560,7 +580,7 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = stringResource(id = R.string.attendance_picker_subtitle),
+                                    text = replaceCustomWords("اختر النشاط لتسجيل حضور وغياب ${terms.scoutPluralDefinite}", terms),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 3,
@@ -572,7 +592,7 @@ fun HomeScreen(
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
                                     Text(
-                                        text = stringResource(id = R.string.action_record_attendance),
+                                        text = replaceCustomWords(stringResource(id = R.string.action_record_attendance), terms),
                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -627,7 +647,7 @@ fun HomeScreen(
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = stringResource(id = R.string.home_quran_card_title),
+                                    text = replaceCustomWords(stringResource(id = R.string.home_quran_card_title), terms),
                                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 2,
@@ -635,7 +655,7 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = stringResource(id = R.string.home_quran_card_desc),
+                                    text = replaceCustomWords("متابعة انتظام ${terms.scoutPluralDefinite} في المدارس القرآنية ومقدار الحفظ", terms),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 3,
@@ -647,7 +667,7 @@ fun HomeScreen(
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
                                     Text(
-                                        text = stringResource(id = R.string.home_quran_count_format, quranEnrolledCount),
+                                        text = replaceCustomWords("$quranEnrolledCount ${terms.scoutSingular} مسجل", terms),
                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -702,7 +722,7 @@ fun HomeScreen(
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = stringResource(id = R.string.finance_home_card_title),
+                                    text = replaceCustomWords(stringResource(id = R.string.finance_home_card_title), terms),
                                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 2,
@@ -710,7 +730,7 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = stringResource(id = R.string.finance_home_card_subtitle),
+                                    text = replaceCustomWords(stringResource(id = R.string.finance_home_card_subtitle), terms),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 3,
@@ -722,11 +742,14 @@ fun HomeScreen(
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
                                     Text(
-                                        text = if (pendingSubscriptionsCount > 0) {
-                                            stringResource(id = R.string.finance_home_card_pending_format, pendingSubscriptionsCount)
-                                        } else {
-                                            stringResource(id = R.string.finance_home_card_no_debt)
-                                        },
+                                        text = replaceCustomWords(
+                                            if (pendingSubscriptionsCount > 0) {
+                                                stringResource(id = R.string.finance_home_card_pending_format, pendingSubscriptionsCount)
+                                            } else {
+                                                stringResource(id = R.string.finance_home_card_no_debt)
+                                            },
+                                            terms
+                                        ),
                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                         color = if (pendingSubscriptionsCount > 0) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -781,7 +804,7 @@ fun HomeScreen(
 
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = stringResource(id = R.string.home_evaluation_card_title),
+                                    text = replaceCustomWords("تقييم ${terms.scoutPluralDefinite}", terms),
                                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 2,
@@ -789,7 +812,7 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = stringResource(id = R.string.home_evaluation_card_desc),
+                                    text = replaceCustomWords(stringResource(id = R.string.home_evaluation_card_desc), terms),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 3,
@@ -801,7 +824,7 @@ fun HomeScreen(
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
                                     Text(
-                                        text = stringResource(id = R.string.drawer_evaluation),
+                                        text = replaceCustomWords("تقييم ${terms.scoutPluralDefinite}", terms),
                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -815,6 +838,74 @@ fun HomeScreen(
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(24.dp)
                             )
+                        }
+                    }
+
+                    if (isMainLeader) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onNavigateToLeaderManagement)
+                                .testTag("home_leader_management_card"),
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surface
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(20.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(iconCircleSize)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.secondaryContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ManageAccounts,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.size(iconInnerSize)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(16.dp))
+
+                                Column(
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = replaceCustomWords("إدارة قادة ${terms.groupNameDefinite}", terms),
+                                        style = MaterialTheme.typography.titleLarge.copy(
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = replaceCustomWords("متابعة طلبات الانضمام واعتماد قادة ${terms.groupNameDefinite}", terms),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
                         }
                     }
                 }

@@ -59,6 +59,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import com.example.presentation.common.CustomTopAppBar
 
 /**
@@ -70,8 +72,10 @@ import com.example.presentation.common.CustomTopAppBar
 fun FinanceReportsScreen(
     viewModel: FinanceReportsViewModel,
     onNavigateBack: () -> Unit,
+    onNavigateToScoutPicker: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -86,6 +90,7 @@ fun FinanceReportsScreen(
                     snackbarHostState.showSnackbar(event.message)
                 }
                 is FinanceReportsEvent.ExportSuccess -> {}
+                is FinanceReportsEvent.MultipleExportSuccess -> {}
             }
         }
     }
@@ -213,7 +218,7 @@ fun FinanceReportsScreen(
                 item {
                     ReportActionCard(
                         title = stringResource(id = R.string.report_detailed_debts),
-                        subtitle = stringResource(id = R.string.report_detailed_debts_sub),
+                        subtitle = replaceCustomWords("قائمة بكل ${terms.scoutSingular} وديونه", terms),
                         icon = Icons.Default.ReceiptLong,
                         iconContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f),
                         iconContentColor = MaterialTheme.colorScheme.onErrorContainer,
@@ -239,17 +244,17 @@ fun FinanceReportsScreen(
                     )
                 }
 
-                // Card 6: كشف حساب شبل
+                // Card 6: كشوف حسابات الأشبال
                 item {
                     ReportActionCard(
-                        title = stringResource(id = R.string.report_scout_statement),
-                        subtitle = stringResource(id = R.string.report_scout_statement_sub),
+                        title = replaceCustomWords("كشوف حسابات ${terms.scoutPluralDefinite}", terms),
+                        subtitle = "تحديد وتصدير كشوفات متعددة",
                         icon = Icons.Default.PersonSearch,
                         iconContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
                         iconContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         badgeText = "PDF",
                         enabled = !uiState.isExporting,
-                        onClick = { showScoutPicker = true },
+                        onClick = onNavigateToScoutPicker,
                         testTag = "report_card_scout_statement"
                     )
                 }

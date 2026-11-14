@@ -40,11 +40,9 @@ class FinanceHomeViewModel(
         _refreshTrigger,
         repository.observeSummary(),
         repository.observeAllSubscriptions(),
-        repository.observeAllContributions(),
         repository.observeAllTransactions()
-    ) { _, summary, subscriptions, contributions, transactions ->
+    ) { _, summary, subscriptions, transactions ->
         val pendingSubsCount = subscriptions.count { it.debtAmount > 0 }
-        val pendingContribsCount = contributions.count { it.debtAmount > 0 }
         val donations = transactions
             .filter { it.type == FinanceTransactionType.DONATION }
             .sumOf { it.amount }
@@ -55,7 +53,7 @@ class FinanceHomeViewModel(
         FinanceHomeUiState(
             summary = summary,
             pendingSubscriptionsCount = pendingSubsCount,
-            pendingContributionsCount = pendingContribsCount,
+            pendingContributionsCount = 0,
             totalOutstandingDebt = summary.totalOutstandingDebt,
             totalDonations = donations,
             totalContributionsPaid = contribsPaid,

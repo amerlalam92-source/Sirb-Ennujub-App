@@ -133,14 +133,42 @@ class ProgressFirestoreDataSource(
     }
 
     suspend fun deleteRequirementIfUnused(id: String): Result<Unit> {
-        val progressDocs = firestore.collection(COLLECTION_SCOUT_PROGRESS)
+        val progressSnapshot = firestore.collection(COLLECTION_SCOUT_PROGRESS)
             .whereEqualTo("requirementId", id)
-            .limit(1)
             .get()
             .await()
 
-        if (!progressDocs.isEmpty) {
-            return Result.failure(IllegalStateException("USED_BY_SCOUTS"))
+        val completedDocs = progressSnapshot.documents.filter { doc ->
+            doc.getBoolean("completed") == true
+        }
+
+        if (completedDocs.isNotEmpty()) {
+            val uniqueScoutIds = completedDocs.mapNotNull { doc ->
+                doc.getString("scoutId")?.takeIf { it.isNotBlank() }
+                    ?: doc.id.removeSuffix("_$id").takeIf { it != doc.id && it.isNotBlank() }
+            }.toSet()
+
+            if (uniqueScoutIds.isNotEmpty()) {
+                val existingScoutIds = firestore.collection("scouts")
+                    .get()
+                    .await()
+                    .documents
+                    .map { it.id }
+                    .toSet()
+
+                if (uniqueScoutIds.any { it in existingScoutIds }) {
+                    return Result.failure(IllegalStateException("USED_BY_SCOUTS"))
+                }
+            }
+        }
+
+        val orphanRefs = progressSnapshot.documents.map { it.reference }
+        if (orphanRefs.isNotEmpty()) {
+            orphanRefs.chunked(450).forEach { chunk ->
+                val batch = firestore.batch()
+                chunk.forEach { batch.delete(it) }
+                batch.commit().await()
+            }
         }
 
         firestore.collection(COLLECTION_REQUIREMENTS).document(id).delete().await()
@@ -207,6 +235,20 @@ class ProgressFirestoreDataSource(
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     Log.e(TAG, "Error observing scout badges: ${error.message}", error)
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val list = snapshot?.documents?.mapNotNull { it.toObject(ScoutBadge::class.java) }.orEmpty()
+                trySend(list)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    fun observeAllScoutBadges(): Flow<List<ScoutBadge>> = callbackFlow {
+        val listener = firestore.collection(COLLECTION_SCOUT_BADGES)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e(TAG, "Error observing all scout badges: ${error.message}", error)
                     close(error)
                     return@addSnapshotListener
                 }

@@ -76,7 +76,19 @@ class ScoutViewModel(
     private val _inProgressBadgesByScout = MutableStateFlow<Map<String, Set<BadgeLevel>>>(emptyMap())
     val inProgressBadgesByScout: StateFlow<Map<String, Set<BadgeLevel>>> = _inProgressBadgesByScout.asStateFlow()
 
+    private val _isMainLeader = MutableStateFlow(false)
+    val isMainLeader: StateFlow<Boolean> = _isMainLeader.asStateFlow()
+
     init {
+        if (authRepository != null) {
+            viewModelScope.launch {
+                authRepository.observeCurrentLeader()
+                    .catch { _isMainLeader.value = false }
+                    .collect { leader ->
+                        _isMainLeader.value = leader?.isMainLeader == true
+                    }
+            }
+        }
         if (activityRepository != null) {
             viewModelScope.launch {
                 activityRepository.observeActivities().collect {
@@ -637,6 +649,39 @@ class ScoutViewModel(
 
     fun clearProgressMessage() {
         _progressMessage.value = null
+    }
+
+    fun updateCreditManually(scoutId: String, newBalance: Int) {
+        if (!_isMainLeader.value) return
+        val sanitizedBalance = newBalance.coerceAtLeast(0)
+        viewModelScope.launch {
+            val result = repository.updateCreditManually(scoutId, sanitizedBalance)
+            if (result.isSuccess) {
+                val currentState = _detailUiState.value
+                if (currentState is ScoutDetailUiState.Success && currentState.scout.id == scoutId) {
+                    _detailUiState.value = ScoutDetailUiState.Success(
+                        currentState.scout.copy(creditBalance = sanitizedBalance)
+                    )
+                }
+                _progressMessage.value = "تم تحديث الرصيد المقدم بنجاح"
+            } else {
+                _progressMessage.value = result.exceptionOrNull()?.localizedMessage ?: "فشل تحديث الرصيد المقدم"
+            }
+        }
+    }
+
+    fun updateSubscriptionDebtManually(subscriptionId: String, newDebtAmount: Int) {
+        if (!_isMainLeader.value) return
+        val financeRepo = financeRepository ?: return
+        val sanitizedDebt = newDebtAmount.coerceAtLeast(0)
+        viewModelScope.launch {
+            val result = financeRepo.updateSubscriptionDebtManually(subscriptionId, sanitizedDebt)
+            if (result.isSuccess) {
+                _progressMessage.value = "تم تحديث دين الاشتراك بنجاح"
+            } else {
+                _progressMessage.value = result.exceptionOrNull()?.localizedMessage ?: "فشل تحديث دين الاشتراك"
+            }
+        }
     }
 
     fun toggleRequirementCompleted(

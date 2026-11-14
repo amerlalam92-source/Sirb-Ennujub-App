@@ -2,6 +2,7 @@ package com.example.presentation.about
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
+import com.example.presentation.common.AppLogo
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -87,8 +88,7 @@ fun AboutScreen(
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // شعار السرب
-                Image(
-                    painter = painterResource(id = R.drawable.ennujub_logo),
+                AppLogo(
                     contentDescription = stringResource(id = R.string.app_name),
                     modifier = Modifier
                         .size(110.dp)

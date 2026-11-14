@@ -70,6 +70,8 @@ import com.example.R
 import com.example.domain.progress.BadgeProgress
 import com.example.domain.progress.RequirementWithState
 import com.example.domain.progress.labelRes
+import com.example.domain.settings.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import kotlinx.coroutines.launch
 import java.lang.String.format
 import java.text.SimpleDateFormat
@@ -369,6 +371,7 @@ private fun SingleBadgeSummaryHeader(
     dateFormatter: SimpleDateFormat,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val progressAnimated by animateFloatAsState(
         targetValue = badge.percentage / 100f,
         label = "single_badge_progress_anim"
@@ -502,7 +505,7 @@ private fun SingleBadgeSummaryHeader(
                                 grantedDate.isNotBlank() && leader.isNotBlank() ->
                                     "تاريخ المنح: $grantedDate — بواسطة: $leader"
                                 grantedDate.isNotBlank() -> "تاريخ المنح: $grantedDate"
-                                else -> "معتمدة وممنوحة للشبل"
+                                else -> replaceCustomWords("معتمدة وممنوحة لـ${terms.scoutSingularDefinite}", terms)
                             }
                             Text(
                                 text = detailsText,

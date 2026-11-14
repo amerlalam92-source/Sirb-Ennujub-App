@@ -7,6 +7,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -24,6 +25,8 @@ import com.example.presentation.attendance.AttendanceEntryScreen
 import com.example.presentation.attendance.AttendanceViewModel
 import com.example.presentation.attendance.TrainingMeetingsRegisterScreen
 import com.example.presentation.attendance.TrainingMeetingsRegisterViewModel
+import com.example.presentation.audit.AuditLogScreen
+import com.example.presentation.audit.AuditLogViewModel
 import com.example.presentation.auth.LoginScreen
 import com.example.presentation.auth.LoginViewModel
 import com.example.presentation.auth.SignUpScreen
@@ -31,13 +34,23 @@ import com.example.presentation.auth.SignUpViewModel
 import com.example.presentation.home.HomeScreen
 import com.example.presentation.home.HomeViewModel
 import com.example.presentation.about.AboutScreen
-import com.example.presentation.reports.ReportsPlaceholderScreen
+import com.example.presentation.reports.GeneralReportsScreen
+import com.example.presentation.reports.AttendanceReportScreen
+import com.example.presentation.reports.ActivitiesReportScreen
+import com.example.presentation.reports.ProgressReportScreen
+import com.example.presentation.reports.LeadersEvaluationReportScreen
+import com.example.presentation.reports.GeneralReportsViewModel
 import com.example.presentation.scout.ScoutDetailScreen
 import com.example.presentation.scout.ScoutFormScreen
 import com.example.presentation.scout.ScoutListScreen
 import com.example.presentation.scout.ScoutViewModel
-import com.example.presentation.settings.SettingsScreen
+import androidx.compose.runtime.remember
+import com.example.presentation.settings.SettingsHubScreen
 import com.example.presentation.settings.SettingsViewModel
+import com.example.presentation.settings.screens.AccountSettingsScreen
+import com.example.presentation.settings.screens.FinanceSettingsScreen
+import com.example.presentation.settings.screens.GeneralSettingsScreen
+import com.example.presentation.settings.screens.MainLeaderSettingsScreen
 import com.example.presentation.splash.SplashScreen
 
 /**
@@ -96,8 +109,19 @@ object Routes {
 
     // مسارات الإعدادات والمعلومات والتقارير
     const val SETTINGS = "settings"
+    const val SETTINGS_HUB = "settings_hub"
+    const val SETTINGS_GENERAL = "settings_general"
+    const val SETTINGS_FINANCE = "settings_finance"
+    const val SETTINGS_MAIN_LEADER = "settings_main_leader"
+    const val SETTINGS_ACCOUNT = "settings_account"
     const val ABOUT = "about"
-    const val REPORTS_PLACEHOLDER = "reports_placeholder"
+    const val REPORTS_SCREEN = "reports_screen"
+    const val REPORTS_PLACEHOLDER = "reports_screen"
+    const val ATTENDANCE_REPORT = "attendance_report"
+    const val ACTIVITIES_REPORT = "activities_report"
+    const val PROGRESS_REPORT = "progress_report"
+    const val LEADERS_EVALUATION_REPORT = "leaders_evaluation_report"
+    const val AUDIT_LOG = "audit_log"
 
     // مسارات متابعة حفظ القرآن الكريم
     const val QURAN_TRACKING = "quran_tracking"
@@ -108,18 +132,21 @@ object Routes {
     const val FINANCE_COLLECTIONS = "finance_collections"
     const val FINANCE_SUBSCRIPTIONS = "finance_subscriptions"
     const val FINANCE_SUBSCRIPTION_DETAIL = "finance_subscription_detail/{activityId}"
-    const val FINANCE_CONTRIBUTIONS = "finance_contributions"
-    const val FINANCE_CONTRIBUTION_DETAIL = "finance_contribution_detail/{activityId}"
     const val FINANCE_EXPENSES = "finance_expenses"
     const val FINANCE_DONATIONS = "finance_donations"
     const val FINANCE_REPORTS = "finance_reports"
+    const val SCOUT_STATEMENTS_PICKER = "scout_statements_picker"
+    const val SCOUT_STATEMENTS_SHARE = "scout_statements_share"
 
     // مسارات تقييم الأشبال (Dynamic Evaluation System)
     const val EVALUATION_SCREEN = "evaluation_screen"
     const val EVALUATION_MATRIX = "evaluation_matrix"
 
+    // مسارات إدارة القادة والاعتماد
+    const val PENDING_APPROVAL = "pending_approval"
+    const val LEADER_MANAGEMENT = "leader_management"
+
     fun financeSubscriptionDetail(activityId: String): String = "finance_subscription_detail/$activityId"
-    fun financeContributionDetail(activityId: String): String = "finance_contribution_detail/$activityId"
 }
 
 @Composable
@@ -151,6 +178,11 @@ fun ScoutNavGraph(
                     navController.navigate(Routes.HOME) {
                         popUpTo(Routes.SPLASH) { inclusive = true }
                     }
+                },
+                onNavigateToPendingApproval = {
+                    navController.navigate(Routes.PENDING_APPROVAL) {
+                        popUpTo(Routes.SPLASH) { inclusive = true }
+                    }
                 }
             )
         }
@@ -160,7 +192,7 @@ fun ScoutNavGraph(
             LoginScreen(
                 viewModel = loginViewModel,
                 onLoginSuccess = {
-                    navController.navigate(Routes.HOME) {
+                    navController.navigate(Routes.SPLASH) {
                         popUpTo(Routes.LOGIN) { inclusive = true }
                     }
                 },
@@ -182,7 +214,7 @@ fun ScoutNavGraph(
             SignUpScreen(
                 viewModel = signUpViewModel,
                 onSignUpSuccess = {
-                    navController.navigate(Routes.HOME) {
+                    navController.navigate(Routes.PENDING_APPROVAL) {
                         popUpTo(Routes.LOGIN) { inclusive = true }
                     }
                 },
@@ -194,11 +226,14 @@ fun ScoutNavGraph(
 
         // الشاشة الرئيسية (لوحة التحكم)
         composable(Routes.HOME) {
+            val appContext = LocalContext.current.applicationContext
             val homeViewModel: HomeViewModel = viewModel(
                 factory = HomeViewModel.Factory(
                     authRepository = appContainer.authRepository,
                     firestore = appContainer.firestore,
-                    financeRepository = appContainer.financeRepository
+                    financeRepository = appContainer.financeRepository,
+                    context = appContext,
+                    evaluationRepository = appContainer.evaluationRepository
                 )
             )
 
@@ -223,10 +258,10 @@ fun ScoutNavGraph(
                     }
                 },
                 onNavigateToSettings = {
-                    navController.navigate(Routes.SETTINGS)
+                    navController.navigate(Routes.SETTINGS_HUB)
                 },
                 onNavigateToReports = {
-                    navController.navigate(Routes.REPORTS_PLACEHOLDER)
+                    navController.navigate(Routes.REPORTS_SCREEN)
                 },
                 onNavigateToAbout = {
                     navController.navigate(Routes.ABOUT)
@@ -251,6 +286,12 @@ fun ScoutNavGraph(
                 },
                 onNavigateToEvaluationMatrix = {
                     navController.navigate(Routes.EVALUATION_MATRIX)
+                },
+                onNavigateToLeaderManagement = {
+                    navController.navigate(Routes.LEADER_MANAGEMENT)
+                },
+                onNavigateToAuditLog = {
+                    navController.navigate(Routes.AUDIT_LOG)
                 }
             )
         }
@@ -403,7 +444,8 @@ fun ScoutNavGraph(
                     deleteActivityUseCase = appContainer.deleteActivityUseCase,
                     attendanceRepository = appContainer.attendanceRepository,
                     getAttendanceForActivityUseCase = appContainer.getAttendanceForActivityUseCase,
-                    getAttendanceRowsForActivityUseCase = appContainer.getAttendanceRowsForActivityUseCase
+                    getAttendanceRowsForActivityUseCase = appContainer.getAttendanceRowsForActivityUseCase,
+                    termsRepository = appContainer.termsRepository
                 )
             )
 
@@ -443,7 +485,8 @@ fun ScoutNavGraph(
                     deleteActivityUseCase = appContainer.deleteActivityUseCase,
                     attendanceRepository = appContainer.attendanceRepository,
                     getAttendanceForActivityUseCase = appContainer.getAttendanceForActivityUseCase,
-                    getAttendanceRowsForActivityUseCase = appContainer.getAttendanceRowsForActivityUseCase
+                    getAttendanceRowsForActivityUseCase = appContainer.getAttendanceRowsForActivityUseCase,
+                    termsRepository = appContainer.termsRepository
                 )
             )
 
@@ -458,9 +501,6 @@ fun ScoutNavGraph(
                 },
                 onNavigateToAttendance = { actId ->
                     navController.navigate(Routes.attendanceEntry(actId))
-                },
-                onNavigateToContributions = { actId ->
-                    navController.navigate(Routes.financeContributionDetail(actId))
                 }
             )
         }
@@ -490,7 +530,8 @@ fun ScoutNavGraph(
                     cancelActivityUseCase = appContainer.cancelActivityUseCase,
                     deleteActivityUseCase = appContainer.deleteActivityUseCase,
                     attendanceRepository = appContainer.attendanceRepository,
-                    getAttendanceForActivityUseCase = appContainer.getAttendanceForActivityUseCase
+                    getAttendanceForActivityUseCase = appContainer.getAttendanceForActivityUseCase,
+                    termsRepository = appContainer.termsRepository
                 )
             )
 
@@ -512,7 +553,9 @@ fun ScoutNavGraph(
                     attendanceRepository = appContainer.attendanceRepository,
                     getAttendanceForActivityUseCase = appContainer.getAttendanceForActivityUseCase,
                     saveAttendanceBatchUseCase = appContainer.saveAttendanceBatchUseCase,
-                    observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase
+                    observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase,
+                    financeRepository = appContainer.financeRepository,
+                    settingsRepository = appContainer.settingsRepository
                 )
             )
 
@@ -542,7 +585,9 @@ fun ScoutNavGraph(
                     attendanceRepository = appContainer.attendanceRepository,
                     getAttendanceForActivityUseCase = appContainer.getAttendanceForActivityUseCase,
                     saveAttendanceBatchUseCase = appContainer.saveAttendanceBatchUseCase,
-                    observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase
+                    observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase,
+                    financeRepository = appContainer.financeRepository,
+                    settingsRepository = appContainer.settingsRepository
                 )
             )
 
@@ -555,9 +600,10 @@ fun ScoutNavGraph(
             )
         }
 
-        // شاشة إعدادات التطبيق وسلم التنقيط
-        composable(Routes.SETTINGS) {
+        // مسار الإعدادات (توجيه لمركز الإعدادات Settings Hub)
+        composable(Routes.SETTINGS) { backStackEntry ->
             val settingsViewModel: SettingsViewModel = viewModel(
+                viewModelStoreOwner = backStackEntry,
                 factory = SettingsViewModel.Factory(
                     observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase,
                     updatePointsSettingsUseCase = appContainer.updatePointsSettingsUseCase,
@@ -565,14 +611,184 @@ fun ScoutNavGraph(
                     observeCriteriaUseCase = appContainer.observeCriteriaUseCase,
                     addCriteriaUseCase = appContainer.addCriteriaUseCase,
                     archiveCriteriaUseCase = appContainer.archiveCriteriaUseCase,
-                    deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase
+                    deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
+                    authRepository = appContainer.authRepository,
+                    brandingRepository = appContainer.brandingRepository,
+                    termsRepository = appContainer.termsRepository
                 )
             )
 
-            SettingsScreen(
+            SettingsHubScreen(
                 viewModel = settingsViewModel,
                 onNavigateBack = {
                     navController.popBackStack()
+                },
+                onNavigateToGeneralSettings = {
+                    navController.navigate(Routes.SETTINGS_GENERAL)
+                },
+                onNavigateToFinanceSettings = {
+                    navController.navigate(Routes.SETTINGS_FINANCE)
+                },
+                onNavigateToMainLeaderSettings = {
+                    navController.navigate(Routes.SETTINGS_MAIN_LEADER)
+                },
+                onNavigateToAccountSettings = {
+                    navController.navigate(Routes.SETTINGS_ACCOUNT)
+                }
+            )
+        }
+
+        // شاشة مركز الإعدادات الرئيسية (Settings Hub)
+        composable(Routes.SETTINGS_HUB) { backStackEntry ->
+            val settingsViewModel: SettingsViewModel = viewModel(
+                viewModelStoreOwner = backStackEntry,
+                factory = SettingsViewModel.Factory(
+                    observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase,
+                    updatePointsSettingsUseCase = appContainer.updatePointsSettingsUseCase,
+                    financeRepository = appContainer.financeRepository,
+                    observeCriteriaUseCase = appContainer.observeCriteriaUseCase,
+                    addCriteriaUseCase = appContainer.addCriteriaUseCase,
+                    archiveCriteriaUseCase = appContainer.archiveCriteriaUseCase,
+                    deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
+                    authRepository = appContainer.authRepository,
+                    brandingRepository = appContainer.brandingRepository,
+                    termsRepository = appContainer.termsRepository
+                )
+            )
+
+            SettingsHubScreen(
+                viewModel = settingsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToGeneralSettings = {
+                    navController.navigate(Routes.SETTINGS_GENERAL)
+                },
+                onNavigateToFinanceSettings = {
+                    navController.navigate(Routes.SETTINGS_FINANCE)
+                },
+                onNavigateToMainLeaderSettings = {
+                    navController.navigate(Routes.SETTINGS_MAIN_LEADER)
+                },
+                onNavigateToAccountSettings = {
+                    navController.navigate(Routes.SETTINGS_ACCOUNT)
+                }
+            )
+        }
+
+        // الشاشات الفرعية للإعدادات - تشارك نفس كائن SettingsViewModel مع SettingsHubScreen
+        composable(Routes.SETTINGS_GENERAL) { backStackEntry ->
+            val parentEntry = remember(backStackEntry) {
+                navController.getBackStackEntry(Routes.SETTINGS_HUB)
+            }
+            val settingsViewModel: SettingsViewModel = viewModel(
+                viewModelStoreOwner = parentEntry,
+                factory = SettingsViewModel.Factory(
+                    observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase,
+                    updatePointsSettingsUseCase = appContainer.updatePointsSettingsUseCase,
+                    financeRepository = appContainer.financeRepository,
+                    observeCriteriaUseCase = appContainer.observeCriteriaUseCase,
+                    addCriteriaUseCase = appContainer.addCriteriaUseCase,
+                    archiveCriteriaUseCase = appContainer.archiveCriteriaUseCase,
+                    deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
+                    authRepository = appContainer.authRepository,
+                    brandingRepository = appContainer.brandingRepository,
+                    termsRepository = appContainer.termsRepository
+                )
+            )
+            GeneralSettingsScreen(
+                viewModel = settingsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(Routes.SETTINGS_FINANCE) { backStackEntry ->
+            val parentEntry = remember(backStackEntry) {
+                navController.getBackStackEntry(Routes.SETTINGS_HUB)
+            }
+            val settingsViewModel: SettingsViewModel = viewModel(
+                viewModelStoreOwner = parentEntry,
+                factory = SettingsViewModel.Factory(
+                    observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase,
+                    updatePointsSettingsUseCase = appContainer.updatePointsSettingsUseCase,
+                    financeRepository = appContainer.financeRepository,
+                    observeCriteriaUseCase = appContainer.observeCriteriaUseCase,
+                    addCriteriaUseCase = appContainer.addCriteriaUseCase,
+                    archiveCriteriaUseCase = appContainer.archiveCriteriaUseCase,
+                    deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
+                    authRepository = appContainer.authRepository,
+                    brandingRepository = appContainer.brandingRepository,
+                    termsRepository = appContainer.termsRepository
+                )
+            )
+            FinanceSettingsScreen(
+                viewModel = settingsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(Routes.SETTINGS_MAIN_LEADER) { backStackEntry ->
+            val parentEntry = remember(backStackEntry) {
+                navController.getBackStackEntry(Routes.SETTINGS_HUB)
+            }
+            val settingsViewModel: SettingsViewModel = viewModel(
+                viewModelStoreOwner = parentEntry,
+                factory = SettingsViewModel.Factory(
+                    observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase,
+                    updatePointsSettingsUseCase = appContainer.updatePointsSettingsUseCase,
+                    financeRepository = appContainer.financeRepository,
+                    observeCriteriaUseCase = appContainer.observeCriteriaUseCase,
+                    addCriteriaUseCase = appContainer.addCriteriaUseCase,
+                    archiveCriteriaUseCase = appContainer.archiveCriteriaUseCase,
+                    deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
+                    authRepository = appContainer.authRepository,
+                    brandingRepository = appContainer.brandingRepository,
+                    termsRepository = appContainer.termsRepository
+                )
+            )
+            MainLeaderSettingsScreen(
+                viewModel = settingsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToLeaderManagement = {
+                    navController.navigate(Routes.LEADER_MANAGEMENT)
+                }
+            )
+        }
+
+        composable(Routes.SETTINGS_ACCOUNT) { backStackEntry ->
+            val parentEntry = remember(backStackEntry) {
+                navController.getBackStackEntry(Routes.SETTINGS_HUB)
+            }
+            val settingsViewModel: SettingsViewModel = viewModel(
+                viewModelStoreOwner = parentEntry,
+                factory = SettingsViewModel.Factory(
+                    observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase,
+                    updatePointsSettingsUseCase = appContainer.updatePointsSettingsUseCase,
+                    financeRepository = appContainer.financeRepository,
+                    observeCriteriaUseCase = appContainer.observeCriteriaUseCase,
+                    addCriteriaUseCase = appContainer.addCriteriaUseCase,
+                    archiveCriteriaUseCase = appContainer.archiveCriteriaUseCase,
+                    deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
+                    authRepository = appContainer.authRepository,
+                    brandingRepository = appContainer.brandingRepository,
+                    termsRepository = appContainer.termsRepository
+                )
+            )
+            AccountSettingsScreen(
+                viewModel = settingsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToLogin = {
+                    navController.navigate(Routes.LOGIN) {
+                        popUpTo(0) { inclusive = true }
+                    }
                 }
             )
         }
@@ -586,9 +802,92 @@ fun ScoutNavGraph(
             )
         }
 
-        // شاشة التقارير العامة البديلة
-        composable(Routes.REPORTS_PLACEHOLDER) {
-            ReportsPlaceholderScreen(
+        // شاشة التقارير العامة
+        composable(Routes.REPORTS_SCREEN) {
+            GeneralReportsScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToAttendanceReport = {
+                    navController.navigate(Routes.ATTENDANCE_REPORT)
+                },
+                onNavigateToActivitiesReport = {
+                    navController.navigate(Routes.ACTIVITIES_REPORT)
+                },
+                onNavigateToProgressReport = {
+                    navController.navigate(Routes.PROGRESS_REPORT)
+                },
+                onNavigateToEvaluationMatrix = {
+                    navController.navigate(Routes.EVALUATION_MATRIX)
+                },
+                onNavigateToLeadersEvaluationReport = {
+                    navController.navigate(Routes.LEADERS_EVALUATION_REPORT)
+                },
+                onNavigateToAuditLog = {
+                    navController.navigate(Routes.AUDIT_LOG)
+                }
+            )
+        }
+
+        // شاشة تقرير الحضور الشامل
+        composable(Routes.ATTENDANCE_REPORT) {
+            val generalReportsViewModel: GeneralReportsViewModel = viewModel(
+                factory = appContainer.generalReportsViewModelFactory
+            )
+            AttendanceReportScreen(
+                viewModel = generalReportsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        // شاشة تقرير النشاط العام
+        composable(Routes.ACTIVITIES_REPORT) {
+            val generalReportsViewModel: GeneralReportsViewModel = viewModel(
+                factory = appContainer.generalReportsViewModelFactory
+            )
+            ActivitiesReportScreen(
+                viewModel = generalReportsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        // شاشة تقرير التقدم الشامل (مصفوفة الشارات)
+        composable(Routes.PROGRESS_REPORT) {
+            val generalReportsViewModel: GeneralReportsViewModel = viewModel(
+                factory = appContainer.generalReportsViewModelFactory
+            )
+            ProgressReportScreen(
+                viewModel = generalReportsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        // شاشة تقرير تقييم القادة
+        composable(Routes.LEADERS_EVALUATION_REPORT) {
+            val generalReportsViewModel: GeneralReportsViewModel = viewModel(
+                factory = appContainer.generalReportsViewModelFactory
+            )
+            LeadersEvaluationReportScreen(
+                viewModel = generalReportsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        // شاشة سجل العمليات (سجل التدقيق الشامل)
+        composable(Routes.AUDIT_LOG) {
+            val auditLogViewModel: AuditLogViewModel = viewModel(
+                factory = appContainer.auditLogViewModelFactory
+            )
+            AuditLogScreen(
+                viewModel = auditLogViewModel,
                 onNavigateBack = {
                     navController.popBackStack()
                 }
@@ -889,9 +1188,6 @@ fun ScoutNavGraph(
                 onNavigateToSubscriptions = {
                     navController.navigate(Routes.FINANCE_SUBSCRIPTIONS)
                 },
-                onNavigateToContributions = {
-                    navController.navigate(Routes.FINANCE_CONTRIBUTIONS)
-                },
                 onNavigateToExpenses = {
                     navController.navigate(Routes.FINANCE_EXPENSES)
                 },
@@ -919,9 +1215,6 @@ fun ScoutNavGraph(
                 },
                 onNavigateToSubscriptionDetail = { activityId ->
                     navController.navigate(Routes.financeSubscriptionDetail(activityId))
-                },
-                onNavigateToContributionDetail = { activityId ->
-                    navController.navigate(Routes.financeContributionDetail(activityId))
                 }
             )
         }
@@ -969,52 +1262,6 @@ fun ScoutNavGraph(
             )
         }
 
-        // شاشة قائمة مساهمات الأنشطة
-        composable(route = Routes.FINANCE_CONTRIBUTIONS) {
-            val contributionsListViewModel: com.example.presentation.finance.contributions.ContributionsListViewModel = viewModel(
-                factory = com.example.presentation.finance.contributions.ContributionsListViewModel.Factory(
-                    financeRepository = appContainer.financeRepository,
-                    activityRepository = appContainer.activityRepository
-                )
-            )
-
-            com.example.presentation.finance.contributions.ContributionsListScreen(
-                viewModel = contributionsListViewModel,
-                onNavigateBack = {
-                    navController.popBackStack()
-                },
-                onNavigateToDetail = { activityId ->
-                    navController.navigate(Routes.financeContributionDetail(activityId))
-                }
-            )
-        }
-
-        // شاشة تفاصيل مساهمات النشاط الكشفي
-        composable(
-            route = Routes.FINANCE_CONTRIBUTION_DETAIL,
-            arguments = listOf(
-                navArgument("activityId") { type = NavType.StringType }
-            )
-        ) { backStackEntry ->
-            val activityId = backStackEntry.arguments?.getString("activityId") ?: ""
-            val contributionDetailViewModel: com.example.presentation.finance.contributions.ContributionDetailViewModel = viewModel(
-                factory = com.example.presentation.finance.contributions.ContributionDetailViewModel.Factory(
-                    activityId = activityId,
-                    financeRepository = appContainer.financeRepository,
-                    activityRepository = appContainer.activityRepository,
-                    scoutRepository = appContainer.scoutRepository,
-                    authRepository = appContainer.authRepository
-                )
-            )
-
-            com.example.presentation.finance.contributions.ContributionDetailScreen(
-                viewModel = contributionDetailViewModel,
-                onNavigateBack = {
-                    navController.popBackStack()
-                }
-            )
-        }
-
         // شاشة المصاريف
         composable(route = Routes.FINANCE_EXPENSES) {
             val expensesViewModel: com.example.presentation.finance.expenses.ExpensesViewModel = viewModel(
@@ -1045,13 +1292,62 @@ fun ScoutNavGraph(
             )
         }
 
-        composable(route = Routes.FINANCE_REPORTS) {
+        composable(route = Routes.FINANCE_REPORTS) { backStackEntry ->
             val financeReportsViewModel: com.example.presentation.finance.reports.FinanceReportsViewModel = viewModel(
+                viewModelStoreOwner = backStackEntry,
                 factory = com.example.presentation.finance.reports.FinanceReportsViewModel.Factory(
-                    financeRepository = appContainer.financeRepository
+                    financeRepository = appContainer.financeRepository,
+                    scoutRepository = appContainer.scoutRepository,
+                    termsRepository = appContainer.termsRepository
                 )
             )
             com.example.presentation.finance.reports.FinanceReportsScreen(
+                viewModel = financeReportsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToScoutPicker = {
+                    navController.navigate(Routes.SCOUT_STATEMENTS_PICKER)
+                }
+            )
+        }
+
+        composable(route = Routes.SCOUT_STATEMENTS_PICKER) { backStackEntry ->
+            val parentEntry = remember(backStackEntry) {
+                navController.getBackStackEntry(Routes.FINANCE_REPORTS)
+            }
+            val financeReportsViewModel: com.example.presentation.finance.reports.FinanceReportsViewModel = viewModel(
+                viewModelStoreOwner = parentEntry,
+                factory = com.example.presentation.finance.reports.FinanceReportsViewModel.Factory(
+                    financeRepository = appContainer.financeRepository,
+                    scoutRepository = appContainer.scoutRepository,
+                    termsRepository = appContainer.termsRepository
+                )
+            )
+            com.example.presentation.finance.reports.ScoutStatementsPickerScreen(
+                viewModel = financeReportsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToShare = {
+                    navController.navigate(Routes.SCOUT_STATEMENTS_SHARE)
+                }
+            )
+        }
+
+        composable(route = Routes.SCOUT_STATEMENTS_SHARE) { backStackEntry ->
+            val parentEntry = remember(backStackEntry) {
+                navController.getBackStackEntry(Routes.FINANCE_REPORTS)
+            }
+            val financeReportsViewModel: com.example.presentation.finance.reports.FinanceReportsViewModel = viewModel(
+                viewModelStoreOwner = parentEntry,
+                factory = com.example.presentation.finance.reports.FinanceReportsViewModel.Factory(
+                    financeRepository = appContainer.financeRepository,
+                    scoutRepository = appContainer.scoutRepository,
+                    termsRepository = appContainer.termsRepository
+                )
+            )
+            com.example.presentation.finance.reports.ScoutStatementsShareScreen(
                 viewModel = financeReportsViewModel,
                 onNavigateBack = {
                     navController.popBackStack()
@@ -1086,6 +1382,35 @@ fun ScoutNavGraph(
             )
             com.example.presentation.evaluation.matrix.EvaluationMatrixScreen(
                 viewModel = matrixViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        // =============================================================
+        // مسار شاشة انتظار الاعتماد
+        // =============================================================
+        composable(route = Routes.PENDING_APPROVAL) {
+            com.example.presentation.auth.PendingApprovalScreen(
+                onLogout = {
+                    appContainer.authRepository.logout()
+                    navController.navigate(Routes.LOGIN) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        // =============================================================
+        // مسار إدارة قادة السرب
+        // =============================================================
+        composable(route = Routes.LEADER_MANAGEMENT) {
+            val leaderManagementViewModel: com.example.presentation.leaders.LeaderManagementViewModel = viewModel(
+                factory = appContainer.leaderManagementViewModelFactory
+            )
+            com.example.presentation.leaders.LeaderManagementScreen(
+                viewModel = leaderManagementViewModel,
                 onNavigateBack = {
                     navController.popBackStack()
                 }

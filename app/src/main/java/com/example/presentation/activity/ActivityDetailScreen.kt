@@ -1,6 +1,7 @@
 package com.example.presentation.activity
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -86,6 +87,8 @@ import com.example.domain.activity.Activity
 import com.example.domain.activity.ActivityStatus
 import com.example.domain.activity.ActivityType
 import com.example.domain.attendance.AttendanceStatus
+import com.example.presentation.common.LocalAppTerms
+import com.example.domain.settings.replaceCustomWords
 import com.example.presentation.attendance.AttendanceRowItem
 import com.example.presentation.common.CustomTopAppBar
 import com.example.presentation.reports.PdfExporter
@@ -106,13 +109,13 @@ fun ActivityDetailScreen(
     onNavigateToEdit: (String) -> Unit,
     onNavigateBack: () -> Unit,
     onNavigateToAttendance: (String) -> Unit = {},
-    onNavigateToContributions: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val context = LocalContext.current
     val detailState by viewModel.detailUiState.collectAsStateWithLifecycle()
-    val attendanceList by viewModel.observeAttendanceForActivity(activityId).collectAsStateWithLifecycle(initialValue = emptyList())
     val attendanceRows by viewModel.observeAttendanceRowsForActivity(activityId).collectAsStateWithLifecycle(initialValue = emptyList())
+    val hasRecordedAttendance = remember(attendanceRows) { attendanceRows.any { it.attendance != null } }
     val meetingNumbers by viewModel.meetingNumbers.collectAsStateWithLifecycle()
 
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -183,14 +186,29 @@ fun ActivityDetailScreen(
                         }
 
                         // زر حذف النشاط
+                        val isLegacyActivity = activity.isLegacy()
                         IconButton(
-                            onClick = { showDeleteDialog = true },
+                            onClick = {
+                                if (isLegacyActivity) {
+                                    Toast.makeText(
+                                        context,
+                                        "لا يمكن حذف الأنشطة القديمة. يرجى تعديل المالية يدوياً أولاً.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                } else {
+                                    showDeleteDialog = true
+                                }
+                            },
                             modifier = Modifier.testTag("delete_activity_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Delete,
                                 contentDescription = "حذف النشاط",
-                                tint = MaterialTheme.colorScheme.error
+                                tint = if (isLegacyActivity) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                                } else {
+                                    MaterialTheme.colorScheme.error
+                                }
                             )
                         }
                     }
@@ -295,7 +313,7 @@ fun ActivityDetailScreen(
                                     ) {
                                         ActivityStatusChip(status = activity.activityStatus)
 
-                                        if (attendanceList.isNotEmpty()) {
+                                        if (hasRecordedAttendance) {
                                             Surface(
                                                 color = MaterialTheme.colorScheme.primary,
                                                 shape = RoundedCornerShape(8.dp)
@@ -345,7 +363,7 @@ fun ActivityDetailScreen(
                             "${activity.activityType.arabicLabel} — $dateFormatted"
                         }
 
-                        val presentCount = attendanceRows.count { it.attendance?.attendanceStatus == AttendanceStatus.PRESENT }
+                        val presentCount = attendanceRows.count { it.attendance?.attendanceStatus?.isPresentOrLate == true }
                         val totalScouts = attendanceRows.size
                         val summaryText = stringResource(id = R.string.attendance_list_summary_format, presentCount, totalScouts)
 
@@ -433,9 +451,10 @@ fun ActivityDetailScreen(
                                             activity = activity,
                                             rows = attendanceRows,
                                             trainingMeetingNumber = meetingNum,
-                                            context = context
+                                            context = context,
+                                            terms = terms
                                         )
-                                        PdfExporter.shareActivityAttendancePdf(file, activity.title, context)
+                                        PdfExporter.shareActivityAttendancePdf(file, activity.title, context, terms = terms)
                                     },
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -464,7 +483,7 @@ fun ActivityDetailScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        if (attendanceList.isEmpty()) {
+                                        if (!hasRecordedAttendance) {
                                             Surface(
                                                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                                 shape = RoundedCornerShape(10.dp),
@@ -593,7 +612,7 @@ fun ActivityDetailScreen(
                             DetailItemRow(
                                 icon = Icons.Default.Person,
                                 label = stringResource(id = R.string.activity_responsible_label),
-                                value = activity.responsibleName.ifBlank { "سرب النُّجُب" }
+                                value = activity.responsibleName.ifBlank { "${terms.groupName} ${terms.unitNameDefinite}" }
                             )
                         }
 
@@ -646,62 +665,10 @@ fun ActivityDetailScreen(
                             }
                         }
 
-                        // بطاقة المساهمات المالية للنشاط (خاصة بالأنشطة غير الروتينية كالمخيمات والرحلات)
-                        if (activity.activityType != ActivityType.TRAINING_MEETING || activity.contributionRequired) {
-                            DetailSectionCard(title = stringResource(id = R.string.activity_contributions_section_title)) {
-                                Column(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = if (activity.contributionRequired) {
-                                                    if (activity.contributionDefaultAmount != null && activity.contributionDefaultAmount > 0) {
-                                                        "مساهمة مطلوبة: ${activity.contributionDefaultAmount} دج"
-                                                    } else {
-                                                        "المساهمات المالية مفعلة لهذا النشاط"
-                                                    }
-                                                } else {
-                                                    "لم يتم تفعيل المساهمة بعد"
-                                                },
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                        }
-
-                                        Button(
-                                            onClick = { onNavigateToContributions(activity.id) },
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = MaterialTheme.colorScheme.secondary
-                                            ),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.testTag("manage_contributions_btn")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Payments,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = stringResource(id = R.string.activity_manage_contributions),
-                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
                         // أزرار العمليات وتغيير الحالة (حضور / إنجاز مع تقرير أدبي / إلغاء / حذف)
                         if (activity.activityStatus != ActivityStatus.CANCELLED) {
                             val isEditable = editWindow == AttendanceEditWindow.EDITABLE
-                            val buttonLabel = if (attendanceList.isNotEmpty()) {
+                            val buttonLabel = if (hasRecordedAttendance) {
                                 stringResource(id = R.string.attendance_button_edit)
                             } else {
                                 stringResource(id = R.string.attendance_button_register)
@@ -1037,9 +1004,10 @@ fun ActivityDetailScreen(
 /**
  * إنشاء ملخص عربي أنيق لمشاركة النشاط
  */
-private fun buildActivityShareText(activity: Activity): String {
+private fun buildActivityShareText(activity: Activity, terms: com.example.domain.settings.CustomTerms? = null): String {
+    val groupHeader = if (terms != null) "${terms.groupName} ${terms.unitNameDefinite}" else "سرب النُّجُب"
     return buildString {
-        append("⚜️ سرب النُّجُب — فوج محمد رحال ⚜️\n\n")
+        append("⚜️ $groupHeader — فوج محمد رحال ⚜️\n\n")
         append("📌 النشاط: ${activity.title}\n")
         append("🏷️ النوع: ${activity.activityType.arabicLabel}\n")
         append("📅 التاريخ: ${ActivityFormatters.formatDateRange(activity)}\n")

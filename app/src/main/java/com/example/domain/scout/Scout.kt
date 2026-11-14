@@ -20,6 +20,8 @@ data class Scout(
     val joinYear: Int = Calendar.getInstance().get(Calendar.YEAR), // سنة الالتحاق بالكشافة
     val status: String = STATUS_ACTIVE, // "active" أو "archived"
     val notes: String = "", // ملاحظات
+    val creditBalance: Int = 0, // رصيد مقدم للشبل
+    val unitId: String? = null, // معرف الوحدة الكشفية (Multi-Tenant Unit ID)
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val createdBy: String = "",

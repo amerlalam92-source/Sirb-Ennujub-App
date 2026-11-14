@@ -275,15 +275,42 @@ class HobbyBadgeFirestoreDataSource(
     }
 
     suspend fun deleteHobbyRequirementIfUnused(id: String): Result<Unit> {
-        val progressDocs = firestore.collection(COLLECTION_SCOUT_PROGRESS)
+        val progressSnapshot = firestore.collection(COLLECTION_SCOUT_PROGRESS)
             .whereEqualTo("requirementId", id)
-            .whereEqualTo("completed", true)
-            .limit(1)
             .get()
             .await()
 
-        if (!progressDocs.isEmpty) {
-            return Result.failure(IllegalStateException("USED_BY_SCOUTS"))
+        val completedDocs = progressSnapshot.documents.filter { doc ->
+            doc.getBoolean("completed") == true
+        }
+
+        if (completedDocs.isNotEmpty()) {
+            val uniqueScoutIds = completedDocs.mapNotNull { doc ->
+                doc.getString("scoutId")?.takeIf { it.isNotBlank() }
+                    ?: doc.id.removeSuffix("_$id").takeIf { it != doc.id && it.isNotBlank() }
+            }.toSet()
+
+            if (uniqueScoutIds.isNotEmpty()) {
+                val existingScoutIds = firestore.collection("scouts")
+                    .get()
+                    .await()
+                    .documents
+                    .map { it.id }
+                    .toSet()
+
+                if (uniqueScoutIds.any { it in existingScoutIds }) {
+                    return Result.failure(IllegalStateException("USED_BY_SCOUTS"))
+                }
+            }
+        }
+
+        val orphanRefs = progressSnapshot.documents.map { it.reference }
+        if (orphanRefs.isNotEmpty()) {
+            orphanRefs.chunked(450).forEach { chunk ->
+                val batch = firestore.batch()
+                chunk.forEach { batch.delete(it) }
+                batch.commit().await()
+            }
         }
 
         firestore.collection(COLLECTION_REQUIREMENTS).document(id).delete().await()

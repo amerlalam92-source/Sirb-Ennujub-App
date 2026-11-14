@@ -1,26 +1,26 @@
 package com.example.presentation.evaluation
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.domain.activity.Activity
 import com.example.domain.activity.ActivityRepository
+import com.example.domain.activity.ActivityStatus
+import com.example.domain.attendance.AttendancePointsSettings
+import com.example.domain.attendance.AttendanceRepository
 import com.example.domain.auth.AuthRepository
 import com.example.domain.evaluation.CriteriaType
 import com.example.domain.evaluation.EvaluationCriteria
 import com.example.domain.evaluation.EvaluationRepository
 import com.example.domain.evaluation.ScoutEvaluation
-import com.example.domain.activity.ActivityStatus
-import com.example.domain.attendance.AttendancePointsSettings
-import com.example.domain.attendance.AttendanceRepository
 import com.example.domain.quran.ScoutQuranEnrollmentRepository
 import com.example.domain.scout.Scout
 import com.example.domain.scout.ScoutRepository
-import android.content.Context
+import com.example.domain.settings.CustomTerms
+import com.example.domain.settings.TermsRepository
 import com.example.presentation.reports.PdfExporter
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,69 +28,100 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.text.Collator
-import java.util.Calendar
 import java.util.Locale
 
 /**
- * نموذج عرض شاشة تقييم الأشبال (Evaluation View Model)
+ * نموذج عرض شاشة التقييم الفصلي للأشبال (Evaluation ViewModel)
  * يدير:
- * - تقييم متعدد القادة للأنشطة (لكل قائد تقييمه المستقل).
- * - التقييم الفصلي الموحد (تقييم مشترك يظهر للجميع ويبدأ برقم المعرف {scoutId}_{termId}).
- * - قفل التعديل بعد 7 أيام من تاريخ الإنشاء.
- * - جلب الحفظ المسجل للشبل من المدرسة القرآنية.
- * - حفظ وحذف التقييمات.
+ * - التقييم الفصلي بـ 6 معايير (4 معايير للقائد + حفظ القرآن والكراس) في مستند "{scoutId}_{termId}_{leaderId}".
+ * - صلاحيات القادة: القائد العادي يجلب تقييماته فقط ولا يرى درجات القادة الآخرين،
+ *   بينما القائد الرئيسي (isMainLeader) يجلب جميع التقييمات ويرى درجات القادة الآخرين للقراءة فقط.
+ * - حفظ وتحديث المعايير المشتركة (القرآن والكراس) بحيث يُعتمد أحدث تعديل حسب createdAt.
+ * - قفل التعديل بعد 7 أيام وجلب الحفظ المسجل من المدرسة القرآنية.
  */
 class EvaluationViewModel(
-    private val activityRepository: ActivityRepository,
+    @Suppress("unused") private val activityRepository: ActivityRepository? = null,
     private val scoutRepository: ScoutRepository,
     private val evaluationRepository: EvaluationRepository,
     private val authRepository: AuthRepository,
     private val scoutQuranEnrollmentRepository: ScoutQuranEnrollmentRepository? = null,
-    private val attendanceRepository: AttendanceRepository? = null
+    private val attendanceRepository: AttendanceRepository? = null,
+    private val termsRepository: TermsRepository? = null
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(EvaluationUiState(isLoading = true))
+    private val _uiState = MutableStateFlow(
+        EvaluationUiState(
+            currentLeaderId = authRepository.currentUser?.uid.orEmpty(),
+            isLoading = true
+        )
+    )
     val uiState: StateFlow<EvaluationUiState> = _uiState.asStateFlow()
 
     private var evaluationsJob: Job? = null
+    private var leadersNamesJob: Job? = null
+    private var currentTerms = CustomTerms()
 
     init {
-        loadActivities()
+        observeCurrentLeaderRole()
         observeScouts()
         observeCriteria()
         observeQuranEnrollments()
+        termsRepository?.let { repo ->
+            viewModelScope.launch {
+                repo.observeTerms().collect { terms ->
+                    currentTerms = terms
+                }
+            }
+        }
+        loadEvaluations()
     }
 
     /**
-     * جلب الأنشطة المسجلة خلال آخر 30 يوماً
+     * مراقبة صلاحية القائد الحالي (رئيسي أم عادي) وتحديث جلب التقييمات تلقائياً
      */
-    fun loadActivities() {
+    private fun observeCurrentLeaderRole() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            activityRepository.observeActivities()
-                .catch { e ->
-                    _uiState.update { it.copy(isLoading = false, snackbarMessage = e.message) }
-                }
-                .collect { allActivities ->
-                    val thirtyDaysAgo = Calendar.getInstance().apply {
-                        add(Calendar.DAY_OF_YEAR, -30)
-                        set(Calendar.HOUR_OF_DAY, 0)
-                        set(Calendar.MINUTE, 0)
-                        set(Calendar.SECOND, 0)
-                        set(Calendar.MILLISECOND, 0)
-                    }.timeInMillis
-
-                    val recent = allActivities.filter { it.startDate >= thirtyDaysAgo || it.endDate >= thirtyDaysAgo }
-                        .sortedByDescending { it.startDate }
-                    val finalActivities = if (recent.isNotEmpty()) recent else allActivities.sortedByDescending { it.startDate }
+            authRepository.observeCurrentLeader()
+                .catch { /* keep default non-main role */ }
+                .collect { leader ->
+                    val leaderId = leader?.uid?.ifBlank { null } ?: authRepository.currentUser?.uid.orEmpty()
+                    val isMain = leader?.isMainLeader == true
+                    val prevState = _uiState.value
+                    val changed = prevState.isMainLeader != isMain || prevState.currentLeaderId != leaderId
 
                     _uiState.update {
                         it.copy(
-                            activities = finalActivities,
-                            isLoading = false
+                            isMainLeader = isMain,
+                            currentLeaderId = leaderId,
+                            otherEvaluatedScoutIds = if (isMain) it.otherEvaluatedScoutIds else emptySet()
                         )
                     }
+
+                    if (isMain) {
+                        observeLeaderNames()
+                    } else {
+                        leadersNamesJob?.cancel()
+                        leadersNamesJob = null
+                        _uiState.update { it.copy(leaderNames = emptyMap()) }
+                    }
+
+                    if (changed) {
+                        loadEvaluations()
+                    }
+                }
+        }
+    }
+
+    private fun observeLeaderNames() {
+        if (leadersNamesJob?.isActive == true) return
+        leadersNamesJob = viewModelScope.launch {
+            authRepository.observeAllLeaders()
+                .catch { /* ignore */ }
+                .collect { leaders ->
+                    val map = leaders.associate { it.uid to it.fullName.ifBlank { "قائد كشفي" } }
+                    _uiState.update { it.copy(leaderNames = map) }
                 }
         }
     }
@@ -118,11 +149,36 @@ class EvaluationViewModel(
             evaluationRepository.observeCriteria()
                 .catch { /* ignore or log */ }
                 .collect { criteriaList ->
-                    val activeList = criteriaList.filter { !it.archived }.sortedBy { it.order }
+                    val activeList = criteriaList
+                        .filter { !it.archived }
+                        .sortedWith(
+                            compareBy<EvaluationCriteria>(
+                                { criteriaSectionOrder(it) },
+                                { it.order },
+                                { it.name }
+                            )
+                        )
                     _uiState.update { state ->
                         state.copy(criteria = activeList)
                     }
                 }
+        }
+    }
+
+    private fun criteriaSectionOrder(criteria: EvaluationCriteria): Int {
+        val isQuran = criteria.type == EvaluationCriteria.TYPE_QURAN ||
+                criteria.type == CriteriaType.QURAN.name ||
+                criteria.type == CriteriaType.QURAN.value ||
+                criteria.name.contains("قرآن") ||
+                criteria.name.contains("حفظ")
+        val isNotebook = criteria.type == EvaluationCriteria.TYPE_NOTEBOOK ||
+                criteria.type == CriteriaType.NOTEBOOK.name ||
+                criteria.type == CriteriaType.NOTEBOOK.value ||
+                criteria.name.contains("كراس")
+        return when {
+            isQuran -> 1
+            isNotebook -> 2
+            else -> 0
         }
     }
 
@@ -142,107 +198,50 @@ class EvaluationViewModel(
     }
 
     /**
-     * تغيير التبويب المختار (0: تقييم الأنشطة، 1: التقييم الفصلي)
-     */
-    fun onTabSelected(tabIndex: Int) {
-        _uiState.update { it.copy(selectedTab = tabIndex, selectedScoutForEvaluation = null) }
-        loadEvaluations()
-    }
-
-    /**
      * تغيير الفصل الدراسي المختار في التقييم الفصلي
      */
     fun onTermSelected(termId: String) {
-        _uiState.update { it.copy(selectedTerm = termId) }
-        if (_uiState.value.selectedTab == 1) {
-            loadEvaluationsForTarget(termId)
-        }
+        _uiState.update { it.copy(selectedTerm = termId, selectedScoutForEvaluation = null) }
+        loadEvaluationsForTarget(termId)
     }
 
     /**
-     * اختيار نشاط للانتقال للخطوة 2 وبدء مراقبة تقييماته (في تبويب الأنشطة)
-     */
-    fun onActivitySelected(activity: Activity) {
-        _uiState.update { it.copy(selectedActivity = activity) }
-        loadEvaluationsForTarget(activity.id)
-    }
-
-    /**
-     * العودة لاختيار نشاط آخر (الخطوة 1)
-     */
-    fun clearSelectedActivity() {
-        evaluationsJob?.cancel()
-        _uiState.update {
-            it.copy(
-                selectedActivity = null,
-                evaluations = emptyMap(),
-                allEvaluations = emptyList(),
-                otherEvaluatedScoutIds = emptySet(),
-                selectedScoutForEvaluation = null
-            )
-        }
-    }
-
-    /**
-     * تحميل التقييمات وفقاً للتبويب النشط
+     * تحميل تقييمات الفصل الدراسي النشط
      */
     fun loadEvaluations() {
-        val state = _uiState.value
-        if (state.selectedTab == 0) {
-            val activity = state.selectedActivity
-            if (activity != null) {
-                loadEvaluationsForTarget(activity.id)
-            } else {
-                evaluationsJob?.cancel()
-                _uiState.update {
-                    it.copy(
-                        evaluations = emptyMap(),
-                        allEvaluations = emptyList(),
-                        otherEvaluatedScoutIds = emptySet()
-                    )
-                }
-            }
-        } else {
-            val term = state.selectedTerm ?: "TERM_1"
-            loadEvaluationsForTarget(term)
-        }
+        val term = _uiState.value.selectedTerm.ifBlank { "TERM_1" }
+        loadEvaluationsForTarget(term)
     }
 
     /**
-     * جلب جميع التقييمات للنشاط أو الفصل
-     * في التقييم الفصلي (Tab 2): توحيد التقييمات بحيث يظهر أي تقييم مسجل للشبل للجميع.
-     * في تقييم الأنشطة (Tab 1): فصل تقييم القائد الحالي عن باقي القادة.
+     * جلب التقييمات للفصل الدراسي حسب صلاحية القائد:
+     * - القائد العادي: يجلب تقييماته الخاصة فقط ({scoutId}_{termId}_{leaderId}) ولا يرى تقييمات الآخرين.
+     * - القائد الرئيسي (isMainLeader): يجلب جميع تقييمات الفصل لكل القادة.
      */
-    private fun loadEvaluationsForTarget(targetId: String) {
+    private fun loadEvaluationsForTarget(termId: String) {
         evaluationsJob?.cancel()
         evaluationsJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            evaluationRepository.getEvaluationsForActivity(targetId)
+            val currentLeaderId = _uiState.value.currentLeaderId.ifBlank {
+                authRepository.currentUser?.uid.orEmpty()
+            }
+            val isMainLeader = _uiState.value.isMainLeader
+
+            val sourceFlow = if (isMainLeader) {
+                evaluationRepository.getEvaluationsForActivity(termId)
+            } else {
+                evaluationRepository.getEvaluationsForActivityByLeader(termId, currentLeaderId)
+            }
+
+            sourceFlow
                 .catch { e ->
                     _uiState.update { it.copy(isLoading = false, snackbarMessage = e.message) }
                 }
                 .collect { evalList ->
-                    val currentLeaderId = authRepository.currentUser?.uid ?: ""
-                    val isQuarterly = _uiState.value.selectedTab == 1 || targetId.startsWith("TERM_")
-
-                    if (isQuarterly) {
-                        // التقييم الفصلي موحد: أي تقييم يظهر للجميع ويمكن تعديله
-                        val unifiedEvalMap = evalList.associateBy { it.scoutId }
-                        _uiState.update {
-                            it.copy(
-                                allEvaluations = evalList,
-                                evaluations = unifiedEvalMap,
-                                otherEvaluatedScoutIds = emptySet(),
-                                isLoading = false
-                            )
-                        }
-                    } else {
-                        // تقييم الأنشطة: تقييم متعدد القادة
-                        val myEvalMap = if (currentLeaderId.isNotBlank()) {
-                            evalList.filter { it.leaderId == currentLeaderId }.associateBy { it.scoutId }
-                        } else {
-                            evalList.associateBy { it.scoutId }
-                        }
+                    if (isMainLeader) {
+                        val myEvalMap = evalList
+                            .filter { it.leaderId == currentLeaderId }
+                            .associateBy { it.scoutId }
 
                         val otherScoutIds = evalList
                             .filter { it.leaderId != currentLeaderId && !myEvalMap.containsKey(it.scoutId) }
@@ -254,6 +253,17 @@ class EvaluationViewModel(
                                 allEvaluations = evalList,
                                 evaluations = myEvalMap,
                                 otherEvaluatedScoutIds = otherScoutIds,
+                                isLoading = false
+                            )
+                        }
+                    } else {
+                        val ownList = evalList.filter { it.leaderId == currentLeaderId }
+                        val myEvalMap = ownList.associateBy { it.scoutId }
+                        _uiState.update {
+                            it.copy(
+                                allEvaluations = ownList,
+                                evaluations = myEvalMap,
+                                otherEvaluatedScoutIds = emptySet(),
                                 isLoading = false
                             )
                         }
@@ -287,8 +297,8 @@ class EvaluationViewModel(
      * حذف تقييم محدد مع التحقق من شرط قفل الـ 7 أيام
      */
     fun deleteEvaluation(evaluationId: String) {
-        val existingEval = _uiState.value.allEvaluations.firstOrNull { it.id == evaluationId }
-            ?: _uiState.value.evaluations.values.firstOrNull { it.id == evaluationId }
+        val existingEval = _uiState.value.evaluations.values.firstOrNull { it.id == evaluationId }
+            ?: _uiState.value.allEvaluations.firstOrNull { it.id == evaluationId }
 
         if (_uiState.value.isEvaluationLocked(existingEval)) {
             _uiState.update {
@@ -325,28 +335,20 @@ class EvaluationViewModel(
     }
 
     /**
-     * حفظ تقييم الشبل:
-     * - التقييم الفصلي: معرف المستند "{scoutId}_{targetTerm}"
-     * - تقييم الأنشطة: معرف المستند "{scoutId}_{targetActivity}_{leaderId}"
-     * - الحفاظ على createdAt الأصلي إذا كان تعديلاً لمنع تجاوز قفل الـ 7 أيام
+     * حفظ التقييم الفصلي للشبل بـ 6 معايير:
+     * - معرف المستند دائماً "{scoutId}_{termId}_{leaderId}".
+     * - تحديث createdAt إلى الوقت الحالي عند الحفظ ليصبح أحدث تعديل لمعايير القرآن والكراس في هذا الفصل.
      */
     fun saveEvaluation(
         scoutId: String,
         scoresMap: Map<String, Int>,
-        penaltyAmount: Int,
-        penaltyReason: String?,
+        @Suppress("unused") penaltyAmount: Int = 0,
+        @Suppress("unused") penaltyReason: String? = null,
         testedAmount: String? = null
     ) {
         val currentState = _uiState.value
-        val isTabActivity = currentState.selectedTab == 0
-        val targetActivityId = if (isTabActivity) {
-            currentState.selectedActivity?.id ?: return
-        } else {
-            currentState.selectedTerm ?: "TERM_1"
-        }
-
+        val targetTermId = currentState.selectedTerm.ifBlank { "TERM_1" }
         val existingEval = currentState.evaluations[scoutId]
-            ?: currentState.allEvaluations.firstOrNull { it.scoutId == scoutId && it.activityId == targetActivityId }
 
         // التحقق من قفل التعديل بعد 7 أيام
         if (currentState.isEvaluationLocked(existingEval)) {
@@ -360,47 +362,26 @@ class EvaluationViewModel(
             _uiState.update { it.copy(isSaving = true) }
 
             val currentUser = authRepository.currentUser
-            val leaderId = currentUser?.uid ?: ""
-            val leaderName = currentUser?.displayName?.takeIf { it.isNotBlank() } ?: "قائد كشفي"
+            val leaderId = currentState.currentLeaderId.ifBlank { currentUser?.uid ?: "" }
+            val leaderName = currentState.leaderNames[leaderId]
+                ?: currentUser?.displayName?.takeIf { it.isNotBlank() }
+                ?: "قائد كشفي"
 
-            val evalDocId = if (targetActivityId.startsWith("TERM_")) {
-                "${scoutId}_${targetActivityId}"
-            } else {
-                "${scoutId}_${targetActivityId}_$leaderId"
-            }
-
-            // الحفاظ على تاريخ الإنشاء الأصلي لضمان حساب مهلة الـ 7 أيام من تاريخ الرصد الأول
-            val createdAt = existingEval?.createdAt ?: System.currentTimeMillis()
-
-            // تصفية المعايير للتأكد من حفظ المعايير الخاصة بالتبويب الحالي فقط
-            val relevantCriteriaIds = currentState.criteria.filter { criteria ->
-                if (isTabActivity) {
-                    criteria.type == EvaluationCriteria.TYPE_LEADER_CRITERIA ||
-                            criteria.type == CriteriaType.LEADER_CRITERIA.name ||
-                            criteria.type == CriteriaType.LEADER_CRITERIA.value
-                } else {
-                    criteria.type == EvaluationCriteria.TYPE_QURAN ||
-                            criteria.type == CriteriaType.QURAN.name ||
-                            criteria.type == CriteriaType.QURAN.value ||
-                            criteria.type == EvaluationCriteria.TYPE_NOTEBOOK ||
-                            criteria.type == CriteriaType.NOTEBOOK.name ||
-                            criteria.type == CriteriaType.NOTEBOOK.value
-                }
-            }.map { it.id }.toSet()
-
+            val evalDocId = "${scoutId}_${targetTermId}_$leaderId"
+            val relevantCriteriaIds = currentState.criteria.map { it.id }.toSet()
             val filteredScores = scoresMap.filterKeys { it in relevantCriteriaIds }
 
             val evaluation = ScoutEvaluation(
                 id = evalDocId,
                 scoutId = scoutId,
-                activityId = targetActivityId,
+                activityId = targetTermId,
                 leaderId = leaderId,
                 leaderName = leaderName,
                 criteriaScores = filteredScores,
-                penaltyAmount = if (isTabActivity) penaltyAmount else 0,
-                penaltyReason = if (isTabActivity) penaltyReason?.takeIf { it.isNotBlank() } else null,
-                testedAmount = if (!isTabActivity) testedAmount?.takeIf { it.isNotBlank() } else null,
-                createdAt = createdAt
+                penaltyAmount = 0,
+                penaltyReason = null,
+                testedAmount = testedAmount?.takeIf { it.isNotBlank() },
+                createdAt = System.currentTimeMillis()
             )
 
             val result = evaluationRepository.saveEvaluation(evaluation)
@@ -497,37 +478,54 @@ class EvaluationViewModel(
                         null
                     }
 
-                    // 2) تقييم القادة: متوسط جميع تقييمات الأنشطة لهذا الشبل عبر جميع القادة (من 20)
-                    val activityEvals = allEvaluations.filter {
-                        it.scoutId == scout.id && !it.activityId.startsWith("TERM_")
+                    val quarterlyEvals = allEvaluations.filter {
+                        it.scoutId == scout.id && it.activityId.startsWith("TERM_")
                     }
-                    val leaderPoints: Double? = if (activityEvals.isNotEmpty()) {
-                        val totalScores = activityEvals.map { eval ->
-                            (eval.criteriaScores.values.sum() - eval.penaltyAmount).coerceAtLeast(0).toDouble()
+
+                    // 2) تقييم القادة من التقييمات الفصلية (من 20)
+                    val leaderAverages = quarterlyEvals
+                        .groupBy { it.leaderId }
+                        .mapNotNull { (_, leaderEvals) ->
+                            val evalAverages = leaderEvals.mapNotNull { eval ->
+                                val leaderScores = eval.criteriaScores.filterKeys { criteriaId ->
+                                    val c = criteriaMap[criteriaId]
+                                    criteriaId != quranCriteria?.id &&
+                                            criteriaId != notebookCriteria?.id &&
+                                            c != null &&
+                                            c.type != EvaluationCriteria.TYPE_QURAN &&
+                                            c.type != CriteriaType.QURAN.name &&
+                                            c.type != CriteriaType.QURAN.value &&
+                                            c.type != EvaluationCriteria.TYPE_NOTEBOOK &&
+                                            c.type != CriteriaType.NOTEBOOK.name &&
+                                            c.type != CriteriaType.NOTEBOOK.value
+                                }.values
+                                if (leaderScores.isNotEmpty()) leaderScores.sum().toDouble() / 4.0 else null
+                            }
+                            if (evalAverages.isNotEmpty()) evalAverages.average() else null
                         }
-                        val totalMaxScores = activityEvals.map { eval ->
-                            eval.criteriaScores.keys.mapNotNull { criteriaMap[it]?.maxScore }.sum().toDouble()
-                        }
-                        val averageScore = totalScores.average()
-                        val averageMax = totalMaxScores.average()
-                        if (averageMax > 0.0) {
-                            ((averageScore / averageMax) * 20.0).coerceIn(0.0, 20.0)
-                        } else {
-                            null
-                        }
+                    val leaderPoints: Double? = if (leaderAverages.isNotEmpty()) {
+                        leaderAverages.average().coerceIn(0.0, 20.0)
                     } else {
                         null
                     }
 
-                    // 3) حفظ القرآن: الدرجة الخام من آخر تقييم فصلي (من 20)
-                    val quarterlyEvals = allEvaluations.filter {
-                        it.scoutId == scout.id && it.activityId.startsWith("TERM_")
-                    }
-                    val latestQuarterly = quarterlyEvals.maxByOrNull { it.createdAt }
-                    val quranPoints: Int? = latestQuarterly?.criteriaScores?.get(quranCriteria?.id)
+                    // 3) حفظ القرآن: الدرجة الخام من أحدث تقييم فصلي يحتوي على تقييم القرآن (من 20)
+                    val quranId = quranCriteria?.id
+                    val quranPoints: Int? = if (quranId != null) {
+                        quarterlyEvals
+                            .filter { it.criteriaScores.containsKey(quranId) }
+                            .maxByOrNull { it.createdAt }
+                            ?.criteriaScores?.get(quranId)
+                    } else null
 
-                    // 4) تقييم الكراس: الدرجة الخام من آخر تقييم فصلي (من 20)
-                    val notebookPoints: Int? = latestQuarterly?.criteriaScores?.get(notebookCriteria?.id)
+                    // 4) تقييم الكراس: الدرجة الخام من أحدث تقييم فصلي يحتوي على تقييم الكراس (من 20)
+                    val notebookId = notebookCriteria?.id
+                    val notebookPoints: Int? = if (notebookId != null) {
+                        quarterlyEvals
+                            .filter { it.criteriaScores.containsKey(notebookId) }
+                            .maxByOrNull { it.createdAt }
+                            ?.criteriaScores?.get(notebookId)
+                    } else null
 
                     // 5) نقاط التقدم (شارات الكفاية + شارات الهواية الإضافية)
                     val kafaaCount = scoutBadges.count {
@@ -573,12 +571,12 @@ class EvaluationViewModel(
                 }
 
                 if (scoutPointsList.isEmpty()) {
-                    _uiState.update { it.copy(snackbarMessage = "لا يوجد أشبال نشطون لتصدير بياناتهم") }
+                    _uiState.update { it.copy(snackbarMessage = "لا يوجد ${currentTerms.scoutPlural} نشطون لتصدير بياناتهم") }
                     return@launch
                 }
 
-                val file = PdfExporter.exportRawPointsPdf(scoutPointsList, context)
-                PdfExporter.shareRawPointsPdf(file, context)
+                val file = PdfExporter.exportRawPointsPdf(scoutPointsList, context, terms = currentTerms)
+                PdfExporter.shareRawPointsPdf(file, context, terms = currentTerms)
             } catch (e: Exception) {
                 _uiState.update { it.copy(snackbarMessage = "فشل تصدير ملف PDF: ${e.localizedMessage}") }
             }
@@ -586,12 +584,13 @@ class EvaluationViewModel(
     }
 
     class Factory(
-        private val activityRepository: ActivityRepository,
+        private val activityRepository: ActivityRepository? = null,
         private val scoutRepository: ScoutRepository,
         private val evaluationRepository: EvaluationRepository,
         private val authRepository: AuthRepository,
         private val scoutQuranEnrollmentRepository: ScoutQuranEnrollmentRepository? = null,
-        private val attendanceRepository: AttendanceRepository? = null
+        private val attendanceRepository: AttendanceRepository? = null,
+        private val termsRepository: TermsRepository? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -602,7 +601,8 @@ class EvaluationViewModel(
                     evaluationRepository = evaluationRepository,
                     authRepository = authRepository,
                     scoutQuranEnrollmentRepository = scoutQuranEnrollmentRepository,
-                    attendanceRepository = attendanceRepository
+                    attendanceRepository = attendanceRepository,
+                    termsRepository = termsRepository
                 ) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")

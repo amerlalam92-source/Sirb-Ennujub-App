@@ -68,6 +68,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import com.example.presentation.common.AppLocale
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -108,6 +109,7 @@ fun TrainingMeetingsRegisterScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val terms = LocalAppTerms.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val horizontalScrollState = rememberScrollState()
 
@@ -142,8 +144,8 @@ fun TrainingMeetingsRegisterScreen(
                                     Toast.LENGTH_SHORT
                                 ).show()
                             } else {
-                                val file = PdfExporter.exportTrainingMeetingsRegisterPdf(successState.meetings, context)
-                                PdfExporter.shareTrainingMeetingsRegisterPdf(file, context)
+                                val file = PdfExporter.exportTrainingMeetingsRegisterPdf(successState.meetings, context, terms = terms)
+                                PdfExporter.shareTrainingMeetingsRegisterPdf(file, context, terms = terms)
                             }
                         },
                         modifier = Modifier.testTag("share_training_register_pdf_button")

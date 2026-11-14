@@ -260,40 +260,58 @@ class EvaluationMatrixViewModel(
             null
         }
 
-        // b) تقييم القادة (من 20)
-        val activityEvaluations = allEvaluations.filter {
-            it.scoutId == scout.id && !it.activityId.startsWith("TERM_")
+        val quarterlyEvaluations = allEvaluations.filter {
+            it.scoutId == scout.id && it.activityId.startsWith("TERM_")
         }
-        val leaderScore: Double? = if (activityEvaluations.isNotEmpty()) {
-            val totalScores = activityEvaluations.map { eval ->
-                (eval.criteriaScores.values.sum() - eval.penaltyAmount).coerceAtLeast(0).toDouble()
+
+        // b) تقييم القادة (من 20): متوسط معدلات القادة، ومعدل كل قائد = مجموع معايير القائد الأربعة / 4.0
+        val leaderAverages = quarterlyEvaluations
+            .groupBy { it.leaderId }
+            .mapNotNull { (_, leaderEvals) ->
+                val evalAverages = leaderEvals.mapNotNull { eval ->
+                    val leaderScores = eval.criteriaScores.filterKeys { criteriaId ->
+                        isLeaderCriteria(
+                            criteriaId = criteriaId,
+                            criteria = criteriaMap[criteriaId],
+                            quranCriteria = quranCriteria,
+                            notebookCriteria = notebookCriteria
+                        )
+                    }.values
+                    if (leaderScores.isNotEmpty()) {
+                        leaderScores.sum().toDouble() / 4.0
+                    } else {
+                        null
+                    }
+                }
+                if (evalAverages.isNotEmpty()) evalAverages.average() else null
             }
-            val totalMaxScores = activityEvaluations.map { eval ->
-                eval.criteriaScores.keys.mapNotNull { criteriaMap[it]?.maxScore }.sum().toDouble()
-            }
-            val averageScore = totalScores.average()
-            val averageMax = totalMaxScores.average()
-            if (averageMax > 0.0) {
-                ((averageScore / averageMax) * 20.0).coerceIn(0.0, 20.0)
-            } else {
-                null
-            }
+        val leaderScore: Double? = if (leaderAverages.isNotEmpty()) {
+            leaderAverages.average().coerceIn(0.0, 20.0)
         } else {
             null
         }
 
         // c) تقييم حفظ القرآن (من 20)
-        val quarterlyEvaluations = allEvaluations.filter {
-            it.scoutId == scout.id && it.activityId.startsWith("TERM_")
+        val quranId = quranCriteria?.id
+        val latestQuranEval = if (quranId != null) {
+            quarterlyEvaluations
+                .filter { it.criteriaScores.containsKey(quranId) }
+                .maxByOrNull { it.createdAt }
+        } else {
+            null
         }
-        val latestQuarterly = quarterlyEvaluations.maxByOrNull { it.createdAt }
-
-        val quranRawScore = latestQuarterly?.criteriaScores?.get(quranCriteria?.id)
-        val quranScore: Double? = quranRawScore?.toDouble()?.coerceIn(0.0, 20.0)
+        val quranScore: Double? = latestQuranEval?.criteriaScores?.get(quranId)?.toDouble()?.coerceIn(0.0, 20.0)
 
         // d) تقييم الكراس (من 20)
-        val notebookRawScore = latestQuarterly?.criteriaScores?.get(notebookCriteria?.id)
-        val notebookScore: Double? = notebookRawScore?.toDouble()?.coerceIn(0.0, 20.0)
+        val notebookId = notebookCriteria?.id
+        val latestNotebookEval = if (notebookId != null) {
+            quarterlyEvaluations
+                .filter { it.criteriaScores.containsKey(notebookId) }
+                .maxByOrNull { it.createdAt }
+        } else {
+            null
+        }
+        val notebookScore: Double? = latestNotebookEval?.criteriaScores?.get(notebookId)?.toDouble()?.coerceIn(0.0, 20.0)
 
         val validScores = listOfNotNull(attendanceScore, leaderScore, quranScore, notebookScore)
 
@@ -342,6 +360,26 @@ class EvaluationMatrixViewModel(
             hobbyPoints = hobbyPoints,
             totalScore = totalScore
         )
+    }
+
+    private fun isLeaderCriteria(
+        criteriaId: String,
+        criteria: EvaluationCriteria?,
+        quranCriteria: EvaluationCriteria?,
+        notebookCriteria: EvaluationCriteria?
+    ): Boolean {
+        if (criteriaId == quranCriteria?.id || criteriaId == notebookCriteria?.id) return false
+        if (criteria == null) return false
+        val isQuran = criteria.type == EvaluationCriteria.TYPE_QURAN ||
+            criteria.type == CriteriaType.QURAN.name ||
+            criteria.type == CriteriaType.QURAN.value ||
+            criteria.name.contains("قرآن") ||
+            criteria.name.contains("حفظ")
+        val isNotebook = criteria.type == EvaluationCriteria.TYPE_NOTEBOOK ||
+            criteria.type == CriteriaType.NOTEBOOK.name ||
+            criteria.type == CriteriaType.NOTEBOOK.value ||
+            criteria.name.contains("كراس")
+        return !isQuran && !isNotebook
     }
 
     class Factory(

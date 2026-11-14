@@ -12,6 +12,9 @@ data class FinanceTransaction(
     val description: String = "",
     val category: ExpenseCategory? = null, // فقط عندما يكون النوع = EXPENSE
     val source: String? = null, // اسم المتبرع أو جهة المساهمة
+    val scoutId: String? = null,
+    val relatedActivityId: String? = null, // لتتبع النشاط الذي تم فيه سداد الدين
+    val unitId: String? = null, // معرف الوحدة الكشفية
     val createdAt: Long = System.currentTimeMillis(),
     val createdBy: String = "",
     val createdByName: String = ""

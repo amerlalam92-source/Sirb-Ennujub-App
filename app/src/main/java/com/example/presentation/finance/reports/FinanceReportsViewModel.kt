@@ -1,6 +1,7 @@
 package com.example.presentation.finance.reports
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -28,23 +29,31 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 
+data class GeneratedStatement(val scoutName: String, val uri: Uri)
+
 data class FinanceReportsUiState(
     val allTransactions: List<FinanceTransaction> = emptyList(),
     val summary: FinanceSummary? = null,
     val scouts: List<Scout> = emptyList(),
     val debts: List<ScoutDebt> = emptyList(),
     val isLoading: Boolean = true,
-    val isExporting: Boolean = false
+    val isExporting: Boolean = false,
+    val isExportingMultiple: Boolean = false,
+    val exportMultipleProgress: Pair<Int, Int>? = null,
+    val generatedStatements: List<GeneratedStatement> = emptyList(),
+    val selectedDebtFilter: String = "all"
 )
 
 sealed interface FinanceReportsEvent {
     data class ShowMessage(val message: String) : FinanceReportsEvent
     data class ExportSuccess(val file: File, val title: String) : FinanceReportsEvent
+    data class MultipleExportSuccess(val statements: List<GeneratedStatement>, val count: Int) : FinanceReportsEvent
 }
 
 class FinanceReportsViewModel(
     private val financeRepository: FinanceRepository,
-    private val scoutRepository: ScoutRepository? = null
+    private val scoutRepository: ScoutRepository? = null,
+    private val termsRepository: com.example.domain.settings.TermsRepository? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(FinanceReportsUiState())
@@ -53,7 +62,17 @@ class FinanceReportsViewModel(
     private val _events = MutableSharedFlow<FinanceReportsEvent>()
     val events: SharedFlow<FinanceReportsEvent> = _events.asSharedFlow()
 
+    val selectedDebtFilter: String
+        get() = _uiState.value.selectedDebtFilter
+
+    private var currentTerms = com.example.domain.settings.CustomTerms()
+
     init {
+        termsRepository?.observeTerms()?.let { flow ->
+            viewModelScope.launch {
+                flow.collect { currentTerms = it }
+            }
+        }
         loadTransactions()
     }
 
@@ -69,17 +88,40 @@ class FinanceReportsViewModel(
                 financeRepository.observeScoutDebts(),
                 scoutsFlow
             ) { transactions, summary, debts, scouts ->
+                val activeScouts = scouts.filter { it.isActive }
                 _uiState.update {
                     it.copy(
                         allTransactions = transactions,
                         summary = summary,
                         debts = debts,
-                        scouts = scouts,
+                        scouts = activeScouts,
                         isLoading = false
                     )
                 }
             }.collect { }
         }
+    }
+
+    fun onDebtFilterChanged(filter: String) {
+        _uiState.update { it.copy(selectedDebtFilter = filter) }
+    }
+
+    fun getFilteredScouts(searchQuery: String = ""): List<Scout> {
+        val state = _uiState.value
+        val activeScouts = state.scouts.filter { it.isActive }
+        val baseList = if (state.selectedDebtFilter == "debtors") {
+            val debtorIds = state.debts.filter { it.totalDebt > 0 }.map { it.scoutId }.toSet()
+            activeScouts.filter { debtorIds.contains(it.id) }
+        } else {
+            activeScouts
+        }
+        val query = searchQuery.trim().lowercase()
+        val finalList = if (query.isEmpty()) {
+            baseList
+        } else {
+            baseList.filter { it.fullName.lowercase().contains(query) }
+        }
+        return finalList.sortedBy { it.fullName }
     }
 
     fun generateMonthlyPdf(month: Int, year: Int, context: Context) {
@@ -93,10 +135,11 @@ class FinanceReportsViewModel(
                     year = year,
                     transactions = transactions,
                     summary = summary,
-                    context = context
+                    context = context,
+                    terms = currentTerms
                 )
                 _uiState.update { it.copy(isExporting = false) }
-                PdfExporter.shareMonthlyStatementPdf(pdfFile, month, year, context)
+                PdfExporter.shareMonthlyStatementPdf(pdfFile, month, year, context, terms = currentTerms)
                 _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير كشف الحساب الشهري بنجاح"))
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
@@ -112,10 +155,11 @@ class FinanceReportsViewModel(
                 val transactions = _uiState.value.allTransactions
                 val pdfFile = PdfExporter.exportExpensesByCategoryPdf(
                     transactions = transactions,
-                    context = context
+                    context = context,
+                    terms = currentTerms
                 )
                 _uiState.update { it.copy(isExporting = false) }
-                PdfExporter.shareExpensesByCategoryPdf(pdfFile, context)
+                PdfExporter.shareExpensesByCategoryPdf(pdfFile, context, terms = currentTerms)
                 _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير تقرير المصاريف حسب التصنيف بنجاح"))
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
@@ -129,24 +173,20 @@ class FinanceReportsViewModel(
             _uiState.update { it.copy(isExporting = true) }
             try {
                 val subs = financeRepository.observeAllSubscriptions().first()
-                val contribs = financeRepository.observeAllContributions().first()
                 val summary = _uiState.value.summary ?: financeRepository.observeSummary().first()
 
                 val totalSubsPaid = subs.sumOf { it.paidAmount }
-                val totalContribsPaid = contribs.sumOf { it.paidAmount }
                 val totalDebt = summary.totalOutstandingDebt
 
                 // تجميع الأنشطة التي تحتوي على ديون متبقية
                 val subActivities = subs.groupBy { it.activityTitle.ifBlank { "نشاط غير مسمى" } }
-                val contribActivities = contribs.groupBy { it.activityTitle.ifBlank { "نشاط غير مسمى" } }
 
-                val allActivityTitles = (subActivities.keys + contribActivities.keys).distinct()
+                val allActivityTitles = subActivities.keys.distinct()
                 val activitiesWithDebt = allActivityTitles.mapNotNull { title ->
                     val sList = subActivities[title] ?: emptyList()
-                    val cList = contribActivities[title] ?: emptyList()
 
-                    val req = sList.sumOf { it.requiredAmount } + cList.sumOf { it.requiredAmount }
-                    val paid = sList.sumOf { it.paidAmount } + cList.sumOf { it.paidAmount }
+                    val req = sList.sumOf { it.requiredAmount }
+                    val paid = sList.sumOf { it.paidAmount }
                     val debt = (req - paid).coerceAtLeast(0)
 
                     if (debt > 0) {
@@ -161,13 +201,14 @@ class FinanceReportsViewModel(
 
                 val pdfFile = PdfExporter.exportSubscriptionsAndDebtsSummaryPdf(
                     totalSubscriptionsPaid = totalSubsPaid,
-                    totalContributionsPaid = totalContribsPaid,
+                    totalContributionsPaid = 0,
                     totalOutstandingDebt = totalDebt,
                     activitiesWithDebt = activitiesWithDebt,
-                    context = context
+                    context = context,
+                    terms = currentTerms
                 )
                 _uiState.update { it.copy(isExporting = false) }
-                PdfExporter.shareSubscriptionsAndDebtsSummaryPdf(pdfFile, context)
+                PdfExporter.shareSubscriptionsAndDebtsSummaryPdf(pdfFile, context, terms = currentTerms)
                 _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير تقرير الاشتراكات والديون بنجاح"))
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
@@ -183,10 +224,11 @@ class FinanceReportsViewModel(
                 val debts = financeRepository.observeScoutDebts().first()
                 val pdfFile = PdfExporter.exportDetailedDebtsPdf(
                     debts = debts,
-                    context = context
+                    context = context,
+                    terms = currentTerms
                 )
                 _uiState.update { it.copy(isExporting = false) }
-                PdfExporter.shareDetailedDebtsPdf(pdfFile, context)
+                PdfExporter.shareDetailedDebtsPdf(pdfFile, context, terms = currentTerms)
                 _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير تقرير الديون التفصيلي بنجاح"))
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
@@ -207,10 +249,11 @@ class FinanceReportsViewModel(
                     year = year,
                     transactions = transactions,
                     summary = summary,
-                    context = context
+                    context = context,
+                    terms = currentTerms
                 )
                 _uiState.update { it.copy(isExporting = false) }
-                PdfExporter.shareAnnualStatementPdf(pdfFile, year, context)
+                PdfExporter.shareAnnualStatementPdf(pdfFile, year, context, terms = currentTerms)
                 _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير التقرير السنوي لعام $year بنجاح"))
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
@@ -224,37 +267,133 @@ class FinanceReportsViewModel(
             _uiState.update { it.copy(isExporting = true) }
             try {
                 val subscriptions = financeRepository.observeSubscriptionsForScout(scout.id).first()
-                val contributions = financeRepository.observeContributionsForScout(scout.id).first()
                 val pdfFile = PdfExporter.exportScoutStatementPdf(
                     scout = scout,
                     subscriptions = subscriptions,
-                    contributions = contributions,
-                    context = context
+                    contributions = emptyList(),
+                    context = context,
+                    terms = currentTerms
                 )
                 _uiState.update { it.copy(isExporting = false) }
-                PdfExporter.shareScoutStatementPdf(pdfFile, scout.fullName, context)
-                _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير كشف حساب الشبل ${scout.fullName} بنجاح"))
+                PdfExporter.shareScoutStatementPdf(pdfFile, scout.fullName, context, terms = currentTerms)
+                _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير كشف حساب ${currentTerms.scoutSingularDefinite} ${scout.fullName} بنجاح"))
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
-                _events.emit(FinanceReportsEvent.ShowMessage("حدث خطأ أثناء تصدير كشف حساب الشبل: ${e.localizedMessage ?: "خطأ غير متوقع"}"))
+                _events.emit(FinanceReportsEvent.ShowMessage("حدث خطأ أثناء تصدير كشف حساب ${currentTerms.scoutSingularDefinite}: ${e.localizedMessage ?: "خطأ غير متوقع"}"))
             }
         }
     }
 
+    /**
+     * تصدير كشوفات الحساب لمجموعة من الأشبال وحفظها في مجلد التنزيلات وتخزين مساراتها لمشاركتها لاحقاً
+     */
+    fun generateMultipleScoutStatementsPdf(scouts: List<Scout>, context: Context) {
+        viewModelScope.launch {
+            if (scouts.isEmpty()) {
+                _events.emit(FinanceReportsEvent.ShowMessage("لم يتم تحديد أي ${currentTerms.scoutSingular} للتصدير"))
+                return@launch
+            }
+            _uiState.update {
+                it.copy(
+                    isExportingMultiple = true,
+                    exportMultipleProgress = Pair(0, scouts.size),
+                    generatedStatements = emptyList()
+                )
+            }
+            val savedStatements = mutableListOf<GeneratedStatement>()
+            try {
+                scouts.forEachIndexed { index, scout ->
+                    _uiState.update { it.copy(exportMultipleProgress = Pair(index + 1, scouts.size)) }
+                    val subscriptions = financeRepository.observeSubscriptionsForScout(scout.id).first()
+                    val pdfFile = PdfExporter.exportScoutStatementPdf(
+                        scout = scout,
+                        subscriptions = subscriptions,
+                        contributions = emptyList(),
+                        context = context,
+                        terms = currentTerms
+                    )
+                    val safeScoutName = scout.fullName.replace(Regex("[^a-zA-Z0-9\\u0600-\\u06FF_-]"), "_")
+                    val fileName = "كشف_حساب_${safeScoutName}_${System.currentTimeMillis()}.pdf"
+                    val uri = PdfExporter.savePdfToDownloads(context, pdfFile, fileName)
+                    if (uri != null) {
+                        savedStatements.add(GeneratedStatement(scout.fullName, uri))
+                    }
+                }
+                _uiState.update {
+                    it.copy(
+                        isExportingMultiple = false,
+                        exportMultipleProgress = null,
+                        generatedStatements = savedStatements
+                    )
+                }
+                _events.emit(
+                    FinanceReportsEvent.MultipleExportSuccess(
+                        statements = savedStatements,
+                        count = savedStatements.size
+                    )
+                )
+                _events.emit(
+                    FinanceReportsEvent.ShowMessage("تم تصدير وحفظ ${savedStatements.size} كشف حساب في مجلد التنزيلات بنجاح")
+                )
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isExportingMultiple = false,
+                        exportMultipleProgress = null
+                    )
+                }
+                _events.emit(
+                    FinanceReportsEvent.ShowMessage("حدث خطأ أثناء تصدير كشوفات الحساب: ${e.localizedMessage ?: "خطأ غير متوقع"}")
+                )
+            }
+        }
+    }
+
+    /**
+     * مشاركة كشف حساب فردي لشبل محدد
+     */
+    fun shareStatement(statement: GeneratedStatement, context: Context) {
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(android.content.Intent.EXTRA_STREAM, statement.uri)
+            putExtra(android.content.Intent.EXTRA_SUBJECT, "كشف حساب: ${statement.scoutName} — ${currentTerms.groupName} ${currentTerms.unitNameDefinite}")
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "مشاركة كشف حساب ${statement.scoutName}"))
+    }
+
+    /**
+     * مشاركة كشوفات الحساب المصدرة دفعة واحدة
+     */
+    fun shareGeneratedStatements(context: Context) {
+        val uris = _uiState.value.generatedStatements.map { it.uri }
+        if (uris.isEmpty()) {
+            return
+        }
+        PdfExporter.shareMultiplePdfs(
+            uris = uris,
+            subject = "كشوفات حساب ${currentTerms.scoutPluralDefinite} — ${currentTerms.groupName} ${currentTerms.unitNameDefinite}",
+            chooserTitle = "مشاركة كشوفات الحساب كـ PDF",
+            context = context
+        )
+    }
+
     class Factory(
         private val financeRepository: FinanceRepository,
-        private val scoutRepository: ScoutRepository? = null
+        private val scoutRepository: ScoutRepository? = null,
+        private val termsRepository: com.example.domain.settings.TermsRepository? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return FinanceReportsViewModel(financeRepository, scoutRepository) as T
+            return FinanceReportsViewModel(financeRepository, scoutRepository, termsRepository) as T
         }
 
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
-            val repo = scoutRepository
-                ?: (extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as? ScoutApplication)?.container?.scoutRepository
-            return FinanceReportsViewModel(financeRepository, repo) as T
+            val app = extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as? ScoutApplication
+            val repo = scoutRepository ?: app?.container?.scoutRepository
+            val termsRepo = termsRepository ?: app?.container?.termsRepository
+            return FinanceReportsViewModel(financeRepository, repo, termsRepo) as T
         }
     }
 }

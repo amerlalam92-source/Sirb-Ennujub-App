@@ -63,6 +63,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
+import com.example.presentation.common.replaceCustomWords
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.domain.scout.Scout
@@ -80,8 +82,10 @@ fun ScoutInfoScreen(
     viewModel: ScoutInfoViewModel,
     onNavigateToEdit: (String) -> Unit,
     onNavigateBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    stageTerms: com.example.presentation.common.StageTerms = com.example.presentation.common.LocalStageTerms.current
 ) {
+    val terms = LocalAppTerms.current
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -97,11 +101,8 @@ fun ScoutInfoScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             val title = when (val state = uiState) {
-                is ScoutInfoUiState.Success -> stringResource(
-                    id = R.string.scout_info_screen_title_format,
-                    state.scout.fullName
-                )
-                else -> stringResource(id = R.string.scout_info_card_title)
+                is ScoutInfoUiState.Success -> replaceCustomWords("معلومات ${terms.scoutSingularDefinite}: ${state.scout.fullName}", terms)
+                else -> replaceCustomWords("معلومات ${terms.scoutSingularDefinite}", terms)
             }
             CustomTopAppBar(
                 title = title,
@@ -126,7 +127,7 @@ fun ScoutInfoScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Edit,
-                                contentDescription = stringResource(id = R.string.edit_scout_title),
+                                contentDescription = replaceCustomWords(stringResource(id = R.string.edit_scout_title), terms),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -253,51 +254,51 @@ fun ScoutInfoScreen(
                         }
 
                         // A) المعلومات الشخصية
-                        InfoSectionCard(title = stringResource(id = R.string.scout_info_section_personal)) {
+                        InfoSectionCard(title = replaceCustomWords(stringResource(id = R.string.scout_info_section_personal), terms)) {
                             InfoItemRow(
                                 icon = Icons.Default.Person,
-                                label = stringResource(id = R.string.scout_name_label),
+                                label = replaceCustomWords(stringResource(id = R.string.scout_name_label), terms),
                                 value = scout.name
                             )
                             InfoItemRow(
                                 icon = Icons.Default.Badge,
-                                label = stringResource(id = R.string.scout_surname_label),
+                                label = replaceCustomWords(stringResource(id = R.string.scout_surname_label), terms),
                                 value = scout.surname
                             )
                             InfoItemRow(
                                 icon = Icons.Default.Cake,
-                                label = stringResource(id = R.string.birth_date_label),
+                                label = replaceCustomWords(stringResource(id = R.string.birth_date_label), terms),
                                 value = if (scout.birthDate > 0) dateFormatter.format(Date(scout.birthDate)) else "—"
                             )
                             InfoItemRow(
                                 icon = Icons.Default.Face,
-                                label = stringResource(id = R.string.calculated_age_label),
+                                label = replaceCustomWords(stringResource(id = R.string.calculated_age_label), terms),
                                 value = stringResource(id = R.string.age_years_format, scout.age)
                             )
                         }
 
                         // B) معلومات ولي الأمر
-                        InfoSectionCard(title = stringResource(id = R.string.scout_info_section_guardian)) {
+                        InfoSectionCard(title = replaceCustomWords(stringResource(id = R.string.scout_info_section_guardian), terms)) {
                             InfoItemRow(
                                 icon = Icons.Default.Person,
-                                label = stringResource(id = R.string.guardian_name_label),
+                                label = replaceCustomWords(stringResource(id = R.string.guardian_name_label), terms),
                                 value = scout.guardianName.ifBlank { "غير مسجل" }
                             )
                             InfoItemRow(
                                 icon = Icons.Default.Group,
-                                label = stringResource(id = R.string.guardian_relation_label),
+                                label = replaceCustomWords(stringResource(id = R.string.guardian_relation_label), terms),
                                 value = scout.guardianRelation
                             )
                             InfoItemRow(
                                 icon = Icons.Default.Phone,
-                                label = stringResource(id = R.string.phone_picker_primary),
+                                label = replaceCustomWords(stringResource(id = R.string.phone_picker_primary), terms),
                                 value = scout.guardianPhone.ifBlank { "—" }
                             )
 
                             scout.additionalPhones.forEachIndexed { index, extraPhone ->
                                 InfoItemRow(
                                     icon = Icons.Default.Phone,
-                                    label = stringResource(id = R.string.phone_picker_additional_format, index + 1),
+                                    label = replaceCustomWords(stringResource(id = R.string.phone_picker_additional_format, index + 1), terms),
                                     value = extraPhone
                                 )
                             }
@@ -333,7 +334,7 @@ fun ScoutInfoScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = stringResource(id = R.string.action_call_guardian),
+                                        text = replaceCustomWords(stringResource(id = R.string.action_call_guardian), terms),
                                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                                     )
                                 }
@@ -341,30 +342,30 @@ fun ScoutInfoScreen(
                         }
 
                         // C) معلومات إضافية
-                        InfoSectionCard(title = stringResource(id = R.string.scout_info_section_additional)) {
+                        InfoSectionCard(title = replaceCustomWords(stringResource(id = R.string.scout_info_section_additional), terms)) {
                             InfoItemRow(
                                 icon = Icons.Default.LocationOn,
-                                label = stringResource(id = R.string.address_label),
+                                label = replaceCustomWords(stringResource(id = R.string.address_label), terms),
                                 value = scout.address.ifBlank { "غير مسجل" }
                             )
                             InfoItemRow(
                                 icon = Icons.Default.School,
-                                label = stringResource(id = R.string.school_label),
+                                label = replaceCustomWords(stringResource(id = R.string.school_label), terms),
                                 value = scout.school.ifBlank { "غير مسجلة" }
                             )
                             InfoItemRow(
                                 icon = Icons.Default.CalendarToday,
-                                label = stringResource(id = R.string.join_year_label),
+                                label = replaceCustomWords(stringResource(id = R.string.join_year_label), terms),
                                 value = scout.joinYear.toString()
                             )
                         }
 
                         // D) ملاحظات (إن وجدت)
                         if (scout.notes.isNotBlank()) {
-                            InfoSectionCard(title = stringResource(id = R.string.scout_info_section_notes)) {
+                            InfoSectionCard(title = replaceCustomWords(stringResource(id = R.string.scout_info_section_notes), terms)) {
                                 InfoItemRow(
                                     icon = Icons.Default.Notes,
-                                    label = stringResource(id = R.string.notes_label),
+                                    label = replaceCustomWords(stringResource(id = R.string.notes_label), terms),
                                     value = scout.notes
                                 )
                             }
