@@ -33,7 +33,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import com.example.presentation.common.CustomTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -43,7 +45,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.presentation.common.AppLocale
@@ -118,7 +123,7 @@ fun FinanceHomeScreen(
                 val balance = summary?.balance ?: 0
                 val totalIncome = summary?.totalIncome ?: 0
                 val totalExpenses = summary?.totalExpenses ?: 0
-                val totalDebt = summary?.totalOutstandingDebt ?: 0
+                val summaryDebt = summary?.totalOutstandingDebt ?: 0
                 val monthlyIncome = summary?.monthlyIncome ?: 0
                 val monthlyExpenses = summary?.monthlyExpenses ?: 0
 
@@ -148,118 +153,240 @@ fun FinanceHomeScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                                .padding(horizontal = 20.dp, vertical = 20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            // 1) تسمية الرصيد الحالي
+                            // 1) الرصيد الحالي
                             Text(
                                 text = stringResource(id = R.string.finance_balance_label),
                                 style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
                             )
 
-                            // 2) قيمة الرصيد الحالي (الأبرز بحجم displaySmall عريض)
+                            Spacer(modifier = Modifier.height(6.dp))
+
                             Text(
-                                text = String.format(AppLocale.AR_DZ, "%d %s", balance, stringResource(id = R.string.finance_currency)),
+                                text = String.format(
+                                    AppLocale.AR_DZ,
+                                    "%d %s",
+                                    balance,
+                                    stringResource(id = R.string.finance_currency)
+                                ),
                                 style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold),
                                 color = balanceColor,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth()
                             )
 
-                            // 3) صف الواردات والمصاريف الكلية (عمودان متساويان ومحاذيان للوسط)
+                            Spacer(modifier = Modifier.height(18.dp))
+
+                            // 2) صف الواردات والمصاريف الكلية (عمودان متساويان مع فاصل رأسي)
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 8.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
                                         text = stringResource(id = R.string.finance_total_income_label),
                                         style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f),
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
-                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = String.format(AppLocale.AR_DZ, "%d %s", totalIncome, stringResource(id = R.string.finance_currency)),
-                                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                                        text = String.format(
+                                            AppLocale.AR_DZ,
+                                            "%d %s",
+                                            totalIncome,
+                                            stringResource(id = R.string.finance_currency)
+                                        ),
+                                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
 
+                                VerticalDivider(
+                                    modifier = Modifier.height(44.dp),
+                                    thickness = 1.dp,
+                                    color = MaterialTheme.colorScheme.outlineVariant
+                                )
+
                                 Column(
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 8.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
                                         text = stringResource(id = R.string.finance_total_expenses_label),
                                         style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f),
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
-                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = String.format(AppLocale.AR_DZ, "%d %s", totalExpenses, stringResource(id = R.string.finance_currency)),
-                                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                                        text = String.format(
+                                            AppLocale.AR_DZ,
+                                            "%d %s",
+                                            totalExpenses,
+                                            stringResource(id = R.string.finance_currency)
+                                        ),
+                                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
 
-                            // 4) سطر الديون المتبقية
-                            Text(
-                                text = String.format(
-                                    AppLocale.AR_DZ,
-                                    "%s: %d %s",
-                                    stringResource(id = R.string.finance_outstanding_debt_label),
-                                    totalDebt,
-                                    stringResource(id = R.string.finance_currency)
-                                ),
-                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                                color = MaterialTheme.colorScheme.error,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
+                            Spacer(modifier = Modifier.height(16.dp))
 
-                            // 5) فاصل أفقي رفيع
+                            // 3) سطر الديون المتبقية
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.error.copy(alpha = 0.08f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = String.format(
+                                        AppLocale.AR_DZ,
+                                        "%s: %d %s",
+                                        stringResource(id = R.string.finance_outstanding_debt_label),
+                                        summaryDebt,
+                                        stringResource(id = R.string.finance_currency)
+                                    ),
+                                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.error,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                )
+                            }
+
+                            // 4) فاصل أفقي رفيع
                             HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 12.dp),
                                 color = MaterialTheme.colorScheme.outlineVariant,
                                 thickness = 1.dp
                             )
 
-                            // 6) قسم إحصائيات الشهر الحالي
-                            Text(
-                                text = String.format(
-                                    AppLocale.AR_DZ,
-                                    "%s: %d واردات • %d مصاريف",
-                                    stringResource(id = R.string.finance_month_section),
-                                    monthlyIncome,
-                                    monthlyExpenses
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.7f),
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
+                            // 5) قسم إحصائيات الشهر الحالي (واردات الشهر يميناً • مصاريف الشهر يساراً)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Text(
+                                        text = stringResource(id = R.string.finance_monthly_income_label),
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f),
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = String.format(
+                                            AppLocale.AR_DZ,
+                                            "%d %s",
+                                            monthlyIncome,
+                                            stringResource(id = R.string.finance_currency)
+                                        ),
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = positiveBalanceColor,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                VerticalDivider(
+                                    modifier = Modifier.height(36.dp),
+                                    thickness = 1.dp,
+                                    color = MaterialTheme.colorScheme.outlineVariant
+                                )
+
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(horizontal = 8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Text(
+                                        text = stringResource(id = R.string.finance_monthly_expenses_label),
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f),
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = String.format(
+                                            AppLocale.AR_DZ,
+                                            "%d %s",
+                                            monthlyExpenses,
+                                            stringResource(id = R.string.finance_currency)
+                                        ),
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = negativeBalanceColor,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
                     }
 
                     // 2) FEATURE CARDS (بطاقات الأقسام المالية)
 
                     // Card 1: التحصيلات (دمج الاشتراكات والمساهمات)
-                    val totalDebt = uiState.totalOutstandingDebt
-                    val collectionsSubtitle = if (totalDebt > 0) {
-                        stringResource(id = R.string.finance_feature_collections_subtitle_format, totalDebt)
+                    val collectionsPendingDebt = uiState.totalOutstandingDebt
+                    val collectionsSubtitle = if (collectionsPendingDebt > 0) {
+                        stringResource(id = R.string.finance_feature_collections_subtitle_format, collectionsPendingDebt)
                     } else {
                         stringResource(id = R.string.finance_feature_collections_no_debt)
                     }
-                    val collectionsSubtitleColor = if (totalDebt > 0) {
+                    val collectionsSubtitleColor = if (collectionsPendingDebt > 0) {
                         MaterialTheme.colorScheme.error
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant

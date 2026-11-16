@@ -567,6 +567,14 @@ class FinanceRepositoryImpl(
             .filter { it.type == FinanceTransactionType.DONATION }
             .sumOf { it.amount }
 
+        val advancePayments = transactions
+            .filter { it.type == FinanceTransactionType.ADVANCE_PAYMENT }
+            .sumOf { it.amount }
+
+        val contributions = transactions
+            .filter { it.type == FinanceTransactionType.CONTRIBUTION }
+            .sumOf { it.amount }
+
         val txOpeningBalance = transactions
             .filter { it.type == FinanceTransactionType.OPENING_BALANCE }
             .sumOf { it.amount }
@@ -574,9 +582,10 @@ class FinanceRepositoryImpl(
         val effectiveOpeningBalance = if (txOpeningBalance > 0) txOpeningBalance else settings.openingBalance
 
         // إجمالي مبالغ الاشتراكات المدفوعة يظل يشمل السجلات التاريخية للحفاظ على رصيد الخزينة العام دقيقاً
+        // (ويتضمن تلقائياً تسديدات الديون DEBT_PAYMENT عبر تحديث paidAmount للاشتراكات القديمة)
         val subscriptionsPaid = subscriptions.sumOf { it.paidAmount }
 
-        val totalIncome = donations + effectiveOpeningBalance + subscriptionsPaid
+        val totalIncome = donations + effectiveOpeningBalance + subscriptionsPaid + advancePayments + contributions
         val totalExpenses = transactions
             .filter { it.type == FinanceTransactionType.EXPENSE }
             .sumOf { it.amount }
@@ -602,7 +611,12 @@ class FinanceRepositoryImpl(
             .sumOf { it.amount }
 
         val monthlyTxIncome = transactions
-            .filter { it.isIncome() && it.date in startOfMonth until endOfMonth }
+            .filter {
+                (it.type == FinanceTransactionType.DONATION ||
+                    it.type == FinanceTransactionType.ADVANCE_PAYMENT ||
+                    it.type == FinanceTransactionType.CONTRIBUTION) &&
+                    it.date in startOfMonth until endOfMonth
+            }
             .sumOf { it.amount }
 
         val monthlySubsPaid = subscriptions

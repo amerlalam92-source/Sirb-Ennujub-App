@@ -10,6 +10,8 @@ data class LoginUiState(
     val emailInput: String = "",
     val passwordInput: String = "",
     val isLoading: Boolean = false,
+    val isLogoLoading: Boolean = true,
+    val logoBase64: String? = null,
     @param:StringRes val emailErrorRes: Int? = null,
     @param:StringRes val passwordErrorRes: Int? = null,
     @param:StringRes val generalErrorRes: Int? = null,

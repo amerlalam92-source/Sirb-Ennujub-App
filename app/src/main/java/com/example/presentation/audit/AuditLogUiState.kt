@@ -1,6 +1,7 @@
 package com.example.presentation.audit
 
 import com.example.R
+import com.example.domain.auth.Leader
 import com.example.domain.log.ActivityLog
 
 /**
@@ -32,8 +33,8 @@ data class AuditLogUiState(
     val filteredLogs: List<ActivityLog> = emptyList(),
     val selectedDateFilter: DateFilter = DateFilter.ALL,
     val selectedActionFilter: ActionFilter = ActionFilter.ALL,
-    val selectedLeader: String? = null, // null تعني كافة القادة
-    val availableLeaders: List<String> = emptyList(),
+    val selectedLeader: Leader? = null, // null تعني كافة القادة
+    val availableLeaders: List<Leader> = emptyList(),
     val isExportingPdf: Boolean = false,
     val selectedLog: ActivityLog? = null,
     val errorMessage: String? = null

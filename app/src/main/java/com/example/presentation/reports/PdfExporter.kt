@@ -1,12 +1,8 @@
 package com.example.presentation.reports
 
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -39,6 +35,7 @@ import com.example.domain.attendance.ScoutStatistics
 import com.example.domain.progress.BadgeLevel
 import com.example.domain.progress.BadgeProgress
 import com.example.domain.scout.Scout
+import com.example.presentation.finance.reports.ScoutPaymentDetail
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -1020,7 +1017,8 @@ object PdfExporter {
         subscriptions: List<FinanceSubscription>,
         contributions: List<FinanceContribution> = emptyList(),
         context: Context,
-        terms: CustomTerms = currentTerms ?: CustomTerms()
+        terms: CustomTerms = currentTerms ?: CustomTerms(),
+        fileNameOverride: String? = null
     ): File {
         val pdfDocument = PdfDocument()
         val cairoTypeface = try {
@@ -1063,7 +1061,12 @@ object PdfExporter {
 
         pdfDocument.finishPage(page)
 
-        val pdfFile = File(context.cacheDir, "scout_statement_${scout.id}.pdf")
+        val rawName = scout.fullName.ifBlank { scout.name }.ifBlank { scout.id }
+        val safeName = rawName.replace(Regex("[^a-zA-Z0-9\\u0600-\\u06FF_-]"), "_")
+            .trim('_')
+            .ifBlank { scout.id.ifBlank { "scout" } }
+        val fileName = fileNameOverride ?: "Scout_Statement_${safeName}.pdf"
+        val pdfFile = File(context.cacheDir, fileName)
         FileOutputStream(pdfFile).use { outputStream ->
             pdfDocument.writeTo(outputStream)
         }
@@ -1089,40 +1092,6 @@ object PdfExporter {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "مشاركة كشف حساب ${terms.scoutSingularDefinite} كـ PDF"))
-    }
-
-    /**
-     * حفظ ملف PDF في مجلد التنزيلات العام (Public Downloads) وإرجاع مسار الـ Uri
-     */
-    fun savePdfToDownloads(context: Context, pdfFile: File, fileName: String): Uri? {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val resolver = context.contentResolver
-            val contentValues = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-            }
-            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-            if (uri != null) {
-                resolver.openOutputStream(uri)?.use { outputStream ->
-                    pdfFile.inputStream().use { inputStream ->
-                        inputStream.copyTo(outputStream)
-                    }
-                }
-            }
-            uri
-        } else {
-            // For older Android versions (API < 29), save directly to public Downloads
-            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val destFile = File(downloadsDir, fileName)
-            try {
-                pdfFile.copyTo(destFile, overwrite = true)
-                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", destFile)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                null
-            }
-        }
     }
 
     /**
@@ -2677,7 +2646,7 @@ object PdfExporter {
         val titleText = if (trainingMeetingNumber != null && trainingMeetingNumber > 0) {
             "قائمة الحضور — الاجتماع التدريبي رقم $trainingMeetingNumber"
         } else {
-            "قائمة الحضور — ${activity.title} (${activity.activityType.arabicLabel})"
+            "قائمة الحضور — ${activity.title} (${activity.activityType.displayLabel(terms)})"
         }
         val docTitlePaint = Paint().apply {
             color = Color.rgb(46, 125, 50)
@@ -3046,7 +3015,7 @@ object PdfExporter {
             canvas.drawLine(40f, currentY + 22f, 555f, currentY + 22f, separatorPaint)
 
             canvas.drawText("نوع النشاط: ", 540f, currentY + 38f, labelBoldPaint)
-            canvas.drawText(activity.activityType.arabicLabel, 470f, currentY + 38f, valuePaint)
+            canvas.drawText(activity.activityType.displayLabel(terms), 470f, currentY + 38f, valuePaint)
             canvas.drawText("تاريخ النشاط: ", 270f, currentY + 38f, labelBoldPaint)
             canvas.drawText(dateDisplay, 200f, currentY + 38f, valuePaint)
 
@@ -5157,6 +5126,1003 @@ object PdfExporter {
         pdfDocument.close()
         return file
     }
+
+    private sealed class ActivityFinancePdfBlock(val height: Float) {
+        data class SummaryBox(
+            val totalIncome: Int,
+            val subsIncome: Int,
+            val extraIncome: Int,
+            val totalExpenses: Int,
+            val netBalance: Int
+        ) : ActivityFinancePdfBlock(92f)
+
+        data class SectionTitle(val title: String) : ActivityFinancePdfBlock(26f)
+        data object PaymentsTableHeader : ActivityFinancePdfBlock(24f)
+        data class PaymentsTableRow(
+            val index: Int,
+            val nameLines: List<String>,
+            val totalPaid: Int,
+            val breakdownLines: List<String>,
+            val rowHeight: Float
+        ) : ActivityFinancePdfBlock(rowHeight)
+
+        data class PaymentsTableTotal(
+            val totalPaid: Int,
+            val breakdownLines: List<String>,
+            val rowHeight: Float
+        ) : ActivityFinancePdfBlock(rowHeight)
+
+        data object ExpensesTableHeader : ActivityFinancePdfBlock(24f)
+        data class ExpensesTableRow(
+            val index: Int,
+            val descLines: List<String>,
+            val categoryLabel: String,
+            val amount: Int,
+            val rowHeight: Float
+        ) : ActivityFinancePdfBlock(rowHeight)
+
+        data class ExpensesTableTotal(val totalAmount: Int) : ActivityFinancePdfBlock(24f)
+        data class EmptyState(val message: String) : ActivityFinancePdfBlock(32f)
+        data class Gap(val space: Float) : ActivityFinancePdfBlock(space)
+    }
+
+    fun shareActivityFinancePdf(
+        file: File,
+        activityTitle: String,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
+        sharePdfFile(
+            file = file,
+            subject = "التقرير المالي للنشاط: $activityTitle — ${terms.groupName} ${terms.unitNameDefinite}",
+            chooserTitle = "مشاركة التقرير المالي للنشاط كـ PDF",
+            context = context
+        )
+    }
+
+    private fun formatPaymentBreakdown(subPaid: Int, debtPaid: Int, advancePaid: Int): String {
+        val parts = mutableListOf<String>()
+        if (subPaid > 0) parts.add("اشتراك: $subPaid")
+        if (debtPaid > 0) parts.add("دين: $debtPaid")
+        if (advancePaid > 0) parts.add("رصيد: $advancePaid")
+        return if (parts.isEmpty()) "—" else parts.joinToString(" | ")
+    }
+
+    /**
+     * التقرير المالي المفصل للنشاط الكشفي (A4 عمودي)
+     */
+    fun exportActivityFinancePdf(
+        activity: Activity,
+        scoutPayments: List<ScoutPaymentDetail>,
+        expenses: List<FinanceTransaction>,
+        netBalance: Int,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ): File {
+        val pdfDocument = PdfDocument()
+        val cairoFont = getCairoTypeface(context) ?: Typeface.DEFAULT
+        val cairoBold = getBoldCairoTypeface(cairoFont) ?: Typeface.DEFAULT_BOLD
+
+        val pageWidth = 595
+        val pageHeight = 842
+        val leftMargin = 35f
+        val rightMargin = 560f
+        val contentWidth = rightMargin - leftMargin // 525f
+        val contentTopY = 104f
+        val contentBottomY = 790f
+
+        val validPayments = scoutPayments.filter { it.totalPaid > 0 }
+        val expenseTxs = expenses.filter { it.type == FinanceTransactionType.EXPENSE }
+
+        val subsIncome = validPayments.sumOf { it.subPaid }
+        val debtIncome = validPayments.sumOf { it.debtPaid }
+        val advanceIncome = validPayments.sumOf { it.advancePaid }
+        val extraIncome = debtIncome + advanceIncome
+        val totalIncome = validPayments.sumOf { it.totalPaid }
+        val totalExpenses = expenseTxs.sumOf { it.amount }
+
+        val primaryGreen = Color.rgb(46, 125, 50)
+        val darkGreen = Color.rgb(27, 94, 32)
+        val expenseRed = Color.rgb(198, 40, 40)
+        val netBlue = Color.rgb(21, 101, 192)
+        val goldColor = Color.rgb(200, 169, 81)
+
+        val sectionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = darkGreen
+            textSize = 11.5f
+            typeface = cairoBold
+            textAlign = Paint.Align.RIGHT
+        }
+        val thBgPaint = Paint().apply {
+            color = Color.rgb(232, 245, 233)
+            style = Paint.Style.FILL
+        }
+        val borderPaint = Paint().apply {
+            color = Color.rgb(200, 214, 201)
+            style = Paint.Style.STROKE
+            strokeWidth = 0.8f
+        }
+        val thTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = darkGreen
+            textSize = 9.5f
+            typeface = cairoBold
+            textAlign = Paint.Align.CENTER
+        }
+        val rowTextRightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(33, 33, 33)
+            textSize = 9f
+            typeface = cairoFont
+            textAlign = Paint.Align.RIGHT
+        }
+        val rowTextCenterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(33, 33, 33)
+            textSize = 9f
+            typeface = cairoFont
+            textAlign = Paint.Align.CENTER
+        }
+        val totalBgPaint = Paint().apply {
+            color = Color.rgb(245, 247, 245)
+            style = Paint.Style.FILL
+        }
+
+        // عرض أعمدة جدول المدفوعات المدمج (المجموع 525f من اليمين إلى اليسار):
+        // # (32f) | اسم الشبل (165f) | إجمالي المدفوع (98f) | تفاصيل الدفع (230f)
+        val pColNum = 32f
+        val pColName = 165f
+        val pColTotal = 98f
+        val pColBreakdown = 230f
+
+        // عرض أعمدة جدول المصاريف (المجموع 525f من اليمين إلى اليسار):
+        // # (32f) | الوصف (248f) | التصنيف (135f) | المبلغ (110f)
+        val eColNum = 32f
+        val eColDesc = 248f
+        val eColCat = 135f
+        val eColAmount = 110f
+
+        val lineHeight = 13f
+
+        // تجميع العناصر مع الالتفاف والتقسيم الذكي للصفحات
+        val blocks = mutableListOf<ActivityFinancePdfBlock>()
+        blocks.add(
+            ActivityFinancePdfBlock.SummaryBox(
+                totalIncome = totalIncome,
+                subsIncome = subsIncome,
+                extraIncome = extraIncome,
+                totalExpenses = totalExpenses,
+                netBalance = netBalance
+            )
+        )
+        blocks.add(ActivityFinancePdfBlock.Gap(14f))
+
+        // جدول 1: الأشبال المشاركون بالدفع (مدمج مع الديون والرصيد)
+        blocks.add(ActivityFinancePdfBlock.SectionTitle("1. الأشبال المشاركون بالدفع (${validPayments.size})"))
+        if (validPayments.isEmpty()) {
+            blocks.add(ActivityFinancePdfBlock.EmptyState("لا توجد مدفوعات مسجلة لهذا النشاط"))
+        } else {
+            blocks.add(ActivityFinancePdfBlock.PaymentsTableHeader)
+            validPayments.forEachIndexed { idx, detail ->
+                val nameLines = wrapText(detail.scoutName.ifBlank { "شبل" }, rowTextRightPaint, pColName - 14f)
+                    .ifEmpty { listOf("شبل") }
+                val breakdownText = formatPaymentBreakdown(detail.subPaid, detail.debtPaid, detail.advancePaid)
+                val breakdownLines = wrapText(breakdownText, rowTextRightPaint, pColBreakdown - 14f)
+                    .ifEmpty { listOf(breakdownText) }
+                val maxLines = maxOf(1, nameLines.size, breakdownLines.size)
+                val rowHeight = maxOf(22f, 10f + maxLines * lineHeight)
+
+                blocks.add(
+                    ActivityFinancePdfBlock.PaymentsTableRow(
+                        index = idx + 1,
+                        nameLines = nameLines,
+                        totalPaid = detail.totalPaid,
+                        breakdownLines = breakdownLines,
+                        rowHeight = rowHeight
+                    )
+                )
+            }
+            val totalBreakdownText = formatPaymentBreakdown(subsIncome, debtIncome, advanceIncome)
+            val totalBreakdownLines = wrapText(totalBreakdownText, rowTextRightPaint, pColBreakdown - 14f)
+                .ifEmpty { listOf(totalBreakdownText) }
+            val totalRowHeight = maxOf(24f, 10f + totalBreakdownLines.size * lineHeight)
+            blocks.add(
+                ActivityFinancePdfBlock.PaymentsTableTotal(
+                    totalPaid = totalIncome,
+                    breakdownLines = totalBreakdownLines,
+                    rowHeight = totalRowHeight
+                )
+            )
+        }
+        blocks.add(ActivityFinancePdfBlock.Gap(14f))
+
+        // جدول 2: مصاريف النشاط
+        blocks.add(ActivityFinancePdfBlock.SectionTitle("2. مصاريف النشاط (${expenseTxs.size})"))
+        if (expenseTxs.isEmpty()) {
+            blocks.add(ActivityFinancePdfBlock.EmptyState("لا توجد مصاريف"))
+        } else {
+            blocks.add(ActivityFinancePdfBlock.ExpensesTableHeader)
+            expenseTxs.forEachIndexed { idx, tx ->
+                val descText = tx.description.ifBlank { "مصروف نشاط" }
+                val descLines = wrapText(descText, rowTextRightPaint, eColDesc - 14f)
+                    .ifEmpty { listOf(descText) }
+                val rowHeight = maxOf(22f, 10f + descLines.size * lineHeight)
+                blocks.add(
+                    ActivityFinancePdfBlock.ExpensesTableRow(
+                        index = idx + 1,
+                        descLines = descLines,
+                        categoryLabel = tx.category?.arabicLabel ?: "أخرى",
+                        amount = tx.amount,
+                        rowHeight = rowHeight
+                    )
+                )
+            }
+            blocks.add(ActivityFinancePdfBlock.ExpensesTableTotal(totalAmount = totalExpenses))
+        }
+
+        // توزيع العناصر على الصفحات
+        val pages = mutableListOf<List<ActivityFinancePdfBlock>>()
+        var currentPage = mutableListOf<ActivityFinancePdfBlock>()
+        var currentY = contentTopY
+
+        fun flushPage() {
+            if (currentPage.isNotEmpty()) {
+                pages.add(currentPage)
+                currentPage = mutableListOf()
+                currentY = contentTopY
+            }
+        }
+
+        var idx = 0
+        while (idx < blocks.size) {
+            val block = blocks[idx]
+            if (block is ActivityFinancePdfBlock.Gap && currentPage.isEmpty()) {
+                idx++
+                continue
+            }
+
+            if (block is ActivityFinancePdfBlock.SectionTitle && idx + 1 < blocks.size) {
+                val nextBlock = blocks[idx + 1]
+                val nextNextHeight = if (nextBlock is ActivityFinancePdfBlock.PaymentsTableHeader ||
+                    nextBlock is ActivityFinancePdfBlock.ExpensesTableHeader
+                ) {
+                    blocks.getOrNull(idx + 2)?.height ?: 0f
+                } else {
+                    0f
+                }
+                if (currentY + block.height + nextBlock.height + nextNextHeight > contentBottomY && currentPage.isNotEmpty()) {
+                    flushPage()
+                    continue
+                }
+            }
+
+            if (currentY + block.height > contentBottomY && currentPage.isNotEmpty()) {
+                flushPage()
+                when (block) {
+                    is ActivityFinancePdfBlock.PaymentsTableRow, is ActivityFinancePdfBlock.PaymentsTableTotal -> {
+                        val header = ActivityFinancePdfBlock.PaymentsTableHeader
+                        currentPage.add(header)
+                        currentY += header.height
+                    }
+                    is ActivityFinancePdfBlock.ExpensesTableRow, is ActivityFinancePdfBlock.ExpensesTableTotal -> {
+                        val header = ActivityFinancePdfBlock.ExpensesTableHeader
+                        currentPage.add(header)
+                        currentY += header.height
+                    }
+                    else -> {}
+                }
+            }
+
+            currentPage.add(block)
+            currentY += block.height
+            idx++
+        }
+        flushPage()
+        if (pages.isEmpty()) {
+            pages.add(emptyList())
+        }
+
+        val totalPages = pages.size
+        val shortDateFormatter = SimpleDateFormat("d MMMM yyyy", com.example.presentation.common.AppLocale.AR_DZ)
+        val activityDateStr = if (activity.isMultiDay()) {
+            "من ${shortDateFormatter.format(Date(activity.startDate))} إلى ${dateFormatter.format(Date(activity.endDate))}"
+        } else {
+            dateFormatter.format(Date(activity.startDate))
+        }
+
+        val titleMeasurePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 15f
+            typeface = cairoBold
+        }
+        val headerTitle = truncateText("التقرير المالي للنشاط: ${activity.title}", 430f, titleMeasurePaint)
+
+        pages.forEachIndexed { pageIndex, pageBlocks ->
+            val pageNumber = pageIndex + 1
+            val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+            val page = pdfDocument.startPage(pageInfo)
+            val canvas = page.canvas
+
+            drawScoutPdfHeader(
+                canvas = canvas,
+                pageWidth = pageWidth,
+                title = headerTitle,
+                subInfo = "تاريخ النشاط: $activityDateStr",
+                cairoFont = cairoFont,
+                cairoBold = cairoBold,
+                context = context,
+                isLandscape = false,
+                terms = terms
+            )
+
+            var y = contentTopY
+            for (block in pageBlocks) {
+                when (block) {
+                    is ActivityFinancePdfBlock.SummaryBox -> {
+                        val boxHeight = 82f
+                        val gap = 10f
+                        val cardW = (contentWidth - gap * 2f) / 3f
+
+                        val cardBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+                        val cardBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            style = Paint.Style.STROKE
+                            strokeWidth = 1.2f
+                        }
+                        val cardLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.rgb(85, 85, 85)
+                            textSize = 9.5f
+                            typeface = cairoBold
+                            textAlign = Paint.Align.CENTER
+                        }
+                        val cardValuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            textSize = 13f
+                            typeface = cairoBold
+                            textAlign = Paint.Align.CENTER
+                        }
+                        val cardSubPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.rgb(105, 105, 105)
+                            textSize = 7.5f
+                            typeface = cairoFont
+                            textAlign = Paint.Align.CENTER
+                        }
+
+                        // البطاقة اليمنى: إجمالي الواردات (أخضر)
+                        val incRight = rightMargin
+                        val incLeft = incRight - cardW
+                        cardBg.color = Color.rgb(232, 245, 233)
+                        cardBorder.color = Color.rgb(165, 214, 167)
+                        canvas.drawRoundRect(incLeft, y, incRight, y + boxHeight, 10f, 10f, cardBg)
+                        canvas.drawRoundRect(incLeft, y, incRight, y + boxHeight, 10f, 10f, cardBorder)
+                        canvas.drawText("إجمالي الواردات", incLeft + cardW / 2f, y + 22f, cardLabelPaint)
+                        cardValuePaint.color = primaryGreen
+                        canvas.drawText("${block.totalIncome} دج", incLeft + cardW / 2f, y + 46f, cardValuePaint)
+                        canvas.drawText(
+                            "اشتراكات: ${block.subsIncome} | أخرى: ${block.extraIncome}",
+                            incLeft + cardW / 2f,
+                            y + 66f,
+                            cardSubPaint
+                        )
+
+                        // البطاقة الوسطى: إجمالي المصاريف (أحمر)
+                        val expRight = incLeft - gap
+                        val expLeft = expRight - cardW
+                        cardBg.color = Color.rgb(255, 235, 238)
+                        cardBorder.color = Color.rgb(239, 154, 154)
+                        canvas.drawRoundRect(expLeft, y, expRight, y + boxHeight, 10f, 10f, cardBg)
+                        canvas.drawRoundRect(expLeft, y, expRight, y + boxHeight, 10f, 10f, cardBorder)
+                        canvas.drawText("إجمالي المصاريف", expLeft + cardW / 2f, y + 22f, cardLabelPaint)
+                        cardValuePaint.color = expenseRed
+                        canvas.drawText("${block.totalExpenses} دج", expLeft + cardW / 2f, y + 46f, cardValuePaint)
+                        canvas.drawText("مصاريف النشاط", expLeft + cardW / 2f, y + 66f, cardSubPaint)
+
+                        // البطاقة اليسرى: الصافي (أزرق / ذهبي)
+                        val netRight = expLeft - gap
+                        val netLeft = leftMargin
+                        cardBg.color = if (block.netBalance >= 0) Color.rgb(235, 243, 254) else Color.rgb(255, 243, 224)
+                        cardBorder.color = goldColor
+                        canvas.drawRoundRect(netLeft, y, netRight, y + boxHeight, 10f, 10f, cardBg)
+                        canvas.drawRoundRect(netLeft, y, netRight, y + boxHeight, 10f, 10f, cardBorder)
+                        canvas.drawText("الصافي", netLeft + cardW / 2f, y + 22f, cardLabelPaint)
+                        cardValuePaint.color = if (block.netBalance >= 0) netBlue else expenseRed
+                        canvas.drawText("${block.netBalance} دج", netLeft + cardW / 2f, y + 46f, cardValuePaint)
+                        canvas.drawText(
+                            if (block.netBalance >= 0) "فائض النشاط" else "عجز النشاط",
+                            netLeft + cardW / 2f,
+                            y + 66f,
+                            cardSubPaint
+                        )
+                    }
+
+                    is ActivityFinancePdfBlock.SectionTitle -> {
+                        canvas.drawText(block.title, rightMargin, y + 18f, sectionPaint)
+                    }
+
+                    is ActivityFinancePdfBlock.EmptyState -> {
+                        val emptyBg = Paint().apply {
+                            color = Color.rgb(250, 250, 250)
+                            style = Paint.Style.FILL
+                        }
+                        canvas.drawRoundRect(leftMargin, y, rightMargin, y + 28f, 6f, 6f, emptyBg)
+                        canvas.drawRoundRect(leftMargin, y, rightMargin, y + 28f, 6f, 6f, borderPaint)
+                        val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.GRAY
+                            textSize = 9.5f
+                            typeface = cairoFont
+                            textAlign = Paint.Align.CENTER
+                        }
+                        canvas.drawText(block.message, (leftMargin + rightMargin) / 2f, y + 18f, emptyPaint)
+                    }
+
+                    is ActivityFinancePdfBlock.PaymentsTableHeader -> {
+                        val h = block.height
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, thBgPaint)
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, borderPaint)
+
+                        var cx = rightMargin
+                        cx -= pColNum
+                        canvas.drawText("#", cx + pColNum / 2f, y + 16f, thTextPaint)
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= pColName
+                        thTextPaint.textAlign = Paint.Align.RIGHT
+                        canvas.drawText("اسم الشبل", cx + pColName - 8f, y + 16f, thTextPaint)
+                        thTextPaint.textAlign = Paint.Align.CENTER
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= pColTotal
+                        canvas.drawText("إجمالي المدفوع", cx + pColTotal / 2f, y + 16f, thTextPaint)
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= pColBreakdown
+                        thTextPaint.textAlign = Paint.Align.RIGHT
+                        canvas.drawText("تفاصيل الدفع", cx + pColBreakdown - 8f, y + 16f, thTextPaint)
+                        thTextPaint.textAlign = Paint.Align.CENTER
+                    }
+
+                    is ActivityFinancePdfBlock.PaymentsTableRow -> {
+                        val h = block.rowHeight
+                        val rowBg = Paint().apply {
+                            color = if (block.index % 2 == 1) Color.WHITE else Color.rgb(249, 250, 249)
+                            style = Paint.Style.FILL
+                        }
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, rowBg)
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, borderPaint)
+
+                        var cx = rightMargin
+                        cx -= pColNum
+                        canvas.drawText("${block.index}", cx + pColNum / 2f, y + h / 2f + 3f, rowTextCenterPaint)
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= pColName
+                        val nameStartY = y + (h - (block.nameLines.size - 1) * lineHeight) / 2f + 3f
+                        block.nameLines.forEachIndexed { lineIdx, line ->
+                            canvas.drawText(line, cx + pColName - 8f, nameStartY + lineIdx * lineHeight, rowTextRightPaint)
+                        }
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= pColTotal
+                        val paidPaint = Paint(rowTextCenterPaint).apply {
+                            color = primaryGreen
+                            typeface = cairoBold
+                        }
+                        canvas.drawText("${block.totalPaid} دج", cx + pColTotal / 2f, y + h / 2f + 3f, paidPaint)
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= pColBreakdown
+                        val breakdownPaint = Paint(rowTextRightPaint).apply {
+                            color = Color.rgb(75, 75, 75)
+                        }
+                        val breakdownStartY = y + (h - (block.breakdownLines.size - 1) * lineHeight) / 2f + 3f
+                        block.breakdownLines.forEachIndexed { lineIdx, line ->
+                            canvas.drawText(
+                                line,
+                                cx + pColBreakdown - 8f,
+                                breakdownStartY + lineIdx * lineHeight,
+                                breakdownPaint
+                            )
+                        }
+                    }
+
+                    is ActivityFinancePdfBlock.PaymentsTableTotal -> {
+                        val h = block.rowHeight
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, totalBgPaint)
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, borderPaint)
+
+                        val labelColLeft = rightMargin - (pColNum + pColName)
+                        val totalLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = darkGreen
+                            textSize = 9.5f
+                            typeface = cairoBold
+                            textAlign = Paint.Align.RIGHT
+                        }
+                        canvas.drawText("الإجمالي", rightMargin - 8f, y + h / 2f + 3f, totalLabelPaint)
+                        canvas.drawLine(labelColLeft, y, labelColLeft, y + h, borderPaint)
+
+                        var cx = labelColLeft
+                        cx -= pColTotal
+                        val paidTotalPaint = Paint(rowTextCenterPaint).apply {
+                            color = primaryGreen
+                            textSize = 9.5f
+                            typeface = cairoBold
+                        }
+                        canvas.drawText("${block.totalPaid} دج", cx + pColTotal / 2f, y + h / 2f + 3f, paidTotalPaint)
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= pColBreakdown
+                        val totalBreakdownPaint = Paint(rowTextRightPaint).apply {
+                            color = darkGreen
+                            textSize = 8.5f
+                            typeface = cairoBold
+                        }
+                        val breakdownStartY = y + (h - (block.breakdownLines.size - 1) * lineHeight) / 2f + 3f
+                        block.breakdownLines.forEachIndexed { lineIdx, line ->
+                            canvas.drawText(
+                                line,
+                                cx + pColBreakdown - 8f,
+                                breakdownStartY + lineIdx * lineHeight,
+                                totalBreakdownPaint
+                            )
+                        }
+                    }
+
+                    is ActivityFinancePdfBlock.ExpensesTableHeader -> {
+                        val h = block.height
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, thBgPaint)
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, borderPaint)
+
+                        var cx = rightMargin
+                        cx -= eColNum
+                        canvas.drawText("#", cx + eColNum / 2f, y + 16f, thTextPaint)
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= eColDesc
+                        thTextPaint.textAlign = Paint.Align.RIGHT
+                        canvas.drawText("الوصف", cx + eColDesc - 8f, y + 16f, thTextPaint)
+                        thTextPaint.textAlign = Paint.Align.CENTER
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= eColCat
+                        canvas.drawText("التصنيف", cx + eColCat / 2f, y + 16f, thTextPaint)
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= eColAmount
+                        canvas.drawText("المبلغ", cx + eColAmount / 2f, y + 16f, thTextPaint)
+                    }
+
+                    is ActivityFinancePdfBlock.ExpensesTableRow -> {
+                        val h = block.rowHeight
+                        val rowBg = Paint().apply {
+                            color = if (block.index % 2 == 1) Color.WHITE else Color.rgb(249, 250, 249)
+                            style = Paint.Style.FILL
+                        }
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, rowBg)
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, borderPaint)
+
+                        var cx = rightMargin
+                        cx -= eColNum
+                        canvas.drawText("${block.index}", cx + eColNum / 2f, y + h / 2f + 3f, rowTextCenterPaint)
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= eColDesc
+                        val descStartY = y + (h - (block.descLines.size - 1) * lineHeight) / 2f + 3f
+                        block.descLines.forEachIndexed { lineIdx, line ->
+                            canvas.drawText(line, cx + eColDesc - 8f, descStartY + lineIdx * lineHeight, rowTextRightPaint)
+                        }
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= eColCat
+                        canvas.drawText(
+                            truncateText(block.categoryLabel, eColCat - 12f, rowTextCenterPaint),
+                            cx + eColCat / 2f,
+                            y + h / 2f + 3f,
+                            rowTextCenterPaint
+                        )
+                        canvas.drawLine(cx, y, cx, y + h, borderPaint)
+
+                        cx -= eColAmount
+                        val amtPaint = Paint(rowTextCenterPaint).apply {
+                            color = expenseRed
+                            typeface = cairoBold
+                        }
+                        canvas.drawText("${block.amount} دج", cx + eColAmount / 2f, y + h / 2f + 3f, amtPaint)
+                    }
+
+                    is ActivityFinancePdfBlock.ExpensesTableTotal -> {
+                        val h = block.height
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, totalBgPaint)
+                        canvas.drawRect(leftMargin, y, rightMargin, y + h, borderPaint)
+
+                        val labelColLeft = rightMargin - (eColNum + eColDesc + eColCat)
+                        val totalLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = darkGreen
+                            textSize = 9.5f
+                            typeface = cairoBold
+                            textAlign = Paint.Align.RIGHT
+                        }
+                        canvas.drawText("الإجمالي", rightMargin - 8f, y + 16f, totalLabelPaint)
+                        canvas.drawLine(labelColLeft, y, labelColLeft, y + h, borderPaint)
+
+                        val amtPaint = Paint(rowTextCenterPaint).apply {
+                            color = expenseRed
+                            textSize = 9.5f
+                            typeface = cairoBold
+                        }
+                        canvas.drawText("${block.totalAmount} دج", leftMargin + eColAmount / 2f, y + 16f, amtPaint)
+                    }
+
+                    is ActivityFinancePdfBlock.Gap -> {}
+                }
+                y += block.height
+            }
+
+            drawScoutPdfFooter(
+                canvas = canvas,
+                pageWidth = pageWidth,
+                pageHeight = pageHeight,
+                currentPage = pageNumber,
+                totalPages = totalPages,
+                cairoFont = cairoFont,
+                terms = terms
+            )
+
+            pdfDocument.finishPage(page)
+        }
+
+        val file = File(context.cacheDir, "activity_finance_${activity.id}_${System.currentTimeMillis()}.pdf")
+        FileOutputStream(file).use { outputStream ->
+            pdfDocument.writeTo(outputStream)
+        }
+        pdfDocument.close()
+        return file
+    }
+
+    fun shareAttendanceFormPdf(
+        file: File,
+        activityTitle: String,
+        context: Context,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ) {
+        sharePdfFile(
+            file = file,
+            subject = "استمارة تسجيل الحضور: $activityTitle — ${terms.groupName} ${terms.unitNameDefinite}",
+            chooserTitle = "طباعة / مشاركة استمارة الحضور كـ PDF",
+            context = context
+        )
+    }
+
+    /**
+     * استمارة تسجيل الحضور القابلة للطباعة (صفحة واحدة فقط - A4 عمودي)
+     */
+    fun exportAttendanceFormPdf(
+        activityTitle: String,
+        scouts: List<Scout>,
+        debtsMap: Map<String, Int>,
+        context: Context,
+        leaderNames: String = "",
+        activityDateMillis: Long? = null,
+        terms: CustomTerms = currentTerms ?: CustomTerms()
+    ): File {
+        val pdfDocument = PdfDocument()
+        val cairoFont = getCairoTypeface(context) ?: Typeface.DEFAULT
+        val cairoBold = getBoldCairoTypeface(cairoFont) ?: Typeface.DEFAULT_BOLD
+
+        // صفحة واحدة A4 عمودي (Portrait: 595 x 842) مع هوامش جانبية 20pt
+        val pageWidth = 595
+        val pageHeight = 842
+        val tableLeft = 20f
+        val tableRight = 575f
+
+        val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, 1).create()
+        val page = pdfDocument.startPage(pageInfo)
+        val canvas = page.canvas
+
+        // 1. الترويسة الدقيقة (TASK 1)
+        // الجانب الأيمن (محاذاة لليمين x = 565)
+        val rightTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = 11f
+            typeface = cairoBold
+            textAlign = Paint.Align.RIGHT
+        }
+        val rightSubPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = 10f
+            typeface = cairoFont
+            textAlign = Paint.Align.RIGHT
+        }
+        canvas.drawText("الكشافة الإسلامية الجزائرية", 565f, 35f, rightTitlePaint)
+        canvas.drawText("فوج محمد رحال عموشة", 565f, 50f, rightSubPaint)
+        canvas.drawText("سرب النُّجُب", 565f, 65f, rightSubPaint)
+
+        // المنتصف (محاذاة للوسط x = 297.5)
+        val maxLogoSize = 50f
+        val logoBitmap = getLogoBitmap(context)
+        if (logoBitmap != null) {
+            val origW = logoBitmap.width.toFloat()
+            val origH = logoBitmap.height.toFloat()
+            val aspectRatio = if (origH > 0f) origW / origH else 1f
+            val (drawW, drawH) = if (aspectRatio >= 1f) {
+                maxLogoSize to (maxLogoSize / aspectRatio)
+            } else {
+                (maxLogoSize * aspectRatio) to maxLogoSize
+            }
+            val logoX = (pageWidth - drawW) / 2f
+            val logoY = 30f
+            val logoPaint = Paint().apply {
+                isAntiAlias = true
+                isFilterBitmap = true
+                isDither = true
+            }
+            canvas.drawBitmap(logoBitmap, null, RectF(logoX, logoY, logoX + drawW, logoY + drawH), logoPaint)
+        }
+
+        val centerTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = 14f
+            typeface = cairoBold
+            textAlign = Paint.Align.CENTER
+        }
+        val centerActivityPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(27, 94, 32)
+            textSize = 11f
+            typeface = cairoBold
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText("استمارة تسجيل الحضور", 297.5f, 95f, centerTitlePaint)
+        canvas.drawText(truncateText("النشاط: $activityTitle", 535f, centerActivityPaint), 297.5f, 115f, centerActivityPaint)
+
+        // الجانب الأيسر (محاذاة RTL لليمين عند x = 160)
+        val leftHeaderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = 10f
+            typeface = cairoBold
+            textAlign = Paint.Align.RIGHT
+        }
+        val leftLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = 10f
+            typeface = cairoFont
+            textAlign = Paint.Align.RIGHT
+        }
+        canvas.drawText("القادة المسؤولون:", 160f, 35f, leftHeaderPaint)
+        canvas.drawText("\u200F1. ......................", 160f, 55f, leftLinePaint)
+        canvas.drawText("\u200F2. ......................", 160f, 70f, leftLinePaint)
+        canvas.drawText("\u200F3. ......................", 160f, 85f, leftLinePaint)
+        canvas.drawText("\u200F4. ......................", 160f, 100f, leftLinePaint)
+
+        // 2. أبعاد الجدول بدءاً من startY = 130 (عرض الجدول = 555pt من x = 20 إلى x = 575)
+        val startY = 130f
+        val availableHeight = pageHeight - startY - 40f // 672f
+        val headerHeight = 40f
+        val availableDataHeight = (availableHeight - headerHeight).coerceAtLeast(24f)
+        val rowHeight = (availableDataHeight / (maxOf(1, scouts.size) + 1).toFloat()).coerceAtMost(24f)
+
+        // عرض الأعمدة الخمسة بالضبط (المجموع = 555pt من اليمين إلى اليسار)
+        val colSerialWidth = 35f
+        val colNameWidth = 135f
+        val colDebtWidth = 45f
+        val colStatusWidth = 235f // 5 × 47f
+        val colAmountWidth = 105f
+        val subStatusWidth = colStatusWidth / 5f // 47f
+
+        val colSerialLeft = tableRight - colSerialWidth       // 540f
+        val colNameLeft = colSerialLeft - colNameWidth        // 405f
+        val colDebtLeft = colNameLeft - colDebtWidth          // 360f
+        val colStatusLeft = colDebtLeft - colStatusWidth      // 125f
+        val colAmountLeft = colStatusLeft - colAmountWidth    // 20f (= tableLeft)
+
+        val gridPaint = Paint().apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 1f
+        }
+        val headerBgPaint = Paint().apply {
+            color = Color.rgb(232, 245, 233)
+            style = Paint.Style.FILL
+        }
+        val evenRowBgPaint = Paint().apply {
+            color = Color.rgb(248, 249, 250)
+            style = Paint.Style.FILL
+        }
+        val checkboxFillPaint = Paint().apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+        }
+
+        // 3. رسم صف الترويسة
+        val headerBottom = startY + headerHeight
+        val midHeaderY = startY + 15f
+        canvas.drawRect(tableLeft, startY, tableRight, headerBottom, headerBgPaint)
+
+        val thCenterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = 9f
+            typeface = cairoBold
+            textAlign = Paint.Align.CENTER
+        }
+        val thRightPaint = Paint(thCenterPaint).apply {
+            textAlign = Paint.Align.RIGHT
+        }
+        val thFm = thCenterPaint.fontMetrics
+        val headerFullTextY = startY + headerHeight / 2f - (thFm.ascent + thFm.descent) / 2f
+
+        canvas.drawText("الرقم", tableRight - 6f, headerFullTextY, thRightPaint)
+        canvas.drawText("اسم الشبل", colSerialLeft - 6f, headerFullTextY, thRightPaint)
+
+        val debtHeaderPaint = Paint(thCenterPaint).apply {
+            textSize = 8f
+        }
+        val debtHeaderLines = wrapText("الدين السابق", debtHeaderPaint, colDebtWidth - 4f).ifEmpty { listOf("الدين السابق") }
+        val debtLineStep = 10.5f
+        val debtHeaderFm = debtHeaderPaint.fontMetrics
+        val debtTotalH = debtHeaderLines.size * debtLineStep
+        val debtStartY = startY + (headerHeight - debtTotalH) / 2f + debtLineStep / 2f - (debtHeaderFm.ascent + debtHeaderFm.descent) / 2f
+        debtHeaderLines.forEachIndexed { lineIdx, line ->
+            canvas.drawText(line, colDebtLeft + colDebtWidth / 2f, debtStartY + lineIdx * debtLineStep, debtHeaderPaint)
+        }
+
+        canvas.drawText("المبلغ", colAmountLeft + colAmountWidth / 2f, headerFullTextY, thCenterPaint)
+
+        val topTierTextY = startY + (midHeaderY - startY) / 2f - (thFm.ascent + thFm.descent) / 2f
+        canvas.drawText("حالة الحضور", colStatusLeft + colStatusWidth / 2f, topTierTextY, thCenterPaint)
+
+        val statuses = listOf("حاضر", "متأخر", "متأخر جداً", "غائب بعذر", "غائب بدون عذر")
+        val subThPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = 7f
+            typeface = cairoBold
+            textAlign = Paint.Align.CENTER
+        }
+        val subFm = subThPaint.fontMetrics
+        val subLineStep = 9.5f
+        val bottomTierHeight = headerBottom - midHeaderY
+
+        canvas.drawLine(colStatusLeft, midHeaderY, colDebtLeft, midHeaderY, gridPaint)
+
+        statuses.forEachIndexed { idx, label ->
+            val subRight = colDebtLeft - idx * subStatusWidth
+            val subLeft = subRight - subStatusWidth
+            val subCenterX = subLeft + subStatusWidth / 2f
+            val lines = wrapText(label, subThPaint, subStatusWidth - 4f).ifEmpty { listOf(label) }
+            val totalTextHeight = lines.size * subLineStep
+            val startBaselineY = midHeaderY + (bottomTierHeight - totalTextHeight) / 2f + subLineStep / 2f - (subFm.ascent + subFm.descent) / 2f
+            lines.forEachIndexed { lineIdx, line ->
+                canvas.drawText(line, subCenterX, startBaselineY + lineIdx * subLineStep, subThPaint)
+            }
+            if (idx > 0) {
+                canvas.drawLine(subRight, midHeaderY, subRight, headerBottom, gridPaint)
+            }
+        }
+
+        // حدود الترويسة
+        canvas.drawRect(tableLeft, startY, tableRight, headerBottom, gridPaint)
+        canvas.drawLine(colSerialLeft, startY, colSerialLeft, headerBottom, gridPaint)
+        canvas.drawLine(colNameLeft, startY, colNameLeft, headerBottom, gridPaint)
+        canvas.drawLine(colDebtLeft, startY, colDebtLeft, headerBottom, gridPaint)
+        canvas.drawLine(colStatusLeft, startY, colStatusLeft, headerBottom, gridPaint)
+
+        // 4. رسم صفوف الأشبال
+        val dataTextSize = (rowHeight * 0.50f).coerceIn(6.2f, 9.5f)
+        val serialPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = dataTextSize
+            typeface = cairoFont
+            textAlign = Paint.Align.RIGHT
+        }
+        val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = dataTextSize
+            typeface = cairoBold
+            textAlign = Paint.Align.RIGHT
+        }
+        val debtPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = dataTextSize
+            typeface = cairoFont
+            textAlign = Paint.Align.CENTER
+        }
+        val rowFm = namePaint.fontMetrics
+        val boxSize = (rowHeight * 0.62f).coerceIn(6.5f, 12f)
+        val boxHalf = boxSize / 2f
+
+        val scoutRowsCount = if (scouts.isEmpty()) 1 else scouts.size
+        if (scouts.isEmpty()) {
+            val rowTop = headerBottom
+            val rowBottom = rowTop + rowHeight
+            canvas.drawRect(tableLeft, rowTop, tableRight, rowBottom, gridPaint)
+            val emptyY = rowTop + rowHeight / 2f - (rowFm.ascent + rowFm.descent) / 2f
+            canvas.drawText("لا يوجد أشبال نشطون مسجلون حالياً", pageWidth / 2f, emptyY, debtPaint)
+        } else {
+            scouts.forEachIndexed { index, scout ->
+                val rowTop = headerBottom + index * rowHeight
+                val rowBottom = rowTop + rowHeight
+                val centerY = rowTop + rowHeight / 2f
+                val textY = centerY - (rowFm.ascent + rowFm.descent) / 2f
+
+                if (index % 2 == 1) {
+                    canvas.drawRect(tableLeft, rowTop, tableRight, rowBottom, evenRowBgPaint)
+                }
+
+                // 1) الرقم
+                canvas.drawText("${index + 1}", tableRight - 6f, textY, serialPaint)
+
+                // 2) اسم الشبل
+                val fullName = scout.fullName.ifBlank { "${scout.name} ${scout.surname}".trim() }.ifBlank { "شبل" }
+                val safeName = truncateText(fullName, colNameWidth - 10f, namePaint)
+                canvas.drawText(safeName, colSerialLeft - 6f, textY, namePaint)
+
+                // 3) الدين السابق
+                val prevDebt = debtsMap[scout.id] ?: 0
+                val debtStr = if (prevDebt > 0) "$prevDebt" else "-"
+                debtPaint.typeface = if (prevDebt > 0) cairoBold else cairoFont
+                canvas.drawText(debtStr, colDebtLeft + colDebtWidth / 2f, textY, debtPaint)
+
+                // 4) حالة الحضور: 5 مربعات اختيار فارغة جنباً إلى جنب
+                for (statusIdx in 0 until 5) {
+                    val subRight = colDebtLeft - statusIdx * subStatusWidth
+                    val subLeft = subRight - subStatusWidth
+                    val boxCenterX = subLeft + subStatusWidth / 2f
+                    val rectLeft = boxCenterX - boxHalf
+                    val rectTop = centerY - boxHalf
+                    val rectRight = boxCenterX + boxHalf
+                    val rectBottom = centerY + boxHalf
+                    canvas.drawRect(rectLeft, rectTop, rectRight, rectBottom, checkboxFillPaint)
+                    canvas.drawRect(rectLeft, rectTop, rectRight, rectBottom, gridPaint)
+                    if (statusIdx > 0) {
+                        canvas.drawLine(subRight, rowTop, subRight, rowBottom, gridPaint)
+                    }
+                }
+
+                // 5) المبلغ: خلية فارغة تماماً بدون أي مستطيل داخلي للكتابة اليدوية
+
+                // حدود الصف وخطوط الأعمدة
+                canvas.drawRect(tableLeft, rowTop, tableRight, rowBottom, gridPaint)
+                canvas.drawLine(colSerialLeft, rowTop, colSerialLeft, rowBottom, gridPaint)
+                canvas.drawLine(colNameLeft, rowTop, colNameLeft, rowBottom, gridPaint)
+                canvas.drawLine(colDebtLeft, rowTop, colDebtLeft, rowBottom, gridPaint)
+                canvas.drawLine(colStatusLeft, rowTop, colStatusLeft, rowBottom, gridPaint)
+            }
+        }
+
+        // 5. صف الإجمالي النهائي: دمج الأعمدة الـ 4 الأولى وترك عمود المبلغ فارغاً تماماً
+        val totalRowTop = headerBottom + scoutRowsCount * rowHeight
+        val totalRowBottom = totalRowTop + rowHeight
+        canvas.drawRect(colStatusLeft, totalRowTop, tableRight, totalRowBottom, headerBgPaint)
+
+        val totalLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = minOf(12f, (rowHeight * 0.65f).coerceAtLeast(8f))
+            typeface = cairoBold
+            textAlign = Paint.Align.RIGHT
+        }
+        val totalFm = totalLabelPaint.fontMetrics
+        val totalTextY = totalRowTop + rowHeight / 2f - (totalFm.ascent + totalFm.descent) / 2f
+        canvas.drawText("إجمالي المبلغ المستلم:", tableRight - 10f, totalTextY, totalLabelPaint)
+
+        // حدود صف الإجمالي والفاصل بين الخلية المدمجة وعمود المبلغ (بدون أي مستطيل داخلي في عمود المبلغ)
+        canvas.drawRect(tableLeft, totalRowTop, tableRight, totalRowBottom, gridPaint)
+        canvas.drawLine(colStatusLeft, totalRowTop, colStatusLeft, totalRowBottom, gridPaint)
+
+        // تذييل خفيف أسفل الهامش
+        val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.DKGRAY
+            textSize = 8f
+            typeface = cairoFont
+            textAlign = Paint.Align.CENTER
+        }
+        canvas.drawText(
+            "صفحة 1 من 1 — ${terms.groupName} ${terms.unitNameDefinite}",
+            pageWidth / 2f,
+            pageHeight - 12f,
+            footerPaint
+        )
+
+        pdfDocument.finishPage(page)
+
+        val file = File(context.cacheDir, "attendance_form_${System.currentTimeMillis()}.pdf")
+        FileOutputStream(file).use { outputStream ->
+            pdfDocument.writeTo(outputStream)
+        }
+        pdfDocument.close()
+        return file
+    }
 }
+
 
 

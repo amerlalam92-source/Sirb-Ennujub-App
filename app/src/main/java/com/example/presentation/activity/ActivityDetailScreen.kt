@@ -302,7 +302,7 @@ fun ActivityDetailScreen(
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = activity.activityType.arabicLabel,
+                                        text = activity.activityType.displayLabel(terms),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -360,7 +360,7 @@ fun ActivityDetailScreen(
                         val listHeaderSubtitle = if (activity.activityType == ActivityType.TRAINING_MEETING && meetingNum != null && meetingNum > 0) {
                             "الاجتماع التدريبي رقم $meetingNum — $dateFormatted"
                         } else {
-                            "${activity.activityType.arabicLabel} — $dateFormatted"
+                            "${activity.activityType.displayLabel(terms)} — $dateFormatted"
                         }
 
                         val presentCount = attendanceRows.count { it.attendance?.attendanceStatus?.isPresentOrLate == true }
@@ -1005,11 +1005,12 @@ fun ActivityDetailScreen(
  * إنشاء ملخص عربي أنيق لمشاركة النشاط
  */
 private fun buildActivityShareText(activity: Activity, terms: com.example.domain.settings.CustomTerms? = null): String {
+    val resolvedTerms = terms ?: com.example.domain.settings.CustomTerms()
     val groupHeader = if (terms != null) "${terms.groupName} ${terms.unitNameDefinite}" else "سرب النُّجُب"
     return buildString {
         append("⚜️ $groupHeader — فوج محمد رحال ⚜️\n\n")
         append("📌 النشاط: ${activity.title}\n")
-        append("🏷️ النوع: ${activity.activityType.arabicLabel}\n")
+        append("🏷️ النوع: ${activity.activityType.displayLabel(resolvedTerms)}\n")
         append("📅 التاريخ: ${ActivityFormatters.formatDateRange(activity)}\n")
         if (activity.startTime.isNotBlank()) {
             append("⏰ التوقيت: ${ActivityFormatters.formatTimeArabic(activity.startTime)}")

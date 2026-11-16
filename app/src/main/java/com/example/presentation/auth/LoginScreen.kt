@@ -4,8 +4,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import com.example.presentation.common.AppLogo
+import com.example.presentation.common.LocalAppTerms
+import com.example.presentation.common.replaceCustomWords
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -97,6 +98,7 @@ fun LoginScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val terms = LocalAppTerms.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
     var passwordVisible by remember { mutableStateOf(false) }
@@ -136,24 +138,40 @@ fun LoginScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                // أيقونة وشعار الفوج الكشفي
+                // أيقونة وشعار الوحدة الكشفية
                 Box(
                     modifier = Modifier
                         .size(115.dp)
                         .clip(CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    AppLogo(
-                        contentDescription = stringResource(id = R.string.app_name),
-                        modifier = Modifier.size(115.dp)
-                    )
+                    if (uiState.isLogoLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("login_logo_loading"),
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 3.dp
+                        )
+                    } else {
+                        AppLogo(
+                            logoBase64 = uiState.logoBase64,
+                            contentDescription = replaceCustomWords(
+                                "${terms.groupName} ${terms.unitNameDefinite}",
+                                terms
+                            ),
+                            modifier = Modifier
+                                .size(115.dp)
+                                .testTag("login_app_logo")
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // عنوان الشاشة
                 Text(
-                    text = stringResource(id = R.string.login_title),
+                    text = replaceCustomWords(stringResource(id = R.string.login_title), terms),
                     style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.primary,
                     textAlign = TextAlign.Center
@@ -163,7 +181,10 @@ fun LoginScreen(
 
                 // النص التوضيحي
                 Text(
-                    text = stringResource(id = R.string.login_subtitle),
+                    text = replaceCustomWords(
+                        stringResource(id = R.string.login_subtitle, terms.groupNameDefinite),
+                        terms
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
@@ -415,7 +436,14 @@ fun LoginScreen(
 
                 // ملاحظة الأمان
                 Text(
-                    text = stringResource(id = R.string.login_scout_leaders_note),
+                    text = replaceCustomWords(
+                        stringResource(
+                            id = R.string.login_scout_leaders_note,
+                            terms.groupName,
+                            terms.unitNameDefinite
+                        ),
+                        terms
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center

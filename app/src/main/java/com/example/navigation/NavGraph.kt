@@ -135,8 +135,8 @@ object Routes {
     const val FINANCE_EXPENSES = "finance_expenses"
     const val FINANCE_DONATIONS = "finance_donations"
     const val FINANCE_REPORTS = "finance_reports"
+    const val FINANCE_ACTIVITY_REPORTS = "finance_activity_reports"
     const val SCOUT_STATEMENTS_PICKER = "scout_statements_picker"
-    const val SCOUT_STATEMENTS_SHARE = "scout_statements_share"
 
     // مسارات تقييم الأشبال (Dynamic Evaluation System)
     const val EVALUATION_SCREEN = "evaluation_screen"
@@ -1308,6 +1308,26 @@ fun ScoutNavGraph(
                 },
                 onNavigateToScoutPicker = {
                     navController.navigate(Routes.SCOUT_STATEMENTS_PICKER)
+                },
+                onNavigateToActivityReports = {
+                    navController.navigate(Routes.FINANCE_ACTIVITY_REPORTS)
+                }
+            )
+        }
+
+        composable(route = Routes.FINANCE_ACTIVITY_REPORTS) {
+            val activityReportsViewModel: com.example.presentation.finance.reports.ActivityFinancialReportsViewModel = viewModel(
+                factory = com.example.presentation.finance.reports.ActivityFinancialReportsViewModel.Factory(
+                    financeRepository = appContainer.financeRepository,
+                    scoutRepository = appContainer.scoutRepository,
+                    activityRepository = appContainer.activityRepository,
+                    termsRepository = appContainer.termsRepository
+                )
+            )
+            com.example.presentation.finance.reports.ActivityFinancialReportsScreen(
+                viewModel = activityReportsViewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
                 }
             )
         }
@@ -1325,29 +1345,6 @@ fun ScoutNavGraph(
                 )
             )
             com.example.presentation.finance.reports.ScoutStatementsPickerScreen(
-                viewModel = financeReportsViewModel,
-                onNavigateBack = {
-                    navController.popBackStack()
-                },
-                onNavigateToShare = {
-                    navController.navigate(Routes.SCOUT_STATEMENTS_SHARE)
-                }
-            )
-        }
-
-        composable(route = Routes.SCOUT_STATEMENTS_SHARE) { backStackEntry ->
-            val parentEntry = remember(backStackEntry) {
-                navController.getBackStackEntry(Routes.FINANCE_REPORTS)
-            }
-            val financeReportsViewModel: com.example.presentation.finance.reports.FinanceReportsViewModel = viewModel(
-                viewModelStoreOwner = parentEntry,
-                factory = com.example.presentation.finance.reports.FinanceReportsViewModel.Factory(
-                    financeRepository = appContainer.financeRepository,
-                    scoutRepository = appContainer.scoutRepository,
-                    termsRepository = appContainer.termsRepository
-                )
-            )
-            com.example.presentation.finance.reports.ScoutStatementsShareScreen(
                 viewModel = financeReportsViewModel,
                 onNavigateBack = {
                     navController.popBackStack()

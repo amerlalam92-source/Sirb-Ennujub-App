@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.domain.activity.ActivityType
+import com.example.presentation.common.LocalAppTerms
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -94,6 +95,7 @@ fun ActivityFormScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val formState by viewModel.formUiState.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
 
@@ -234,13 +236,13 @@ fun ActivityFormScreen(
                             onExpandedChange = { typeDropdownExpanded = !typeDropdownExpanded }
                         ) {
                             OutlinedTextField(
-                                value = ActivityType.fromKey(formState.type).arabicLabel,
+                                value = ActivityType.fromKey(formState.type).displayLabel(terms),
                                 onValueChange = {},
                                 readOnly = true,
                                 label = { Text(stringResource(id = R.string.activity_type_label)) },
                                 leadingIcon = {
                                     Icon(
-                                        imageVector = Icons.Default.Label,
+                                        imageVector = ActivityFormatters.getIconForType(ActivityType.fromKey(formState.type)),
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.primary
                                     )
@@ -264,7 +266,7 @@ fun ActivityFormScreen(
                             ) {
                                 ActivityType.entries.forEach { item ->
                                     DropdownMenuItem(
-                                        text = { Text(item.arabicLabel) },
+                                        text = { Text(item.displayLabel(terms)) },
                                         leadingIcon = {
                                             Icon(
                                                 imageVector = ActivityFormatters.getIconForType(item),

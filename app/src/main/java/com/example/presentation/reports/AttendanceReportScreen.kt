@@ -60,6 +60,7 @@ import com.example.R
 import com.example.domain.attendance.AttendanceStatus
 import com.example.presentation.common.AppLocale
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -77,6 +78,7 @@ fun AttendanceReportScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isExportingPdf by viewModel.isExportingPdf.collectAsStateWithLifecycle()
+    val terms = LocalAppTerms.current
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -242,7 +244,7 @@ fun AttendanceReportScreen(
                                                     )
                                                     Spacer(modifier = Modifier.height(1.dp))
                                                     Text(
-                                                        text = activity.activityType.arabicLabel,
+                                                        text = activity.activityType.displayLabel(terms),
                                                         style = MaterialTheme.typography.labelSmall.copy(
                                                             fontSize = 9.sp,
                                                             color = MaterialTheme.colorScheme.primary

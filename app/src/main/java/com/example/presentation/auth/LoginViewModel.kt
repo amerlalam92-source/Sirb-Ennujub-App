@@ -1,16 +1,20 @@
 package com.example.presentation.auth
 
+import android.content.Context
 import android.util.Patterns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.R
+import com.example.data.settings.LocalSettingsCache
 import com.example.domain.auth.AuthRepository
+import com.example.domain.settings.BrandingRepository
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -20,11 +24,70 @@ import kotlinx.coroutines.launch
  */
 class LoginViewModel(
     private val authRepository: AuthRepository,
-    private val googleSignInHelper: com.example.data.auth.GoogleSignInHelper
+    private val googleSignInHelper: com.example.data.auth.GoogleSignInHelper,
+    private val brandingRepository: BrandingRepository? = null,
+    context: Context? = null
 ) : ViewModel() {
+
+    private val appContext: Context? = context?.applicationContext
 
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
+
+    init {
+        observeBrandingLogo()
+    }
+
+    private fun observeBrandingLogo() {
+        val cachedLogo = appContext?.let { LocalSettingsCache.getLogo(it) }
+        if (!cachedLogo.isNullOrBlank()) {
+            _uiState.update {
+                it.copy(
+                    logoBase64 = cachedLogo,
+                    isLogoLoading = false
+                )
+            }
+        }
+
+        val repo = brandingRepository
+        if (repo == null) {
+            _uiState.update { it.copy(isLogoLoading = false) }
+            return
+        }
+        viewModelScope.launch {
+            repo.observeBranding()
+                .catch {
+                    _uiState.update { it.copy(isLogoLoading = false) }
+                }
+                .collect { settings ->
+                    val remoteLogo = settings.logoBase64
+                    if (!remoteLogo.isNullOrBlank()) {
+                        appContext?.let { LocalSettingsCache.saveLogo(it, remoteLogo) }
+                        _uiState.update {
+                            it.copy(
+                                logoBase64 = remoteLogo,
+                                isLogoLoading = false
+                            )
+                        }
+                    } else if (authRepository.currentUser != null) {
+                        appContext?.let { LocalSettingsCache.saveLogo(it, null) }
+                        _uiState.update {
+                            it.copy(
+                                logoBase64 = null,
+                                isLogoLoading = false
+                            )
+                        }
+                    } else {
+                        _uiState.update {
+                            it.copy(
+                                logoBase64 = it.logoBase64 ?: cachedLogo,
+                                isLogoLoading = false
+                            )
+                        }
+                    }
+                }
+        }
+    }
 
     // تحديث حقل البريد الإلكتروني
     fun onEmailChanged(email: String) {
@@ -171,7 +234,12 @@ class LoginViewModel(
     // تسجيل الخروج وإعادة تعيين الحالة
     fun logout() {
         authRepository.logout()
-        _uiState.update { LoginUiState() }
+        _uiState.update {
+            LoginUiState(
+                isLogoLoading = it.isLogoLoading,
+                logoBase64 = it.logoBase64
+            )
+        }
     }
 
     // إعادة ضبط علم النجاح بعد التنقل
@@ -185,11 +253,13 @@ class LoginViewModel(
 
     class Factory(
         private val repository: AuthRepository,
-        private val googleSignInHelper: com.example.data.auth.GoogleSignInHelper
+        private val googleSignInHelper: com.example.data.auth.GoogleSignInHelper,
+        private val brandingRepository: BrandingRepository? = null,
+        private val context: Context? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return LoginViewModel(repository, googleSignInHelper) as T
+            return LoginViewModel(repository, googleSignInHelper, brandingRepository, context) as T
         }
     }
 }

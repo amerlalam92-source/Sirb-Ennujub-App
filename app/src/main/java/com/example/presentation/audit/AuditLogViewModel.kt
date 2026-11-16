@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.domain.auth.AuthRepository
+import com.example.domain.auth.Leader
 import com.example.domain.log.ActivityLog
 import com.example.domain.log.ActivityLogRepository
 import com.example.presentation.reports.PdfExporter
@@ -13,6 +14,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
@@ -42,27 +46,44 @@ class AuditLogViewModel(
 
     private fun loadLogs() {
         viewModelScope.launch {
-            activityLogRepository.observeLogs()
+            val approvedLeadersFlow = authRepository.observeAllLeaders()
+                .map { leaders ->
+                    leaders
+                        .filter { it.status == "approved" && it.uid.isNotBlank() }
+                        .sortedBy { it.fullName.trim() }
+                }
+                .catch { emit(emptyList()) }
+                .onStart { emit(emptyList()) }
+
+            combine(
+                activityLogRepository.observeLogs(),
+                approvedLeadersFlow
+            ) { logs, approvedLeaders ->
+                logs to approvedLeaders
+            }
                 .catch { e ->
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         errorMessage = e.localizedMessage ?: "حدث خطأ أثناء تحميل سجل العمليات"
                     )
                 }
-                .collect { logs ->
-                    val leaders = logs.map { it.userName.ifBlank { "قائد كشفي" } }.distinct().sorted()
+                .collect { (logs, approvedLeaders) ->
                     val currentState = _uiState.value
+                    val validSelectedLeader = currentState.selectedLeader?.let { selected ->
+                        approvedLeaders.find { it.uid == selected.uid }
+                    }
                     val filtered = applyFilters(
                         logs = logs,
                         dateFilter = currentState.selectedDateFilter,
                         actionFilter = currentState.selectedActionFilter,
-                        leader = currentState.selectedLeader
+                        leader = validSelectedLeader
                     )
                     _uiState.value = currentState.copy(
                         isLoading = false,
                         allLogs = logs,
                         filteredLogs = filtered,
-                        availableLeaders = leaders,
+                        selectedLeader = validSelectedLeader,
+                        availableLeaders = approvedLeaders,
                         errorMessage = null
                     )
                 }
@@ -97,7 +118,7 @@ class AuditLogViewModel(
         )
     }
 
-    fun setLeaderFilter(leader: String?) {
+    fun setLeaderFilter(leader: Leader?) {
         val currentState = _uiState.value
         val filtered = applyFilters(
             logs = currentState.allLogs,
@@ -141,7 +162,7 @@ class AuditLogViewModel(
         logs: List<ActivityLog>,
         dateFilter: DateFilter,
         actionFilter: ActionFilter,
-        leader: String?
+        leader: Leader?
     ): List<ActivityLog> {
         val now = System.currentTimeMillis()
         val calendar = Calendar.getInstance()
@@ -185,8 +206,8 @@ class AuditLogViewModel(
                 ActionFilter.DELETE -> actionLower in listOf("delete", "remove", "revoke", "cancel")
             }
 
-            // فلتر القائد
-            val matchesLeader = leader == null || log.userName.equals(leader, ignoreCase = true)
+            // فلتر القائد بالمعرف الفريد (UID)
+            val matchesLeader = leader == null || log.userId == leader.uid
 
             matchesDate && matchesAction && matchesLeader
         }

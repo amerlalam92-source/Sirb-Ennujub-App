@@ -9,6 +9,7 @@ data class CustomTerms(
     val groupNameDefinite: String = "السرب",
     val unitName: String = "النجب",
     val unitNameDefinite: String = "النجب",
+    val patrolName: String = "السداسية",
     val customWords: Map<String, String> = emptyMap() // Key: original, Value: replacement
 )
 

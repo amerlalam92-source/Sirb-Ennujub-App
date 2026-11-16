@@ -1,22 +1,22 @@
 <resources>
     <!-- اسم التطبيق والفوج الكشفي -->
-    <string name="app_name">سرب النُّجُب</string>
+    <string name="app_name">إدارة الوحدة الكشفية</string>
     <string name="scout_group_name">فوج محمد رحال</string>
 
     <!-- شاشة البداية (Splash) -->
     <string name="splash_title">سرب النُّجُب</string>
-    <string name="splash_subtitle">فوج محمد رحال الكشفي</string>
+    <string name="splash_subtitle">فوج محمد رحال عموشة</string>
 
     <!-- شاشة تسجيل الدخول (Login) -->
     <string name="login_title">بوابة القادة</string>
-    <string name="login_subtitle">سجل دخولك لإدارة السرب والأنشطة</string>
+    <string name="login_subtitle">سجل دخولك لإدارة %1$s والأنشطة</string>
     <string name="email_label">البريد الإلكتروني</string>
     <string name="password_label">كلمة المرور</string>
     <string name="show_password">إظهار كلمة المرور</string>
     <string name="hide_password">إخفاء كلمة المرور</string>
     <string name="login_button">تسجيل الدخول</string>
     <string name="dont_have_account">ليس لديك حساب؟ أنشئ حسابًا جديدًا</string>
-    <string name="login_scout_leaders_note">هذا التطبيق مخصص لقادة سرب النُّجُب المعتمدين فقط.</string>
+    <string name="login_scout_leaders_note">هذا التطبيق مخصص لقادة %1$s %2$s المعتمدين فقط.</string>
 
     <!-- شاشة إنشاء حساب جديد (Sign Up) -->
     <string name="signup_title">إنشاء حساب قائد</string>
@@ -621,6 +621,8 @@
     <string name="finance_total_expenses_label">المصاريف الكلية</string>
     <string name="finance_outstanding_debt_label">الديون المتبقية</string>
     <string name="finance_month_section">هذا الشهر</string>
+    <string name="finance_monthly_income_label">واردات الشهر</string>
+    <string name="finance_monthly_expenses_label">مصاريف الشهر</string>
     <string name="finance_month_summary_format">%1$d واردات • %2$d مصاريف</string>
     <string name="finance_currency">دج</string>
 
@@ -656,11 +658,9 @@
     <string name="report_placeholder_sub">قيد التطوير</string>
     <string name="scout_statements_picker_title">تحديد الأشبال</string>
     <string name="action_select_all">تحديد الكل</string>
-    <string name="action_deselect_all">إلغاء الكل</string>
+    <string name="action_deselect_all">إلغاء تحديد الكل</string>
     <string name="action_export_statements_format">تصدير (%1$d) كشف</string>
-    <string name="scout_statements_share_title">مشاركة الكشوفات</string>
     <string name="action_share">مشاركة</string>
-    <string name="statements_saved_to_downloads_note">تم حفظ جميع الملفات في مجلد التنزيلات.</string>
     <string name="filter_debtors">المدينون فقط</string>
     <string name="month_picker_title">اختر الشهر والسنة</string>
     <string name="month_picker_month">الشهر</string>
@@ -1077,11 +1077,15 @@
     <string name="terms_group_singular_def">السرب (المعرفة)</string>
     <string name="terms_unit_name">النجب (النكرة)</string>
     <string name="terms_unit_name_def">النجب (المعرفة)</string>
+    <string name="terms_patrol_name">السداسية</string>
+    <string name="terms_patrol_name_hint">مثال: السداسية، الطليعة، الرهط</string>
     <string name="terms_custom_words">كلمات إضافية مخصصة</string>
     <string name="terms_original_word">الكلمة الأصلية</string>
     <string name="terms_replacement_word">الكلمة البديلة</string>
     <string name="action_add_word">إضافة</string>
     <string name="action_save_terms">حفظ الكلمات</string>
+    <string name="action_reset_default_terms">إعادة الكلمات الافتراضية</string>
+    <string name="confirm_reset_default_terms">هل أنت متأكد من إعادة جميع الكلمات إلى حالتها الافتراضية؟</string>
     <string name="terms_saved_toast">تم حفظ الكلمات بنجاح</string>
 
     <!-- التحصيل المالي في استمارة الحضور -->
@@ -1096,6 +1100,7 @@
     <string name="label_previous_debt">الديون السابقة</string>
     <string name="label_today_sub">اشتراك اليوم</string>
     <string name="label_remaining_debt">الديون المتبقية</string>
+    <string name="label_advance_payment_credit">دفعة مقدمة (رصيد)</string>
     <string name="label_required_format">المطلوب: %1$d دج</string>
     <string name="label_paid_format">المحصل: %1$d دج</string>
     <string name="finance_total_paid_label">إجمالي المدفوع:</string>
@@ -1108,6 +1113,9 @@
     <string name="attendance_search_scout_desc">بحث عن شبل للانتقال إليه</string>
     <string name="attendance_search_current_badge">الحالي</string>
     <string name="attendance_search_close_desc">إغلاق البحث</string>
+    <string name="attendance_print_form_desc">طباعة استمارة الحضور</string>
+    <string name="attendance_print_form_error">تعذر إنشاء استمارة الحضور</string>
+    <string name="attendance_pick_activity_to_print_title">اختر النشاط لطباعة الاستمارة</string>
 </resources>
 
 

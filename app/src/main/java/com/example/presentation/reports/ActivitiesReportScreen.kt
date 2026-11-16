@@ -57,6 +57,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.presentation.common.AppLocale
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -74,6 +75,7 @@ fun ActivitiesReportScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val isExportingPdf by viewModel.isExportingPdf.collectAsStateWithLifecycle()
+    val terms = LocalAppTerms.current
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -254,7 +256,7 @@ fun ActivitiesReportScreen(
 
                                         // نوع النشاط
                                         ReportTableCell(
-                                            text = activity.activityType.arabicLabel,
+                                            text = activity.activityType.displayLabel(terms),
                                             width = 90.dp,
                                             isHeader = false
                                         )

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.LocalActivity
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonSearch
@@ -73,6 +74,7 @@ fun FinanceReportsScreen(
     viewModel: FinanceReportsViewModel,
     onNavigateBack: () -> Unit,
     onNavigateToScoutPicker: () -> Unit = {},
+    onNavigateToActivityReports: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val terms = LocalAppTerms.current
@@ -90,7 +92,6 @@ fun FinanceReportsScreen(
                     snackbarHostState.showSnackbar(event.message)
                 }
                 is FinanceReportsEvent.ExportSuccess -> {}
-                is FinanceReportsEvent.MultipleExportSuccess -> {}
             }
         }
     }
@@ -166,6 +167,21 @@ fun FinanceReportsScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                }
+
+                // Card 0: التقارير المالية للأنشطة
+                item {
+                    ReportActionCard(
+                        title = "التقارير المالية للأنشطة",
+                        subtitle = "تصدير التقرير المالي التفصيلي لكل نشاط",
+                        icon = Icons.Default.LocalActivity,
+                        iconContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        iconContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        badgeText = "PDF",
+                        enabled = !uiState.isExporting,
+                        onClick = onNavigateToActivityReports,
+                        testTag = "report_card_activity_financial"
                     )
                 }
 

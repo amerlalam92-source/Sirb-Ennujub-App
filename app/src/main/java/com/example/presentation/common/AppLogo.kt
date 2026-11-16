@@ -20,7 +20,7 @@ val LocalAppLogo = staticCompositionLocalOf<String?> { null }
 /**
  * مكون لعرض شعار التطبيق ديناميكياً
  * يقرأ الشعار المخصص من [LocalAppLogo] أو المعامل [logoBase64]،
- * وفي حال عدم توفره أو حدوث خطأ في فك التشفير يستخدم الشعار الافتراضي من الموارد [R.drawable.ennujub_logo].
+ * وفي حال عدم توفره أو حدوث خطأ في فك التشفير يستخدم الشعار الافتراضي من الموارد [R.drawable.app_icon].
  */
 @Composable
 fun AppLogo(
@@ -30,28 +30,28 @@ fun AppLogo(
     contentScale: ContentScale = ContentScale.Fit
 ) {
     val base64 = logoBase64 ?: LocalAppLogo.current
-    val bitmap = remember(base64) {
+    val imageBitmap = remember(base64) {
         if (base64.isNullOrBlank()) null
         else {
             try {
                 val bytes = Base64.decode(base64, Base64.DEFAULT)
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
             } catch (_: Throwable) {
                 null
             }
         }
     }
 
-    if (bitmap != null) {
+    if (imageBitmap != null) {
         Image(
-            bitmap = bitmap.asImageBitmap(),
+            bitmap = imageBitmap,
             contentDescription = contentDescription,
             modifier = modifier,
             contentScale = contentScale
         )
     } else {
         Image(
-            painter = painterResource(id = R.drawable.ennujub_logo),
+            painter = painterResource(id = R.drawable.app_icon),
             contentDescription = contentDescription,
             modifier = modifier,
             contentScale = contentScale

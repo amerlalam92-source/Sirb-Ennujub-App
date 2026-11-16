@@ -2,6 +2,10 @@ package com.example.data.auth
 
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -12,6 +16,15 @@ class FirebaseAuthDataSource(
 ) {
     val currentUser: FirebaseUser?
         get() = auth.currentUser
+
+    fun observeAuthState(): Flow<FirebaseUser?> = callbackFlow {
+        val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
+            trySend(firebaseAuth.currentUser)
+        }
+        trySend(auth.currentUser)
+        auth.addAuthStateListener(listener)
+        awaitClose { auth.removeAuthStateListener(listener) }
+    }.distinctUntilChanged { old, new -> old?.uid == new?.uid }
 
     suspend fun signInWithEmail(email: String, password: String): Result<FirebaseUser> {
         return try {

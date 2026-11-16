@@ -15,10 +15,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.settings.LocalSettingsCache
 import com.example.domain.preferences.ThemeMode
 import com.example.navigation.ScoutNavGraph
 import com.example.presentation.auth.LoginViewModel
@@ -26,6 +28,7 @@ import com.example.presentation.common.LocalAppDensity
 import com.example.presentation.common.LocalOnZoomClick
 import com.example.presentation.common.UiScaleDialog
 import com.example.ui.theme.ScoutTheme
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -53,7 +56,8 @@ class MainActivity : ComponentActivity() {
         val appContainer = (application as ScoutApplication).container
 
         setContent {
-            val uiScale by appContainer.uiScalePreferences.getUiScale()
+            val uiScaleFlow = remember(appContainer) { appContainer.uiScalePreferences.getUiScale() }
+            val uiScale by uiScaleFlow
                 .collectAsState(initial = appContainer.uiScalePreferences.getCurrentUiScale())
             var showZoomDialog by remember { mutableStateOf(false) }
             val scope = rememberCoroutineScope()
@@ -66,18 +70,54 @@ class MainActivity : ComponentActivity() {
                 fontScale = 1.0f // Always 1.0f
             )
 
-            val brandingSettings by appContainer.brandingRepository.observeBranding()
-                .collectAsState(initial = com.example.domain.settings.BrandingSettings())
+            val appContext = LocalContext.current.applicationContext
+            val currentLeaderFlow = remember(appContainer) { appContainer.authRepository.observeCurrentLeader() }
+            val currentLeader by currentLeaderFlow.collectAsState(initial = null)
 
-            androidx.compose.runtime.LaunchedEffect(brandingSettings.logoBase64) {
+            val initialBranding = remember(appContext) {
+                com.example.domain.settings.BrandingSettings(logoBase64 = LocalSettingsCache.getLogo(appContext))
+            }
+            val brandingFlow = remember(appContainer, currentLeader?.uid) {
+                appContainer.brandingRepository.observeBranding().map { settings ->
+                    val cachedLogo = LocalSettingsCache.getLogo(appContext)
+                    if (currentLeader == null && settings.logoBase64 == null && cachedLogo != null) {
+                        com.example.domain.settings.BrandingSettings(logoBase64 = cachedLogo)
+                    } else {
+                        settings
+                    }
+                }
+            }
+            val brandingSettings by brandingFlow
+                .collectAsState(initial = initialBranding)
+
+            androidx.compose.runtime.LaunchedEffect(brandingSettings.logoBase64, currentLeader?.uid) {
                 com.example.presentation.reports.PdfExporter.currentLogoBase64 = brandingSettings.logoBase64
+                if (currentLeader != null || brandingSettings.logoBase64 != null) {
+                    LocalSettingsCache.saveLogo(appContext, brandingSettings.logoBase64)
+                }
             }
 
-            val customTerms by appContainer.termsRepository.observeTerms()
-                .collectAsState(initial = com.example.domain.settings.CustomTerms())
+            val initialTerms = remember(appContext) {
+                LocalSettingsCache.getTerms(appContext) ?: com.example.domain.settings.CustomTerms()
+            }
+            val termsFlow = remember(appContainer, currentLeader?.uid) {
+                appContainer.termsRepository.observeTerms().map { terms ->
+                    val cachedTerms = LocalSettingsCache.getTerms(appContext)
+                    if (currentLeader == null && terms == com.example.domain.settings.CustomTerms() && cachedTerms != null) {
+                        cachedTerms
+                    } else {
+                        terms
+                    }
+                }
+            }
+            val customTerms by termsFlow
+                .collectAsState(initial = initialTerms)
 
-            androidx.compose.runtime.LaunchedEffect(customTerms) {
+            androidx.compose.runtime.LaunchedEffect(customTerms, currentLeader?.uid) {
                 com.example.presentation.reports.PdfExporter.currentTerms = customTerms
+                if (currentLeader != null || customTerms != com.example.domain.settings.CustomTerms()) {
+                    LocalSettingsCache.saveTerms(appContext, customTerms)
+                }
             }
 
             CompositionLocalProvider(
@@ -87,7 +127,8 @@ class MainActivity : ComponentActivity() {
                 com.example.presentation.common.LocalAppLogo provides brandingSettings.logoBase64,
                 com.example.presentation.common.LocalAppTerms provides customTerms
             ) {
-                val themeMode by appContainer.themePreferences.getThemeMode()
+                val themeModeFlow = remember(appContainer) { appContainer.themePreferences.getThemeMode() }
+                val themeMode by themeModeFlow
                     .collectAsState(initial = appContainer.themePreferences.getCurrentThemeMode())
 
                 ScoutTheme(themeMode = themeMode) {
@@ -104,7 +145,9 @@ class MainActivity : ComponentActivity() {
                     val loginViewModel: LoginViewModel = viewModel(
                         factory = LoginViewModel.Factory(
                             repository = appContainer.authRepository,
-                            googleSignInHelper = appContainer.googleSignInHelper
+                            googleSignInHelper = appContainer.googleSignInHelper,
+                            brandingRepository = appContainer.brandingRepository,
+                            context = appContext
                         )
                     )
 

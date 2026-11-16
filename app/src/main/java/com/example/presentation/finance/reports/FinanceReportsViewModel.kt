@@ -1,7 +1,7 @@
 package com.example.presentation.finance.reports
 
 import android.content.Context
-import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -16,6 +16,7 @@ import com.example.domain.scout.Scout
 import com.example.domain.scout.ScoutRepository
 import com.example.presentation.reports.PdfExporter
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,9 +28,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
-
-data class GeneratedStatement(val scoutName: String, val uri: Uri)
 
 data class FinanceReportsUiState(
     val allTransactions: List<FinanceTransaction> = emptyList(),
@@ -40,14 +40,14 @@ data class FinanceReportsUiState(
     val isExporting: Boolean = false,
     val isExportingMultiple: Boolean = false,
     val exportMultipleProgress: Pair<Int, Int>? = null,
-    val generatedStatements: List<GeneratedStatement> = emptyList(),
-    val selectedDebtFilter: String = "all"
+    val selectedDebtFilter: String = "all",
+    val searchQuery: String = "",
+    val selectedScoutIds: Set<String> = emptySet()
 )
 
 sealed interface FinanceReportsEvent {
     data class ShowMessage(val message: String) : FinanceReportsEvent
     data class ExportSuccess(val file: File, val title: String) : FinanceReportsEvent
-    data class MultipleExportSuccess(val statements: List<GeneratedStatement>, val count: Int) : FinanceReportsEvent
 }
 
 class FinanceReportsViewModel(
@@ -104,6 +104,35 @@ class FinanceReportsViewModel(
 
     fun onDebtFilterChanged(filter: String) {
         _uiState.update { it.copy(selectedDebtFilter = filter) }
+    }
+
+    fun onSearchQueryChanged(query: String) {
+        _uiState.update { it.copy(searchQuery = query) }
+    }
+
+    fun toggleScoutSelection(scoutId: String) {
+        _uiState.update { state ->
+            val updated = if (state.selectedScoutIds.contains(scoutId)) {
+                state.selectedScoutIds - scoutId
+            } else {
+                state.selectedScoutIds + scoutId
+            }
+            state.copy(selectedScoutIds = updated)
+        }
+    }
+
+    fun selectAll() {
+        val visibleIds = getFilteredScouts(_uiState.value.searchQuery).map { it.id }.toSet()
+        _uiState.update { state ->
+            state.copy(selectedScoutIds = state.selectedScoutIds + visibleIds)
+        }
+    }
+
+    fun deselectAll() {
+        val visibleIds = getFilteredScouts(_uiState.value.searchQuery).map { it.id }.toSet()
+        _uiState.update { state ->
+            state.copy(selectedScoutIds = state.selectedScoutIds - visibleIds)
+        }
     }
 
     fun getFilteredScouts(searchQuery: String = ""): List<Scout> {
@@ -285,7 +314,7 @@ class FinanceReportsViewModel(
     }
 
     /**
-     * تصدير كشوفات الحساب لمجموعة من الأشبال وحفظها في مجلد التنزيلات وتخزين مساراتها لمشاركتها لاحقاً
+     * تصدير كشوفات الحساب لمجموعة من الأشبال في الذاكرة المؤقتة ومشاركتها مباشرة عبر Share Sheet
      */
     fun generateMultipleScoutStatementsPdf(scouts: List<Scout>, context: Context) {
         viewModelScope.launch {
@@ -296,44 +325,70 @@ class FinanceReportsViewModel(
             _uiState.update {
                 it.copy(
                     isExportingMultiple = true,
-                    exportMultipleProgress = Pair(0, scouts.size),
-                    generatedStatements = emptyList()
+                    exportMultipleProgress = Pair(0, scouts.size)
                 )
             }
-            val savedStatements = mutableListOf<GeneratedStatement>()
             try {
-                scouts.forEachIndexed { index, scout ->
-                    _uiState.update { it.copy(exportMultipleProgress = Pair(index + 1, scouts.size)) }
-                    val subscriptions = financeRepository.observeSubscriptionsForScout(scout.id).first()
-                    val pdfFile = PdfExporter.exportScoutStatementPdf(
-                        scout = scout,
-                        subscriptions = subscriptions,
-                        contributions = emptyList(),
-                        context = context,
-                        terms = currentTerms
-                    )
-                    val safeScoutName = scout.fullName.replace(Regex("[^a-zA-Z0-9\\u0600-\\u06FF_-]"), "_")
-                    val fileName = "كشف_حساب_${safeScoutName}_${System.currentTimeMillis()}.pdf"
-                    val uri = PdfExporter.savePdfToDownloads(context, pdfFile, fileName)
-                    if (uri != null) {
-                        savedStatements.add(GeneratedStatement(scout.fullName, uri))
+                val generatedFiles = withContext(Dispatchers.IO) {
+                    val files = mutableListOf<File>()
+                    val usedFileNames = mutableSetOf<String>()
+                    scouts.forEachIndexed { index, scout ->
+                        _uiState.update { it.copy(exportMultipleProgress = Pair(index + 1, scouts.size)) }
+                        val subscriptions = financeRepository.observeSubscriptionsForScout(scout.id).first()
+                        val rawName = scout.fullName.ifBlank { scout.name }.ifBlank { scout.id }
+                        val safeName = rawName.replace(Regex("[^a-zA-Z0-9\\u0600-\\u06FF_-]"), "_")
+                            .trim('_')
+                            .ifBlank { scout.id.ifBlank { "scout_${index + 1}" } }
+                        var candidateName = "Scout_Statement_${safeName}.pdf"
+                        if (!usedFileNames.add(candidateName)) {
+                            candidateName = "Scout_Statement_${safeName}_${index + 1}.pdf"
+                            usedFileNames.add(candidateName)
+                        }
+                        val pdfFile = PdfExporter.exportScoutStatementPdf(
+                            scout = scout,
+                            subscriptions = subscriptions,
+                            contributions = emptyList(),
+                            context = context,
+                            terms = currentTerms,
+                            fileNameOverride = candidateName
+                        )
+                        files.add(pdfFile)
                     }
+                    files
                 }
+
                 _uiState.update {
                     it.copy(
                         isExportingMultiple = false,
-                        exportMultipleProgress = null,
-                        generatedStatements = savedStatements
+                        exportMultipleProgress = null
                     )
                 }
-                _events.emit(
-                    FinanceReportsEvent.MultipleExportSuccess(
-                        statements = savedStatements,
-                        count = savedStatements.size
+
+                if (generatedFiles.size == 1) {
+                    PdfExporter.shareScoutStatementPdf(
+                        file = generatedFiles.first(),
+                        scoutName = scouts.first().fullName,
+                        context = context,
+                        terms = currentTerms
                     )
-                )
+                } else {
+                    val uris = generatedFiles.map { file ->
+                        FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            file
+                        )
+                    }
+                    PdfExporter.shareMultiplePdfs(
+                        uris = uris,
+                        subject = "كشوفات حساب ${currentTerms.scoutPluralDefinite} — ${currentTerms.groupName} ${currentTerms.unitNameDefinite}",
+                        chooserTitle = "مشاركة كشوفات الحساب كـ PDF",
+                        context = context
+                    )
+                }
+
                 _events.emit(
-                    FinanceReportsEvent.ShowMessage("تم تصدير وحفظ ${savedStatements.size} كشف حساب في مجلد التنزيلات بنجاح")
+                    FinanceReportsEvent.ShowMessage("تم إنشاء ومشاركة ${generatedFiles.size} كشف حساب بنجاح")
                 )
             } catch (e: Exception) {
                 _uiState.update {
@@ -347,35 +402,6 @@ class FinanceReportsViewModel(
                 )
             }
         }
-    }
-
-    /**
-     * مشاركة كشف حساب فردي لشبل محدد
-     */
-    fun shareStatement(statement: GeneratedStatement, context: Context) {
-        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-            type = "application/pdf"
-            putExtra(android.content.Intent.EXTRA_STREAM, statement.uri)
-            putExtra(android.content.Intent.EXTRA_SUBJECT, "كشف حساب: ${statement.scoutName} — ${currentTerms.groupName} ${currentTerms.unitNameDefinite}")
-            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        context.startActivity(android.content.Intent.createChooser(intent, "مشاركة كشف حساب ${statement.scoutName}"))
-    }
-
-    /**
-     * مشاركة كشوفات الحساب المصدرة دفعة واحدة
-     */
-    fun shareGeneratedStatements(context: Context) {
-        val uris = _uiState.value.generatedStatements.map { it.uri }
-        if (uris.isEmpty()) {
-            return
-        }
-        PdfExporter.shareMultiplePdfs(
-            uris = uris,
-            subject = "كشوفات حساب ${currentTerms.scoutPluralDefinite} — ${currentTerms.groupName} ${currentTerms.unitNameDefinite}",
-            chooserTitle = "مشاركة كشوفات الحساب كـ PDF",
-            context = context
-        )
     }
 
     class Factory(

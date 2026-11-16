@@ -1,5 +1,6 @@
 package com.example.presentation.attendance
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -22,7 +23,10 @@ import com.example.domain.finance.SubscriptionStatus
 import com.example.domain.scout.Scout
 import com.example.domain.scout.ScoutRepository
 import com.example.domain.settings.SettingsRepository
+import com.example.presentation.reports.PdfExporter
 import java.text.Collator
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -33,6 +37,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * نموذج العرض لتسجيل الحضور الكشفي (Attendance ViewModel)
@@ -114,8 +119,16 @@ class AttendanceViewModel(
 
     private var isTransitioning = false
     private var activeSaveJob: Job? = null
-    private val committedPrevDebtByScout = mutableMapOf<String, Int>()
-    private val committedOverpaymentByScout = mutableMapOf<String, Int>()
+
+    private data class FinanceSnapshot(
+        val status: AttendanceStatus,
+        val todayPaid: Int,
+        val prevPaid: Int,
+        val todayReq: Int,
+        val credit: Int
+    )
+
+    private val persistedFinanceSignature = mutableMapOf<String, FinanceSnapshot>()
 
     private fun normalizeDigits(input: String): String {
         val sb = StringBuilder(input.length)
@@ -171,18 +184,47 @@ class AttendanceViewModel(
                 }
             }
         } else 0
-        val prevDebt = calculatePreviousDebt(scout.id, activity.id)
+        val rawPrevDebt = calculatePreviousDebt(scout.id, activity.id)
 
-        // التحقق إن كان هناك دفع سابق مسجل لهذا الشبل في هذا النشاط
-        val existingPaid = try {
+        // التحقق إن كان هناك دفع سابق مسجل لهذا الشبل في هذا النشاط (اشتراك + سداد ديون + رصيد مقدم)
+        val existingSub = try {
             if (financeRepository != null) {
                 val subs = financeRepository.observeSubscriptionsForActivity(activity.id).first()
-                subs.find { it.scoutId == scout.id }?.paidAmount ?: 0
-            } else 0
-        } catch (_: Exception) { 0 }
+                subs.find { it.scoutId == scout.id }
+            } else null
+        } catch (_: Exception) { null }
+        val subPaid = existingSub?.paidAmount ?: 0
 
-        committedPrevDebtByScout.remove(scout.id)
-        committedOverpaymentByScout.remove(scout.id)
+        val activityTransactions = try {
+            if (financeRepository != null) {
+                financeRepository.observeAllTransactions().first()
+                    .filter { it.relatedActivityId == activity.id && it.scoutId == scout.id }
+            } else emptyList()
+        } catch (_: Exception) { emptyList() }
+
+        val debtPaid = activityTransactions
+            .filter { it.type == FinanceTransactionType.DEBT_PAYMENT }
+            .sumOf { it.amount }
+        val advancePaid = activityTransactions
+            .filter { it.type == FinanceTransactionType.ADVANCE_PAYMENT }
+            .sumOf { it.amount }
+
+        val totalPaid = subPaid + debtPaid + advancePaid
+        // إعادة إضافة الديون المسددة بهذا النشاط حتى لا يتحول جزء منها إلى رصيد مقدم عند إعادة التوزيع
+        val prevDebt = rawPrevDebt + debtPaid
+
+        if (existingSub != null && existingStatus != null) {
+            persistedFinanceSignature[scout.id] = FinanceSnapshot(
+                status = existingStatus,
+                todayPaid = subPaid,
+                prevPaid = debtPaid,
+                todayReq = existingSub.requiredAmount,
+                credit = advancePaid
+            )
+        } else {
+            persistedFinanceSignature.remove(scout.id)
+        }
+
         _liveAmountInput.value = ""
         _entryUiState.update {
             it.copy(
@@ -198,11 +240,13 @@ class AttendanceViewModel(
             )
         }
 
-        if (existingStatus != null && canPay && existingPaid > 0) {
-            distributePayment(existingPaid)
+        if (existingStatus != null && canPay && totalPaid > 0) {
+            distributePayment(totalPaid)
             _sessionPaidByScout.update { currentMap ->
-                if (scout.id in currentMap) currentMap else currentMap + (scout.id to existingPaid)
+                currentMap + (scout.id to totalPaid)
             }
+        } else {
+            _sessionPaidByScout.update { it - scout.id }
         }
     }
 
@@ -212,8 +256,7 @@ class AttendanceViewModel(
     fun initAttendanceEntry(activityId: String) {
         _sessionPaidByScout.value = emptyMap()
         _liveAmountInput.value = ""
-        committedPrevDebtByScout.clear()
-        committedOverpaymentByScout.clear()
+        persistedFinanceSignature.clear()
         isTransitioning = false
         _entryUiState.update { it.copy(isLoading = true, errorMessage = null) }
 
@@ -292,8 +335,6 @@ class AttendanceViewModel(
         }
 
         _sessionPaidByScout.update { it - currentScout.id }
-        committedPrevDebtByScout.remove(currentScout.id)
-        committedOverpaymentByScout.remove(currentScout.id)
         _liveAmountInput.value = ""
         _entryUiState.update { current ->
             val updated = current.recordedStatuses.toMutableMap()
@@ -434,20 +475,44 @@ class AttendanceViewModel(
     }
 
     /**
-     * تعديل الإجمالي المدفوع يدوياً (للحقل القابل للتعديل)
+     * تعديل الإجمالي المدفوع يدوياً (للحقل القابل للتعديل) وحفظه فوراً بعد عكس أي معاملات سابقة
      */
     fun onTotalPaidChanged(newTotal: String) {
         val state = _entryUiState.value
         if (!state.canPay) return
-        val scout = state.currentScout
-        val oldTotal = state.totalPaidToday
-        val parsed = newTotal.filter { it.isDigit() }.toIntOrNull() ?: 0
+        val scout = state.currentScout ?: return
+        val sanitized = normalizeDigits(newTotal)
+        val parsed = sanitized.toIntOrNull() ?: 0
         distributePayment(parsed.coerceAtLeast(0))
-        val delta = _entryUiState.value.totalPaidToday - oldTotal
-        if (scout != null && delta != 0) {
-            _sessionPaidByScout.update { currentMap ->
-                val updated = ((currentMap[scout.id] ?: 0) + delta).coerceAtLeast(0)
-                if (updated == 0) currentMap - scout.id else currentMap + (scout.id to updated)
+
+        val updatedState = _entryUiState.value
+        val newTotalPaid = updatedState.totalPaidToday
+        _sessionPaidByScout.update { currentMap ->
+            if (newTotalPaid == 0) currentMap - scout.id else currentMap + (scout.id to newTotalPaid)
+        }
+
+        val activity = updatedState.activity
+        val currentStatus = updatedState.recordedStatuses[scout.id]
+        if (activity != null && currentStatus != null) {
+            val todayPaid = updatedState.todaySubPaid
+            val prevPaid = updatedState.previousDebtPaid
+            val todayReq = updatedState.todaySubRequired
+            val credit = updatedState.overpaymentCredit
+            val singleAttendance = buildAttendanceRecord(
+                scout = scout,
+                activity = activity,
+                status = currentStatus,
+                pointsSettings = updatedState.pointsSettings
+            )
+            val previousJob = activeSaveJob
+            activeSaveJob = viewModelScope.launch {
+                previousJob?.join()
+                try {
+                    attendanceRepository.saveAttendance(singleAttendance)
+                } catch (e: Exception) {
+                    Log.e("AttendanceVM", "Error saving attendance on total edit for ${scout.fullName}: ${e.message}", e)
+                }
+                saveFinancePayment(scout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
             }
         }
     }
@@ -518,6 +583,41 @@ class AttendanceViewModel(
     }
 
     /**
+     * عكس معاملات سداد الديون والدفعات المقدمة المسجلة مسبقاً لهذا الشبل في هذا النشاط قبل حفظ التحديثات
+     */
+    private suspend fun reverseOldPayments(activityId: String, scoutId: String) {
+        if (financeRepository == null) return
+        try {
+            val existingTxs = financeRepository.observeAllTransactions().first()
+                .filter {
+                    it.relatedActivityId == activityId &&
+                        it.scoutId == scoutId &&
+                        (it.type == FinanceTransactionType.DEBT_PAYMENT ||
+                            it.type == FinanceTransactionType.ADVANCE_PAYMENT)
+                }
+
+            for (tx in existingTxs) {
+                when (tx.type) {
+                    FinanceTransactionType.DEBT_PAYMENT -> {
+                        if (tx.amount > 0) {
+                            financeRepository.rollbackScoutDebts(scoutId, tx.amount)
+                        }
+                    }
+                    FinanceTransactionType.ADVANCE_PAYMENT -> {
+                        if (tx.amount > 0) {
+                            scoutRepository.deductCreditFromScout(scoutId, tx.amount)
+                        }
+                    }
+                    else -> Unit
+                }
+                financeRepository.deleteTransaction(tx.id)
+            }
+        } catch (e: Exception) {
+            Log.e("AttendanceVM", "Error reversing old payments for $scoutId in $activityId: ${e.message}", e)
+        }
+    }
+
+    /**
      * حفظ المعاملات والمدفوعات المالية للشبل في النشاط وقاعدة البيانات
      */
     private suspend fun saveFinancePayment(
@@ -530,7 +630,20 @@ class AttendanceViewModel(
         overpaymentCredit: Int = _entryUiState.value.overpaymentCredit
     ) {
         if (financeRepository == null || !_entryUiState.value.isFinanceSectionVisible) return
+        val snapshot = FinanceSnapshot(
+            status = currentStatus,
+            todayPaid = todayPaid,
+            prevPaid = prevPaid,
+            todayReq = todayReq,
+            credit = overpaymentCredit
+        )
+        if (persistedFinanceSignature[scout.id] == snapshot) return
+
         try {
+            // 1. عكس معاملات سداد الديون والرصيد المقدم السابقة لتفادي الازدواجية عند التعديل أو الحذف
+            reverseOldPayments(activity.id, scout.id)
+
+            // 2. تحديث اشتراك النشاط الحالي أولاً حتى لا يتأثر سداد الديون السابقة به
             val subStatus = SubscriptionStatus.fromKey(currentStatus.key)
             val todaySub = FinanceSubscription(
                 id = "${activity.id}_${scout.id}",
@@ -547,15 +660,9 @@ class AttendanceViewModel(
             )
             financeRepository.upsertSubscription(todaySub)
 
+            // 3. تطبيق سداد الديون السابقة من جديد إن وجد
             if (prevPaid > 0) {
-                val alreadyCommitted = committedPrevDebtByScout[scout.id] ?: 0
-                val deltaPrev = (prevPaid - alreadyCommitted).coerceAtLeast(0)
-                if (deltaPrev > 0) {
-                    val debtResult = financeRepository.payScoutDebts(scout.id, deltaPrev)
-                    if (debtResult.isSuccess) {
-                        committedPrevDebtByScout[scout.id] = alreadyCommitted + deltaPrev
-                    }
-                }
+                financeRepository.payScoutDebts(scout.id, prevPaid)
                 val debtTx = FinanceTransaction(
                     id = "debt_pay_${activity.id}_${scout.id}",
                     type = FinanceTransactionType.DEBT_PAYMENT,
@@ -569,15 +676,9 @@ class AttendanceViewModel(
                 financeRepository.upsertTransaction(debtTx)
             }
 
+            // 4. تطبيق الدفعة المقدمة (الرصيد المقدم) من جديد إن وجدت
             if (overpaymentCredit > 0) {
-                val alreadyCommittedCredit = committedOverpaymentByScout[scout.id] ?: 0
-                val deltaCredit = (overpaymentCredit - alreadyCommittedCredit).coerceAtLeast(0)
-                if (deltaCredit > 0) {
-                    val creditResult = scoutRepository.addCreditToScout(scout.id, deltaCredit)
-                    if (creditResult.isSuccess) {
-                        committedOverpaymentByScout[scout.id] = alreadyCommittedCredit + deltaCredit
-                    }
-                }
+                scoutRepository.addCreditToScout(scout.id, overpaymentCredit)
                 val advanceTx = FinanceTransaction(
                     id = "advance_pay_${activity.id}_${scout.id}",
                     type = FinanceTransactionType.ADVANCE_PAYMENT,
@@ -590,10 +691,10 @@ class AttendanceViewModel(
                 )
                 financeRepository.upsertTransaction(advanceTx)
             }
+
+            persistedFinanceSignature[scout.id] = snapshot
         } catch (e: Exception) {
             Log.e("AttendanceVM", "Error saving finance payment for ${scout.fullName}: ${e.message}", e)
-        } finally {
-            _entryUiState.update { it.copy(overpaymentCredit = 0) }
         }
     }
 
@@ -932,6 +1033,52 @@ class AttendanceViewModel(
 
     fun onNextClicked(onSkipped: () -> Unit = {}) = onNext(onSkipped)
     fun onFinishClicked(onSuccess: () -> Unit = {}) = saveAttendance(onSuccess)
+
+    /**
+     * تصدير استمارة تسجيل الحضور القابلة للطباعة (صفحة واحدة A4 عمودي) ومشاركتها
+     */
+    fun exportAttendanceFormPdf(activity: Activity, context: Context) {
+        viewModelScope.launch {
+            try {
+                val activeScouts = scoutRepository.observeScouts().first().filter { it.isActive }
+                val collator = Collator.getInstance(Locale("ar", "DZ"))
+                val sortedScouts = activeScouts.sortedWith(
+                    compareBy(collator) { it.fullName.ifBlank { "${it.name} ${it.surname}".trim() } }
+                )
+
+                val debtsMap = try {
+                    financeRepository?.observeScoutDebts()?.first()
+                        ?.associate { it.scoutId to it.totalDebt }
+                        ?: emptyMap()
+                } catch (_: Exception) {
+                    emptyMap()
+                }
+
+                val file = withContext(Dispatchers.IO) {
+                    PdfExporter.exportAttendanceFormPdf(
+                        activityTitle = activity.title,
+                        scouts = sortedScouts,
+                        debtsMap = debtsMap,
+                        context = context,
+                        leaderNames = activity.responsibleName,
+                        activityDateMillis = activity.startDate
+                    )
+                }
+                PdfExporter.shareAttendanceFormPdf(
+                    file = file,
+                    activityTitle = activity.title,
+                    context = context
+                )
+            } catch (e: Exception) {
+                Log.e("AttendanceVM", "Error exporting attendance form PDF: ${e.message}", e)
+                android.widget.Toast.makeText(
+                    context,
+                    context.getString(com.example.R.string.attendance_print_form_error),
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
 
     class Factory(
         private val activityRepository: ActivityRepository,

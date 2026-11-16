@@ -49,6 +49,7 @@ class TermsFirestoreDataSource(
                         groupNameDefinite = snapshot.safeString("groupNameDefinite", defaultTerms.groupNameDefinite),
                         unitName = snapshot.safeString("unitName", defaultTerms.unitName),
                         unitNameDefinite = snapshot.safeString("unitNameDefinite", defaultTerms.unitNameDefinite),
+                        patrolName = snapshot.safeString("patrolName", defaultTerms.patrolName),
                         customWords = customWords
                     )
                     trySend(terms)
@@ -74,6 +75,7 @@ class TermsFirestoreDataSource(
                 "groupNameDefinite" to terms.groupNameDefinite,
                 "unitName" to terms.unitName,
                 "unitNameDefinite" to terms.unitNameDefinite,
+                "patrolName" to terms.patrolName,
                 "customWords" to terms.customWords
             )
             termsDoc.set(map, SetOptions.merge()).await()

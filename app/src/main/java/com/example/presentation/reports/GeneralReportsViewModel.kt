@@ -478,7 +478,7 @@ class GeneralReportsViewModel(
                         val dateStr = if (act.startDate > 0) dateFormat.format(Date(act.startDate)) else "—"
                         PdfExporter.ActivitySummary(
                             title = act.title,
-                            type = act.activityType.arabicLabel,
+                            type = act.activityType.displayLabel(currentTerms),
                             date = dateStr,
                             presentCount = stats.attendeesCount,
                             absentCount = stats.absentsCount,

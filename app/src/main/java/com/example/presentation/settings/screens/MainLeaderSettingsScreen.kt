@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,23 +26,24 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AdminPanelSettings
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,11 +59,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.domain.settings.CustomTerms
 import com.example.domain.settings.replaceCustomWords
+import com.example.presentation.common.AppAlertDialog
 import com.example.presentation.common.AppLogo
 import com.example.presentation.common.CustomTopAppBar
 import com.example.presentation.common.LocalAppTerms
@@ -98,9 +102,8 @@ fun MainLeaderSettingsScreen(
     var groupNameDefinite by remember { mutableStateOf("") }
     var unitName by remember { mutableStateOf("") }
     var unitNameDefinite by remember { mutableStateOf("") }
-    var customWordsMap by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var newOriginalWord by remember { mutableStateOf("") }
-    var newReplacementWord by remember { mutableStateOf("") }
+    var patrolName by remember { mutableStateOf("") }
+    var showResetTermsDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(currentTerms) {
         scoutSingular = currentTerms.scoutSingular
@@ -111,7 +114,7 @@ fun MainLeaderSettingsScreen(
         groupNameDefinite = currentTerms.groupNameDefinite
         unitName = currentTerms.unitName
         unitNameDefinite = currentTerms.unitNameDefinite
-        customWordsMap = currentTerms.customWords
+        patrolName = currentTerms.patrolName
     }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
@@ -350,208 +353,118 @@ fun MainLeaderSettingsScreen(
                         )
                     }
 
-                    // الحقول الثمانية الأساسية
-                    OutlinedTextField(
-                        value = scoutSingular,
-                        onValueChange = { scoutSingular = it },
-                        label = { Text(stringResource(id = R.string.terms_scout_singular)) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("terms_scout_singular_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    OutlinedTextField(
-                        value = scoutSingularDefinite,
-                        onValueChange = { scoutSingularDefinite = it },
-                        label = { Text(stringResource(id = R.string.terms_scout_singular_def)) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("terms_scout_singular_def_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    OutlinedTextField(
-                        value = scoutPlural,
-                        onValueChange = { scoutPlural = it },
-                        label = { Text(stringResource(id = R.string.terms_scout_plural)) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("terms_scout_plural_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    OutlinedTextField(
-                        value = scoutPluralDefinite,
-                        onValueChange = { scoutPluralDefinite = it },
-                        label = { Text(stringResource(id = R.string.terms_scout_plural_def)) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("terms_scout_plural_def_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    OutlinedTextField(
-                        value = groupName,
-                        onValueChange = { groupName = it },
-                        label = { Text(stringResource(id = R.string.terms_group_singular)) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("terms_group_singular_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    OutlinedTextField(
-                        value = groupNameDefinite,
-                        onValueChange = { groupNameDefinite = it },
-                        label = { Text(stringResource(id = R.string.terms_group_singular_def)) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("terms_group_singular_def_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    OutlinedTextField(
-                        value = unitName,
-                        onValueChange = { unitName = it },
-                        label = { Text(stringResource(id = R.string.terms_unit_name)) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("terms_unit_name_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    OutlinedTextField(
-                        value = unitNameDefinite,
-                        onValueChange = { unitNameDefinite = it },
-                        label = { Text(stringResource(id = R.string.terms_unit_name_def)) },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("terms_unit_name_def_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                    // قسم الكلمات الإضافية المخصصة
-                    Text(
-                        text = stringResource(id = R.string.terms_custom_words),
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-
-                    // قائمة الكلمات المخصصة الحالية مع زر الحذف
-                    if (customWordsMap.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            customWordsMap.forEach { (orig, repl) ->
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Text(
-                                                text = orig,
-                                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            Text(
-                                                text = "  ←  ",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                            Text(
-                                                text = repl,
-                                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                        IconButton(
-                                            onClick = {
-                                                customWordsMap = customWordsMap - orig
-                                            },
-                                            modifier = Modifier.size(36.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Delete,
-                                                contentDescription = stringResource(id = R.string.action_delete),
-                                                tint = MaterialTheme.colorScheme.error,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // إدخال كلمة مخصصة جديدة
+                    // الحقول الأساسية مرتبة في شبكة من عمودين
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.Top
                     ) {
-                        OutlinedTextField(
-                            value = newOriginalWord,
-                            onValueChange = { newOriginalWord = it },
-                            label = { Text(stringResource(id = R.string.terms_original_word)) },
-                            singleLine = true,
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("new_original_word_input"),
-                            shape = RoundedCornerShape(10.dp)
+                        TermInputField(
+                            value = scoutSingular,
+                            onValueChange = { scoutSingular = it },
+                            label = stringResource(id = R.string.terms_scout_singular),
+                            testTagName = "terms_scout_singular_input",
+                            modifier = Modifier.weight(1f)
                         )
-
-                        OutlinedTextField(
-                            value = newReplacementWord,
-                            onValueChange = { newReplacementWord = it },
-                            label = { Text(stringResource(id = R.string.terms_replacement_word)) },
-                            singleLine = true,
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("new_replacement_word_input"),
-                            shape = RoundedCornerShape(10.dp)
+                        TermInputField(
+                            value = scoutSingularDefinite,
+                            onValueChange = { scoutSingularDefinite = it },
+                            label = stringResource(id = R.string.terms_scout_singular_def),
+                            testTagName = "terms_scout_singular_def_input",
+                            modifier = Modifier.weight(1f)
                         )
+                    }
 
-                        Button(
-                            onClick = {
-                                val o = newOriginalWord.trim()
-                                val r = newReplacementWord.trim()
-                                if (o.isNotEmpty() && r.isNotEmpty()) {
-                                    customWordsMap = customWordsMap + (o to r)
-                                    newOriginalWord = ""
-                                    newReplacementWord = ""
-                                }
-                            },
-                            enabled = newOriginalWord.isNotBlank() && newReplacementWord.isNotBlank(),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.testTag("add_custom_word_button")
-                        ) {
-                            Text(stringResource(id = R.string.action_add_word))
-                        }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        TermInputField(
+                            value = scoutPlural,
+                            onValueChange = { scoutPlural = it },
+                            label = stringResource(id = R.string.terms_scout_plural),
+                            testTagName = "terms_scout_plural_input",
+                            modifier = Modifier.weight(1f)
+                        )
+                        TermInputField(
+                            value = scoutPluralDefinite,
+                            onValueChange = { scoutPluralDefinite = it },
+                            label = stringResource(id = R.string.terms_scout_plural_def),
+                            testTagName = "terms_scout_plural_def_input",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        TermInputField(
+                            value = groupName,
+                            onValueChange = { groupName = it },
+                            label = stringResource(id = R.string.terms_group_singular),
+                            testTagName = "terms_group_singular_input",
+                            modifier = Modifier.weight(1f)
+                        )
+                        TermInputField(
+                            value = groupNameDefinite,
+                            onValueChange = { groupNameDefinite = it },
+                            label = stringResource(id = R.string.terms_group_singular_def),
+                            testTagName = "terms_group_singular_def_input",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        TermInputField(
+                            value = unitNameDefinite,
+                            onValueChange = { unitNameDefinite = it },
+                            label = stringResource(id = R.string.terms_unit_name_def),
+                            testTagName = "terms_unit_name_def_input",
+                            modifier = Modifier.weight(1f)
+                        )
+                        TermInputField(
+                            value = patrolName,
+                            onValueChange = { patrolName = it },
+                            label = stringResource(id = R.string.terms_patrol_name),
+                            placeholder = stringResource(id = R.string.terms_patrol_name_hint),
+                            supportingText = stringResource(id = R.string.terms_patrol_name_hint),
+                            testTagName = "terms_patrol_name_input",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    // زر إعادة الكلمات الافتراضية
+                    OutlinedButton(
+                        onClick = { showResetTermsDialog = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("reset_default_terms_button"),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.RestartAlt,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(id = R.string.action_reset_default_terms))
                     }
 
                     // زر حفظ الكلمات
                     Button(
                         onClick = {
+                            val resolvedUnitDefinite = unitNameDefinite.trim().ifEmpty { "النجب" }
                             val updated = CustomTerms(
                                 scoutSingular = scoutSingular.trim().ifEmpty { "شبل" },
                                 scoutSingularDefinite = scoutSingularDefinite.trim().ifEmpty { "الشبل" },
@@ -559,11 +472,12 @@ fun MainLeaderSettingsScreen(
                                 scoutPluralDefinite = scoutPluralDefinite.trim().ifEmpty { "الأشبال" },
                                 groupName = groupName.trim().ifEmpty { "سرب" },
                                 groupNameDefinite = groupNameDefinite.trim().ifEmpty { "السرب" },
-                                unitName = unitName.trim().ifEmpty { "النجب" },
-                                unitNameDefinite = unitNameDefinite.trim().ifEmpty { "النجب" },
-                                customWords = customWordsMap
+                                unitName = unitName.trim().ifEmpty { resolvedUnitDefinite },
+                                unitNameDefinite = resolvedUnitDefinite,
+                                patrolName = patrolName.trim().ifEmpty { "السداسية" },
+                                customWords = currentTerms.customWords
                             )
-                            viewModel.updateCustomTerms(updated)
+                            viewModel.updateCustomTerms(updated, context)
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -582,4 +496,90 @@ fun MainLeaderSettingsScreen(
             }
         }
     }
+
+    if (showResetTermsDialog) {
+        AppAlertDialog(
+            onDismissRequest = { showResetTermsDialog = false },
+            title = {
+                Text(
+                    text = stringResource(id = R.string.action_reset_default_terms),
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                )
+            },
+            text = {
+                Text(
+                    text = stringResource(id = R.string.confirm_reset_default_terms),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showResetTermsDialog = false
+                        viewModel.resetToDefault(context)
+                    },
+                    modifier = Modifier.testTag("confirm_reset_default_terms_button")
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.confirm_action),
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showResetTermsDialog = false },
+                    modifier = Modifier.testTag("cancel_reset_default_terms_button")
+                ) {
+                    Text(stringResource(id = R.string.cancel_action))
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun TermInputField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    testTagName: String,
+    modifier: Modifier = Modifier,
+    placeholder: String? = null,
+    supportingText: String? = null
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        placeholder = placeholder?.let { hint ->
+            {
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        },
+        supportingText = supportingText?.let { hint ->
+            {
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        },
+        singleLine = true,
+        modifier = modifier.testTag(testTagName),
+        shape = RoundedCornerShape(12.dp)
+    )
 }

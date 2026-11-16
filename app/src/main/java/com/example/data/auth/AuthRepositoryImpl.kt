@@ -17,6 +17,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.tasks.await
 
@@ -206,27 +207,30 @@ class AuthRepositoryImpl(
         awaitClose { listener.remove() }
     }
 
-    override fun observeCurrentLeader(): Flow<Leader?> = callbackFlow {
-        val user = currentUser
-        if (user == null) {
-            trySend(null)
-            close()
-            return@callbackFlow
-        }
-        val listener = firestore.collection("leaders").document(user.uid)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    Log.w(TAG, "Error observing current leader ${user.uid}", error)
-                    trySend(null)
-                    return@addSnapshotListener
-                }
-                if (snapshot != null && snapshot.exists()) {
-                    trySend(mapSnapshotToLeader(snapshot))
-                } else {
-                    trySend(null)
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    override fun observeCurrentLeader(): Flow<Leader?> {
+        return dataSource.observeAuthState().flatMapLatest { user ->
+            if (user == null) {
+                flowOf(null)
+            } else {
+                callbackFlow {
+                    val listener = firestore.collection("leaders").document(user.uid)
+                        .addSnapshotListener { snapshot, error ->
+                            if (error != null) {
+                                Log.w(TAG, "Error observing current leader ${user.uid}", error)
+                                trySend(null)
+                                return@addSnapshotListener
+                            }
+                            if (snapshot != null && snapshot.exists()) {
+                                trySend(mapSnapshotToLeader(snapshot))
+                            } else {
+                                trySend(null)
+                            }
+                        }
+                    awaitClose { listener.remove() }
                 }
             }
-        awaitClose { listener.remove() }
+        }
     }
 
     override suspend fun getAllLeaders(excludeUid: String): Result<List<Leader>> {

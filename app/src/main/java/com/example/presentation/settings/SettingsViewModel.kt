@@ -25,8 +25,10 @@ import kotlinx.coroutines.flow.update
 import com.example.domain.settings.BrandingRepository
 import com.example.domain.settings.CustomTerms
 import com.example.domain.settings.TermsRepository
+import android.content.Context
 import android.graphics.Bitmap
 import android.util.Base64
+import com.example.data.settings.LocalSettingsCache
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.launch
 
@@ -487,14 +489,30 @@ class SettingsViewModel(
         return brandingRepository.updateLogo(base64)
     }
 
-    fun updateCustomTerms(newTerms: CustomTerms) {
+    fun updateCustomTerms(newTerms: CustomTerms, context: Context? = null) {
         if (!_isMainLeader.value) return
         viewModelScope.launch {
             val result = termsRepository.updateTerms(newTerms)
             if (result.isSuccess) {
+                context?.let { LocalSettingsCache.saveTerms(it, newTerms) }
                 _events.emit(SettingsEvent.ShowMessage("تم حفظ الكلمات بنجاح"))
             } else {
                 _events.emit(SettingsEvent.ShowMessage("فشل حفظ الكلمات، يرجى المحاولة لاحقاً"))
+            }
+        }
+    }
+
+    fun resetToDefault(context: Context? = null) {
+        if (!_isMainLeader.value) return
+        val defaultTerms = CustomTerms()
+        _currentTerms.value = defaultTerms
+        viewModelScope.launch {
+            val result = termsRepository.updateTerms(defaultTerms)
+            if (result.isSuccess) {
+                context?.let { LocalSettingsCache.saveTerms(it, defaultTerms) }
+                _events.emit(SettingsEvent.ShowMessage("تمت إعادة الكلمات الافتراضية بنجاح"))
+            } else {
+                _events.emit(SettingsEvent.ShowMessage("فشل إعادة الكلمات الافتراضية، يرجى المحاولة لاحقاً"))
             }
         }
     }

@@ -68,6 +68,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.domain.activity.Activity
 import com.example.domain.activity.ActivityStatus
+import com.example.presentation.common.LocalAppTerms
 import com.example.presentation.common.CustomTopAppBar
 import com.example.presentation.common.ResponsiveFilterRow
 
@@ -310,7 +311,7 @@ fun ActivityListScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .testTag("activities_lazy_column"),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                            contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 96.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             state.groupedActivities.forEach { (header, activities) ->
@@ -365,6 +366,7 @@ private fun ActivityItemCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -413,7 +415,7 @@ private fun ActivityItemCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = activity.activityType.arabicLabel,
+                        text = activity.activityType.displayLabel(terms),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )

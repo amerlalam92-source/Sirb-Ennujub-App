@@ -3,8 +3,6 @@ package com.example.presentation.splash
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
-import com.example.presentation.common.AppLogo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,13 +26,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.domain.auth.AuthRepository
+import com.example.domain.settings.replaceCustomWords
+import com.example.presentation.common.AppLogo
+import com.example.presentation.common.LocalAppTerms
 import kotlinx.coroutines.delay
 
 /**
@@ -49,6 +49,7 @@ fun SplashScreen(
     onNavigateToPendingApproval: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val scale = remember { Animatable(0.7f) }
     val alpha = remember { Animatable(0f) }
 
@@ -82,6 +83,11 @@ fun SplashScreen(
         }
     }
 
+    val dynamicGroupTitle = replaceCustomWords(
+        "${terms.groupName} ${terms.unitNameDefinite}",
+        terms
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -97,19 +103,20 @@ fun SplashScreen(
                 .scale(scale.value)
                 .alpha(alpha.value)
         ) {
-            // شعار الفوج الكشفي الرسمي بحجم كبير ونقي بدون أي خلفية ملونة
+            // شعار الفوج الكشفي الرسمي (مخصص من Firebase أو الأيقونة الافتراضية)
             AppLogo(
-                contentDescription = stringResource(id = R.string.app_name),
+                contentDescription = dynamicGroupTitle,
                 modifier = Modifier
                     .size(200.dp)
                     .clip(CircleShape)
+                    .testTag("splash_app_logo")
             )
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // اسم السرب باللون الأخضر الكشفي
+            // اسم الوحدة / السرب الديناميكي باللون الأخضر الكشفي
             Text(
-                text = stringResource(id = R.string.splash_title),
+                text = dynamicGroupTitle,
                 style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center
@@ -119,7 +126,7 @@ fun SplashScreen(
 
             // الفوج باللون الكشفي الواضح
             Text(
-                text = stringResource(id = R.string.splash_subtitle),
+                text = replaceCustomWords(stringResource(id = R.string.splash_subtitle), terms),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                 textAlign = TextAlign.Center

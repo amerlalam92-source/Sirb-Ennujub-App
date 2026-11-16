@@ -124,8 +124,9 @@ class ActivityViewModel(
     val listUiState: StateFlow<ActivityListUiState> = combine(
         observeActivitiesUseCase(),
         _searchQuery,
-        _selectedFilter
-    ) { allActivities, query, filter ->
+        _selectedFilter,
+        termsRepository?.observeTerms() ?: flowOf(CustomTerms())
+    ) { allActivities, query, filter, terms ->
         val filtered = allActivities.filter { activity ->
             val matchesFilter = when (filter) {
                 ActivityFilter.UPCOMING -> activity.isUpcoming()
@@ -137,6 +138,7 @@ class ActivityViewModel(
             val matchesQuery = if (q.isBlank()) true else {
                 activity.title.lowercase().contains(q) ||
                         activity.location.lowercase().contains(q) ||
+                        activity.activityType.displayLabel(terms).lowercase().contains(q) ||
                         activity.activityType.arabicLabel.lowercase().contains(q) ||
                         activity.responsibleName.lowercase().contains(q)
             }

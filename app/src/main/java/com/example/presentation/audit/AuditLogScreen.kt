@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -59,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.domain.auth.Leader
 import com.example.domain.log.ActivityLog
 import com.example.presentation.common.LocalAppTerms
 import com.example.domain.settings.replaceCustomWords
@@ -226,9 +228,9 @@ private fun AuditFiltersSection(
     onDateFilterSelected: (DateFilter) -> Unit,
     selectedActionFilter: ActionFilter,
     onActionFilterSelected: (ActionFilter) -> Unit,
-    selectedLeader: String?,
-    availableLeaders: List<String>,
-    onLeaderSelected: (String?) -> Unit,
+    selectedLeader: Leader?,
+    availableLeaders: List<Leader>,
+    onLeaderSelected: (Leader?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -304,40 +306,45 @@ private fun AuditFiltersSection(
                 }
             }
 
-            // 3. فلتر القادة (إذا كان هناك أكثر من قائد)
-            if (availableLeaders.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+            // 3. فلتر القادة المعتمدين حالياً
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item(key = "all_leaders") {
                     FilterChip(
                         selected = selectedLeader == null,
                         onClick = { onLeaderSelected(null) },
                         label = {
                             Text(
                                 text = stringResource(id = R.string.audit_filter_leader_all),
-                                style = MaterialTheme.typography.labelMedium
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         },
                         modifier = Modifier.testTag("filter_leader_all")
                     )
+                }
 
-                    availableLeaders.forEach { leader ->
-                        FilterChip(
-                            selected = selectedLeader == leader,
-                            onClick = { onLeaderSelected(leader) },
-                            label = {
-                                Text(
-                                    text = leader,
-                                    style = MaterialTheme.typography.labelMedium
-                                )
-                            },
-                            modifier = Modifier.testTag("filter_leader_${leader.hashCode()}")
-                        )
-                    }
+                items(
+                    items = availableLeaders,
+                    key = { it.uid }
+                ) { leader ->
+                    FilterChip(
+                        selected = selectedLeader?.uid == leader.uid,
+                        onClick = { onLeaderSelected(leader) },
+                        label = {
+                            Text(
+                                text = leader.fullName.ifBlank { "قائد كشفي" },
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        modifier = Modifier.testTag("filter_leader_${leader.uid}")
+                    )
                 }
             }
         }

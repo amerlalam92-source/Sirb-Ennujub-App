@@ -35,19 +35,17 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,7 +68,6 @@ import com.example.presentation.common.LocalAppTerms
 fun ScoutStatementsPickerScreen(
     viewModel: FinanceReportsViewModel,
     onNavigateBack: () -> Unit,
-    onNavigateToShare: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val terms = LocalAppTerms.current
@@ -78,20 +75,18 @@ fun ScoutStatementsPickerScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
 
-    var searchQuery by remember { mutableStateOf("") }
-    var selectedScoutIds by remember { mutableStateOf(setOf<String>()) }
+    val searchQuery = uiState.searchQuery
+    val selectedScoutIds = uiState.selectedScoutIds
 
     // تصفية الأشبال وفق فلتر الديون والبحث
     val filteredScouts = remember(uiState.scouts, uiState.debts, uiState.selectedDebtFilter, searchQuery) {
         viewModel.getFilteredScouts(searchQuery)
     }
+    val isAllSelected = filteredScouts.isNotEmpty() && filteredScouts.all { selectedScoutIds.contains(it.id) }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
-                is FinanceReportsEvent.MultipleExportSuccess -> {
-                    onNavigateToShare()
-                }
                 is FinanceReportsEvent.ShowMessage -> {
                     snackbarHostState.showSnackbar(event.message)
                 }
@@ -175,7 +170,7 @@ fun ScoutStatementsPickerScreen(
             ) {
                 OutlinedTextField(
                     value = searchQuery,
-                    onValueChange = { searchQuery = it },
+                    onValueChange = { viewModel.onSearchQueryChanged(it) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("scout_statements_search_input"),
@@ -194,7 +189,7 @@ fun ScoutStatementsPickerScreen(
                     },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
+                            IconButton(onClick = { viewModel.onSearchQueryChanged("") }) {
                                 Icon(
                                     imageVector = Icons.Default.Clear,
                                     contentDescription = stringResource(id = R.string.cancel_action),
@@ -231,7 +226,7 @@ fun ScoutStatementsPickerScreen(
                 )
             }
 
-            // شريط إجراءات التحديد (تحديد الكل / إلغاء الكل)
+            // شريط إجراءات التحديد (زر تبديل تحديد الكل / إلغاء تحديد الكل)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -245,30 +240,20 @@ fun ScoutStatementsPickerScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(
-                        onClick = {
-                            selectedScoutIds = selectedScoutIds + filteredScouts.map { it.id }.toSet()
-                        },
-                        modifier = Modifier.testTag("select_all_scouts_btn")
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.action_select_all),
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
-                        )
-                    }
-
-                    TextButton(
-                        onClick = {
-                            selectedScoutIds = selectedScoutIds - filteredScouts.map { it.id }.toSet()
-                        },
-                        modifier = Modifier.testTag("deselect_all_scouts_btn")
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.action_deselect_all),
-                            style = MaterialTheme.typography.labelLarge
-                        )
-                    }
+                OutlinedButton(
+                    onClick = {
+                        if (isAllSelected) viewModel.deselectAll() else viewModel.selectAll()
+                    },
+                    enabled = filteredScouts.isNotEmpty(),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("toggle_select_all_scouts_btn")
+                ) {
+                    Text(
+                        text = stringResource(
+                            id = if (isAllSelected) R.string.action_deselect_all else R.string.action_select_all
+                        ),
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                    )
                 }
             }
 
@@ -304,13 +289,7 @@ fun ScoutStatementsPickerScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    selectedScoutIds = if (isSelected) {
-                                        selectedScoutIds - scout.id
-                                    } else {
-                                        selectedScoutIds + scout.id
-                                    }
-                                }
+                                .clickable { viewModel.toggleScoutSelection(scout.id) }
                                 .testTag("scout_item_${scout.id}"),
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(
@@ -327,13 +306,7 @@ fun ScoutStatementsPickerScreen(
                             ) {
                                 Checkbox(
                                     checked = isSelected,
-                                    onCheckedChange = { checked ->
-                                        selectedScoutIds = if (checked) {
-                                            selectedScoutIds + scout.id
-                                        } else {
-                                            selectedScoutIds - scout.id
-                                        }
-                                    },
+                                    onCheckedChange = { viewModel.toggleScoutSelection(scout.id) },
                                     modifier = Modifier.testTag("checkbox_${scout.id}")
                                 )
 

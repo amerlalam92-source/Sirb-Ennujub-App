@@ -17,7 +17,9 @@ import com.example.domain.scout.usecases.DeleteScoutUseCase
 import com.example.domain.scout.usecases.UpdateScoutUseCase
 import com.example.domain.progress.BadgeLevel
 import com.google.firebase.firestore.FirebaseFirestore
+import java.text.Collator
 import java.util.Calendar
+import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -204,11 +206,16 @@ class ScoutViewModel(
             matchesFilter && matchesQuery
         }
 
+        val collator = Collator.getInstance(Locale("ar", "DZ"))
+        val sortedScouts = filtered.sortedWith(
+            compareBy(collator) { it.fullName.ifBlank { "${it.name} ${it.surname}".trim() } }
+        )
+
         val activeCount = allScouts.count { it.isActive }
 
         ScoutListUiState.Success(
             allScouts = allScouts,
-            filteredScouts = filtered,
+            filteredScouts = sortedScouts,
             activeCount = activeCount,
             totalCount = allScouts.size,
             searchQuery = query,
