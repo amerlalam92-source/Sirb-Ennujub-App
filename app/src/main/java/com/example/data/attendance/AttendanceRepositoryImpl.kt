@@ -301,7 +301,9 @@ class AttendanceRepositoryImpl(
                     allList.filter { it.scoutId == scoutId }
                 }
 
-                val activitiesMap = activitiesList.associateBy { it.id }
+                val trainingActivitiesMap = activitiesList
+                    .filter { it.type == ActivityType.TRAINING_MEETING.key || it.activityType == ActivityType.TRAINING_MEETING }
+                    .associateBy { it.id }
 
                 var present = 0
                 var late = 0
@@ -312,6 +314,7 @@ class AttendanceRepositoryImpl(
                 val missed = mutableListOf<ActivitySummary>()
 
                 for (record in records) {
+                    val act = trainingActivitiesMap[record.activityId] ?: continue
                     when (record.status) {
                         "present" -> {
                             present++
@@ -328,12 +331,11 @@ class AttendanceRepositoryImpl(
                         "absent_excused" -> {
                             excused++
                             totalPoints += settings.absentExcusedPoints
-                            val act = activitiesMap[record.activityId]
                             missed.add(
                                 ActivitySummary(
                                     activityId = record.activityId,
-                                    title = act?.title ?: "نشاط كشفي",
-                                    date = if (record.activityDate > 0) record.activityDate else (act?.startDate ?: 0L),
+                                    title = act.title.ifBlank { "اجتماع تدريبي" },
+                                    date = if (record.activityDate > 0) record.activityDate else act.startDate,
                                     status = AttendanceStatus.ABSENT_EXCUSED
                                 )
                             )
@@ -341,12 +343,11 @@ class AttendanceRepositoryImpl(
                         "absent_unexcused" -> {
                             unexcused++
                             totalPoints += settings.absentUnexcusedPoints
-                            val act = activitiesMap[record.activityId]
                             missed.add(
                                 ActivitySummary(
                                     activityId = record.activityId,
-                                    title = act?.title ?: "نشاط كشفي",
-                                    date = if (record.activityDate > 0) record.activityDate else (act?.startDate ?: 0L),
+                                    title = act.title.ifBlank { "اجتماع تدريبي" },
+                                    date = if (record.activityDate > 0) record.activityDate else act.startDate,
                                     status = AttendanceStatus.ABSENT_UNEXCUSED
                                 )
                             )

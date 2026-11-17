@@ -97,16 +97,17 @@ fun EvaluationMatrixScreen(
                             if (uiState.rows.isEmpty()) {
                                 Toast.makeText(
                                     context,
-                                    context.getString(R.string.eval_matrix_empty),
+                                    "لا يوجد ${terms.scoutPlural} نشطون بـ${terms.groupNameDefinite}",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             } else {
                                 val file = EvaluationMatrixPdfHelper.exportMatrixPdf(
                                     rows = uiState.rows,
                                     totalMeetingsHeld = uiState.totalMeetingsHeld,
-                                    context = context
+                                    context = context,
+                                    terms = terms
                                 )
-                                EvaluationMatrixPdfHelper.shareMatrixPdf(file, context)
+                                EvaluationMatrixPdfHelper.shareMatrixPdf(file, context, terms)
                             }
                         },
                         modifier = Modifier.testTag("eval_matrix_export_pdf_button")

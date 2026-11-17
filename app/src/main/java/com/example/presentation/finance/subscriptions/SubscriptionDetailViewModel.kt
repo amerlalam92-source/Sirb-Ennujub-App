@@ -7,9 +7,11 @@ import com.example.domain.activity.ActivityRepository
 import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.FinanceSettings
 import com.example.domain.finance.FinanceSubscription
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
@@ -112,6 +114,15 @@ class SubscriptionDetailViewModel(
             defaultExcused = settings.absentExcusedAmount,
             defaultUnexcused = settings.absentUnexcusedAmount,
             isSavingOverride = isSavingOv
+        )
+    }.catch { e ->
+        if (e is CancellationException) throw e
+        emit(
+            SubscriptionDetailUiState(
+                activityId = activityId,
+                isLoading = false,
+                errorMessage = "فشل تحميل البيانات"
+            )
         )
     }.stateIn(
         scope = viewModelScope,

@@ -7,6 +7,8 @@ import com.example.domain.finance.ExpenseCategory
 import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.FinanceTransaction
 import com.example.domain.finance.FinanceTransactionType
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,8 +33,11 @@ class ExpensesViewModel(
         observeExpenses()
     }
 
+    private var observeJob: Job? = null
+
     private fun observeExpenses() {
-        repository.observeTransactionsByType(FinanceTransactionType.EXPENSE)
+        observeJob?.cancel()
+        observeJob = repository.observeTransactionsByType(FinanceTransactionType.EXPENSE)
             .onEach { list ->
                 val sorted = list.sortedByDescending { it.date }
                 val now = Calendar.getInstance()
@@ -54,12 +59,14 @@ class ExpensesViewModel(
                         totalExpenses = totalSum,
                         monthlyTotal = monthlySum,
                         totalCount = sorted.size,
-                        isLoading = false
+                        isLoading = false,
+                        errorMessage = null
                     )
                 }
             }
             .catch { e ->
-                _uiState.update { it.copy(isLoading = false, errorMessage = e.message) }
+                if (e is CancellationException) throw e
+                _uiState.update { it.copy(isLoading = false, errorMessage = "فشل تحميل البيانات") }
             }
             .launchIn(viewModelScope)
     }

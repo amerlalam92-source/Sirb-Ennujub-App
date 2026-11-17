@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.FinanceTransaction
 import com.example.domain.finance.FinanceTransactionType
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,8 +32,11 @@ class DonationsViewModel(
         observeDonations()
     }
 
+    private var observeJob: Job? = null
+
     private fun observeDonations() {
-        repository.observeTransactionsByType(FinanceTransactionType.DONATION)
+        observeJob?.cancel()
+        observeJob = repository.observeTransactionsByType(FinanceTransactionType.DONATION)
             .onEach { donationsList ->
                 val sorted = donationsList.sortedByDescending { it.date }
 
@@ -52,12 +57,14 @@ class DonationsViewModel(
                         totalDonations = total,
                         monthlyDonations = monthly,
                         donationsCount = sorted.size,
-                        isLoading = false
+                        isLoading = false,
+                        errorMessage = null
                     )
                 }
             }
             .catch { e ->
-                _uiState.update { it.copy(isLoading = false, errorMessage = e.message) }
+                if (e is CancellationException) throw e
+                _uiState.update { it.copy(isLoading = false, errorMessage = "فشل تحميل البيانات") }
             }
             .launchIn(viewModelScope)
     }

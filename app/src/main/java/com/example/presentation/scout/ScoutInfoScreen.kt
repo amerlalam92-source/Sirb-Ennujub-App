@@ -82,8 +82,7 @@ fun ScoutInfoScreen(
     viewModel: ScoutInfoViewModel,
     onNavigateToEdit: (String) -> Unit,
     onNavigateBack: () -> Unit,
-    modifier: Modifier = Modifier,
-    stageTerms: com.example.presentation.common.StageTerms = com.example.presentation.common.LocalStageTerms.current
+    modifier: Modifier = Modifier
 ) {
     val terms = LocalAppTerms.current
     val context = LocalContext.current

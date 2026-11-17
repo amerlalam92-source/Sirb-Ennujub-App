@@ -30,7 +30,11 @@ object LocalSettingsCache {
     }
 
     fun getLogo(context: Context): String? {
-        return getPrefs(context).getString(KEY_LOGO_BASE64, null)?.takeIf { it.isNotBlank() }
+        return try {
+            getPrefs(context).getString(KEY_LOGO_BASE64, null)?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun saveTerms(context: Context, terms: CustomTerms) {
@@ -57,8 +61,8 @@ object LocalSettingsCache {
     }
 
     fun getTerms(context: Context): CustomTerms? {
-        val raw = getPrefs(context).getString(KEY_CUSTOM_TERMS_JSON, null) ?: return null
         return try {
+            val raw = getPrefs(context).getString(KEY_CUSTOM_TERMS_JSON, null) ?: return null
             val json = JSONObject(raw)
             val defaults = CustomTerms()
             val wordsObj = json.optJSONObject("customWords")
@@ -83,7 +87,7 @@ object LocalSettingsCache {
                 groupNameDefinite = json.optString("groupNameDefinite", defaults.groupNameDefinite),
                 unitName = json.optString("unitName", defaults.unitName),
                 unitNameDefinite = json.optString("unitNameDefinite", defaults.unitNameDefinite),
-                patrolName = json.optString("patrolName", defaults.patrolName),
+                patrolName = json.optString("patrolName", defaults.patrolName).ifBlank { defaults.patrolName },
                 customWords = wordsMap
             )
         } catch (_: Exception) {

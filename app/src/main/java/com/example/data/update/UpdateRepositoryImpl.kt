@@ -30,11 +30,14 @@ class UpdateRepositoryImpl(
 
             try {
                 if (snapshot != null && snapshot.exists()) {
+                    val remoteCode = snapshot.safeInt("latestVersionCode", 0)
+                        .let { if (it > 0) it else snapshot.safeInt("versionCode", 0) }
                     val info = AppUpdateInfo(
-                        latestVersionCode = snapshot.safeInt("latestVersionCode", 0),
+                        latestVersionCode = remoteCode,
                         latestVersionName = snapshot.safeString("latestVersionName"),
                         apkUrl = snapshot.safeString("apkUrl"),
-                        changelog = snapshot.safeString("changelog")
+                        changelog = snapshot.safeString("changelog"),
+                        sha256 = snapshot.safeString("sha256")
                     )
                     trySend(info)
                 } else {
@@ -53,11 +56,14 @@ class UpdateRepositoryImpl(
         return try {
             val snapshot = updateDocRef.get().await()
             if (snapshot.exists()) {
+                val remoteCode = snapshot.safeInt("latestVersionCode", 0)
+                    .let { if (it > 0) it else snapshot.safeInt("versionCode", 0) }
                 AppUpdateInfo(
-                    latestVersionCode = snapshot.safeInt("latestVersionCode", 0),
+                    latestVersionCode = remoteCode,
                     latestVersionName = snapshot.safeString("latestVersionName"),
                     apkUrl = snapshot.safeString("apkUrl"),
-                    changelog = snapshot.safeString("changelog")
+                    changelog = snapshot.safeString("changelog"),
+                    sha256 = snapshot.safeString("sha256")
                 )
             } else {
                 null

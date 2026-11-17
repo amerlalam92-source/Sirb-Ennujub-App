@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.R
 import com.example.domain.activity.Activity
 import com.example.domain.activity.ActivityRepository
+import com.example.domain.activity.ActivityType
 import com.example.domain.attendance.ScoutStatistics
 import com.example.domain.attendance.usecases.ComputeScoutStatisticsUseCase
 import com.example.domain.scout.DuplicateScoutException
@@ -93,8 +94,10 @@ class ScoutViewModel(
         }
         if (activityRepository != null) {
             viewModelScope.launch {
-                activityRepository.observeActivities().collect {
-                    _activities.value = it
+                activityRepository.observeActivities().collect { list ->
+                    _activities.value = list.filter {
+                        it.type == ActivityType.TRAINING_MEETING.key || it.activityType == ActivityType.TRAINING_MEETING
+                    }
                 }
             }
         }
@@ -278,8 +281,24 @@ class ScoutViewModel(
         if (computeScoutStatisticsUseCase != null) {
             viewModelScope.launch {
                 try {
-                    computeScoutStatisticsUseCase(id)
-                        .catch { e ->
+                    val statsFlow = if (activityRepository != null) {
+                        combine(
+                            computeScoutStatisticsUseCase(id),
+                            activityRepository.observeActivities().catch { emit(emptyList()) }
+                        ) { stats, allActivities ->
+                            val trainingMeetingIds = allActivities
+                                .filter { it.type == ActivityType.TRAINING_MEETING.key || it.activityType == ActivityType.TRAINING_MEETING }
+                                .map { it.id }
+                                .toSet()
+                            stats.copy(
+                                missedActivities = stats.missedActivities.filter { it.activityId in trainingMeetingIds }
+                            )
+                        }
+                    } else {
+                        computeScoutStatisticsUseCase(id)
+                    }
+                    statsFlow
+                        .catch {
                             _scoutStats.value = ScoutStatistics(
                                 totalActivities = 0,
                                 presentCount = 0,

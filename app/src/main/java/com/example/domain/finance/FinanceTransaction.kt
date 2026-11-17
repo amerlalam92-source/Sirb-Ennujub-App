@@ -17,7 +17,8 @@ data class FinanceTransaction(
     val unitId: String? = null, // معرف الوحدة الكشفية
     val createdAt: Long = System.currentTimeMillis(),
     val createdBy: String = "",
-    val createdByName: String = ""
+    val createdByName: String = "",
+    val isRolledBack: Boolean = false
 ) {
     fun isIncome(): Boolean = type != FinanceTransactionType.EXPENSE
 }

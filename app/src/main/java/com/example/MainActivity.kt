@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
@@ -19,14 +20,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.settings.LocalSettingsCache
 import com.example.domain.preferences.ThemeMode
 import com.example.navigation.ScoutNavGraph
 import com.example.presentation.auth.LoginViewModel
+import com.example.presentation.common.ForceUpdateScreen
 import com.example.presentation.common.LocalAppDensity
 import com.example.presentation.common.LocalOnZoomClick
 import com.example.presentation.common.UiScaleDialog
+import com.example.presentation.update.UpdateViewModel
 import com.example.ui.theme.ScoutTheme
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -151,11 +155,30 @@ class MainActivity : ComponentActivity() {
                         )
                     )
 
-                    ScoutNavGraph(
-                        appContainer = appContainer,
-                        loginViewModel = loginViewModel,
-                        modifier = Modifier.fillMaxSize()
+                    val updateViewModel: UpdateViewModel = viewModel(
+                        factory = UpdateViewModel.Factory(
+                            updateRepository = appContainer.updateRepository,
+                            authRepository = appContainer.authRepository
+                        )
                     )
+                    val isForceUpdateRequired by updateViewModel.isForceUpdateRequired.collectAsStateWithLifecycle()
+                    val appUpdateInfo by updateViewModel.appUpdateInfo.collectAsStateWithLifecycle()
+
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        ScoutNavGraph(
+                            appContainer = appContainer,
+                            loginViewModel = loginViewModel,
+                            modifier = Modifier.fillMaxSize()
+                        )
+
+                        if (isForceUpdateRequired) {
+                            ForceUpdateScreen(
+                                apkUrl = appUpdateInfo?.apkUrl.orEmpty(),
+                                latestVersionName = appUpdateInfo?.latestVersionName.orEmpty(),
+                                onSkip = { updateViewModel.skipForceUpdate() }
+                            )
+                        }
+                    }
                 }
             }
         }

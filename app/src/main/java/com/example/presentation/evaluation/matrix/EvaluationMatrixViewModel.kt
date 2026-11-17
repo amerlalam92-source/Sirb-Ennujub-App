@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.domain.activity.ActivityStatus
+import com.example.domain.activity.ActivityType
 import com.example.domain.attendance.AttendancePointsSettings
 import com.example.domain.attendance.AttendanceRepository
 import com.example.domain.attendance.MeetingWithAttendance
@@ -133,11 +134,16 @@ class EvaluationMatrixViewModel(
         }
 
         val currentTime = System.currentTimeMillis()
-        val passedMeetings = meetings.filter { meeting ->
-            meeting.activity.isPast() ||
-                    meeting.activity.status == ActivityStatus.DONE.key ||
-                    meeting.activity.endDate < currentTime
-        }
+        val passedMeetings = meetings
+            .filter { meeting ->
+                meeting.activity.type == ActivityType.TRAINING_MEETING.key ||
+                    meeting.activity.activityType == ActivityType.TRAINING_MEETING
+            }
+            .filter { meeting ->
+                meeting.activity.isPast() ||
+                        meeting.activity.status == ActivityStatus.DONE.key ||
+                        meeting.activity.endDate < currentTime
+            }
         val totalMeetingsHeld = passedMeetings.size
         val maxPointsPerMeeting = pointsSettings.basePoints + pointsSettings.earlyBonus
         val totalPossibleAttendancePoints = totalMeetingsHeld * maxPointsPerMeeting
@@ -278,7 +284,7 @@ class EvaluationMatrixViewModel(
                         )
                     }.values
                     if (leaderScores.isNotEmpty()) {
-                        leaderScores.sum().toDouble() / 4.0
+                        leaderScores.sum().toDouble() / leaderScores.size.toDouble()
                     } else {
                         null
                     }

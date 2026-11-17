@@ -49,7 +49,8 @@ class TermsFirestoreDataSource(
                         groupNameDefinite = snapshot.safeString("groupNameDefinite", defaultTerms.groupNameDefinite),
                         unitName = snapshot.safeString("unitName", defaultTerms.unitName),
                         unitNameDefinite = snapshot.safeString("unitNameDefinite", defaultTerms.unitNameDefinite),
-                        patrolName = snapshot.safeString("patrolName", defaultTerms.patrolName),
+                        patrolName = snapshot.safeString("patrolName", defaultTerms.patrolName)
+                            .ifBlank { defaultTerms.patrolName },
                         customWords = customWords
                     )
                     trySend(terms)

@@ -237,7 +237,7 @@ fun AttendanceActivityPickerScreen(
                         Surface(
                             onClick = {
                                 showPrintPickerDialog = false
-                                viewModel.exportAttendanceFormPdf(activity, context)
+                                viewModel.exportAttendanceFormPdf(activity, context, terms)
                             },
                             shape = RoundedCornerShape(12.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),

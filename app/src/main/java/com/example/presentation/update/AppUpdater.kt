@@ -14,7 +14,14 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.example.R
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.security.MessageDigest
+import java.util.Locale
 
 /**
  * مدير تحميل وتثبيت تحديثات التطبيق عبر الهواء (OTA App Updater)
@@ -23,8 +30,30 @@ object AppUpdater {
 
     private const val TAG = "AppUpdater"
     private const val APK_FILE_NAME = "app-update.apk"
+    private val ALLOWED_HOSTS = setOf(
+        "github.com",
+        "objects.githubusercontent.com",
+        "github-releases.githubusercontent.com"
+    )
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var activeDownloadId: Long = -1L
     private var downloadReceiver: BroadcastReceiver? = null
+
+    /**
+     * التحقق من أن رابط التحميل يستخدم HTTPS ومن نطاق GitHub موثوق فقط
+     */
+    private fun isTrustedDownloadUrl(apkUrl: String): Boolean {
+        val trimmed = apkUrl.trim()
+        if (!trimmed.startsWith("https://", ignoreCase = true)) return false
+        val uri = try {
+            Uri.parse(trimmed)
+        } catch (_: Exception) {
+            return false
+        }
+        val scheme = uri.scheme?.lowercase(Locale.US)
+        val host = uri.host?.lowercase(Locale.US)
+        return scheme == "https" && !host.isNullOrBlank() && host in ALLOWED_HOSTS
+    }
 
     /**
      * بدء تحميل وتثبيت ملف الـ APK
@@ -32,11 +61,24 @@ object AppUpdater {
     fun startDownloadAndInstall(
         context: Context,
         apkUrl: String,
+        expectedSha256: String = "",
         onDownloadStarted: () -> Unit = {},
+        onDownloadSuccess: () -> Unit = {},
         onDownloadFailed: (String) -> Unit = {}
     ) {
-        if (apkUrl.isBlank()) {
-            onDownloadFailed(context.getString(R.string.update_download_failed))
+        val trimmedUrl = apkUrl.trim()
+        if (trimmedUrl.isBlank()) {
+            val msg = context.getString(R.string.update_download_failed)
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            onDownloadFailed(msg)
+            return
+        }
+
+        if (!isTrustedDownloadUrl(trimmedUrl)) {
+            Log.e(TAG, "Blocked untrusted OTA update URL: $trimmedUrl")
+            val msg = context.getString(R.string.update_invalid_url)
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            onDownloadFailed(msg)
             return
         }
 
@@ -54,7 +96,7 @@ object AppUpdater {
                 apkFile.delete()
             }
 
-            val uri = Uri.parse(apkUrl)
+            val uri = Uri.parse(trimmedUrl)
             val request = DownloadManager.Request(uri).apply {
                 setTitle(context.getString(R.string.update_dialog_title))
                 setDescription(context.getString(R.string.update_dialog_downloading))
@@ -78,24 +120,63 @@ object AppUpdater {
                     val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) ?: -1L
                     if (id == activeDownloadId && id != -1L) {
                         unregisterReceiver(context)
-                        val appContext = recvContext ?: context
+                        val appContext = (recvContext ?: context).applicationContext
 
-                        val query = DownloadManager.Query().setFilterById(id)
-                        val cursor = downloadManager.query(query)
-                        if (cursor != null && cursor.moveToFirst()) {
-                            val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
-                            val status = if (statusIndex >= 0) cursor.getInt(statusIndex) else -1
-                            cursor.close()
-
-                            if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                                Toast.makeText(appContext, R.string.update_download_success, Toast.LENGTH_SHORT).show()
-                                installApk(appContext, apkFile)
-                            } else {
-                                Toast.makeText(appContext, R.string.update_download_failed, Toast.LENGTH_SHORT).show()
+                        var status = -1
+                        downloadManager.query(DownloadManager.Query().setFilterById(id))?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                                if (statusIndex >= 0) {
+                                    status = cursor.getInt(statusIndex)
+                                }
                             }
-                        } else {
-                            cursor?.close()
-                            installApk(appContext, apkFile)
+                        }
+
+                        if (status != DownloadManager.STATUS_SUCCESSFUL) {
+                            if (apkFile.exists()) apkFile.delete()
+                            val failMsg = appContext.getString(R.string.update_download_failed)
+                            Toast.makeText(appContext, failMsg, Toast.LENGTH_SHORT).show()
+                            onDownloadFailed(failMsg)
+                            return
+                        }
+
+                        val pendingResult = goAsync()
+                        ioScope.launch {
+                            try {
+                                val cleanExpected = expectedSha256.trim()
+                                val actualSha = if (cleanExpected.isNotBlank() && apkFile.exists()) {
+                                    computeSha256(apkFile)
+                                } else {
+                                    null
+                                }
+
+                                val isValid = cleanExpected.isNotBlank() &&
+                                    actualSha != null &&
+                                    actualSha.equals(cleanExpected, ignoreCase = true)
+
+                                if (!isValid) {
+                                    Log.e(
+                                        TAG,
+                                        "APK SHA-256 verification failed. Expected=${cleanExpected.ifBlank { "<blank>" }}, Actual=${actualSha ?: "<error>"}"
+                                    )
+                                    if (apkFile.exists()) {
+                                        apkFile.delete()
+                                    }
+                                    withContext(Dispatchers.Main) {
+                                        val hashMsg = appContext.getString(R.string.update_hash_verification_failed)
+                                        Toast.makeText(appContext, hashMsg, Toast.LENGTH_LONG).show()
+                                        onDownloadFailed(hashMsg)
+                                    }
+                                } else {
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(appContext, R.string.update_download_success, Toast.LENGTH_SHORT).show()
+                                        onDownloadSuccess()
+                                        installApk(appContext, apkFile)
+                                    }
+                                }
+                            } finally {
+                                pendingResult.finish()
+                            }
                         }
                     }
                 }
@@ -107,12 +188,29 @@ object AppUpdater {
                 context.applicationContext,
                 receiver,
                 filter,
-                ContextCompat.RECEIVER_EXPORTED
+                ContextCompat.RECEIVER_NOT_EXPORTED
             )
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error initiating download for $apkUrl", e)
+            Log.e(TAG, "Error initiating download for $trimmedUrl", e)
             onDownloadFailed(e.localizedMessage ?: context.getString(R.string.update_download_failed))
+        }
+    }
+
+    private fun computeSha256(file: File): String? {
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(8192)
+            file.inputStream().use { input ->
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    digest.update(buffer, 0, bytesRead)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(Locale.US, it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to compute SHA-256 for ${file.absolutePath}", e)
+            null
         }
     }
 

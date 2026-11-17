@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -78,6 +79,7 @@ fun LeadersEvaluationReportScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val uiState by viewModel.leadersEvaluationReportData.collectAsStateWithLifecycle()
     val isExportingPdf by viewModel.isExportingPdf.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -150,7 +152,7 @@ fun LeadersEvaluationReportScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = stringResource(id = R.string.report_empty_scouts),
+                        text = "لا يوجد ${terms.scoutPlural} نشطون لعرض التقرير",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -223,7 +225,7 @@ fun LeadersEvaluationReportScreen(
                                 ) {
                                     // عمود اسم الشبل (140.dp)
                                     LeaderTableCell(
-                                        text = stringResource(id = R.string.report_column_scout_name),
+                                        text = "اسم ${terms.scoutSingularDefinite}",
                                         width = COL_NAME_WIDTH,
                                         isHeader = true,
                                         alignment = Alignment.CenterStart
@@ -382,6 +384,7 @@ private fun LeadersSummaryGrid(
     groupAverage: Double?,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -391,7 +394,7 @@ private fun LeadersSummaryGrid(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             LeaderGridCard(
-                title = stringResource(id = R.string.report_total_scouts),
+                title = "إجمالي ${terms.scoutPluralDefinite}",
                 value = "$totalScouts",
                 icon = Icons.Default.People,
                 color = MaterialTheme.colorScheme.primary,

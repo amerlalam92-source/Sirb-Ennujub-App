@@ -6,6 +6,12 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -13,7 +19,11 @@ import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.R
+import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.launch
 import androidx.navigation.navArgument
 import com.example.di.AppContainer
 import com.example.presentation.activity.ActivityDetailScreen
@@ -156,6 +166,33 @@ fun ScoutNavGraph(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController()
 ) {
+    var currentFirebaseUser by remember { mutableStateOf(appContainer.authRepository.currentUser) }
+    DisposableEffect(Unit) {
+        val auth = FirebaseAuth.getInstance()
+        val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
+            currentFirebaseUser = firebaseAuth.currentUser
+        }
+        auth.addAuthStateListener(listener)
+        onDispose { auth.removeAuthStateListener(listener) }
+    }
+
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    LaunchedEffect(currentRoute, currentFirebaseUser?.uid, currentFirebaseUser?.isEmailVerified) {
+        val allowedUnverifiedRoutes = setOf(
+            Routes.SPLASH,
+            Routes.LOGIN,
+            Routes.SIGNUP,
+            Routes.PENDING_APPROVAL
+        )
+        val user = currentFirebaseUser
+        if (user != null && !user.isEmailVerified && currentRoute != null && currentRoute !in allowedUnverifiedRoutes) {
+            navController.navigate(Routes.PENDING_APPROVAL) {
+                popUpTo(0) { inclusive = true }
+            }
+        }
+    }
+
     NavHost(
         navController = navController,
         startDestination = Routes.SPLASH,
@@ -1386,10 +1423,72 @@ fun ScoutNavGraph(
         }
 
         // =============================================================
-        // مسار شاشة انتظار الاعتماد
+        // مسار شاشة انتظار الاعتماد وتأكيد البريد الإلكتروني
         // =============================================================
         composable(route = Routes.PENDING_APPROVAL) {
+            val context = LocalContext.current
+            val scope = rememberCoroutineScope()
+            var isEmailVerified by remember { mutableStateOf(appContainer.authRepository.isEmailVerified) }
+            val userEmail = appContainer.authRepository.currentUser?.email
+            var isLoading by remember { mutableStateOf(false) }
+            var statusMessage by remember { mutableStateOf<String?>(null) }
+
+            LaunchedEffect(Unit) {
+                if (!isEmailVerified) {
+                    appContainer.authRepository.reloadUser()
+                    isEmailVerified = appContainer.authRepository.isEmailVerified
+                }
+                if (isEmailVerified) {
+                    val leader = appContainer.authRepository.getCurrentLeader()
+                    if (leader?.status == "approved") {
+                        navController.navigate(Routes.HOME) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
+                }
+            }
+
             com.example.presentation.auth.PendingApprovalScreen(
+                isEmailVerified = isEmailVerified,
+                userEmail = userEmail,
+                isLoading = isLoading,
+                statusMessage = statusMessage,
+                onResendVerification = {
+                    scope.launch {
+                        isLoading = true
+                        statusMessage = null
+                        val result = appContainer.authRepository.sendEmailVerification()
+                        isLoading = false
+                        statusMessage = if (result.isSuccess) {
+                            context.getString(R.string.email_verification_sent)
+                        } else {
+                            context.getString(R.string.email_verification_resend_failed)
+                        }
+                    }
+                },
+                onRefreshStatus = {
+                    scope.launch {
+                        isLoading = true
+                        statusMessage = null
+                        appContainer.authRepository.reloadUser()
+                        isEmailVerified = appContainer.authRepository.isEmailVerified
+                        if (isEmailVerified) {
+                            val leader = appContainer.authRepository.getCurrentLeader()
+                            if (leader?.status == "approved") {
+                                isLoading = false
+                                navController.navigate(Routes.HOME) {
+                                    popUpTo(0) { inclusive = true }
+                                }
+                                return@launch
+                            } else {
+                                statusMessage = context.getString(R.string.account_still_pending_approval)
+                            }
+                        } else {
+                            statusMessage = context.getString(R.string.email_verification_not_yet)
+                        }
+                        isLoading = false
+                    }
+                },
                 onLogout = {
                     appContainer.authRepository.logout()
                     navController.navigate(Routes.LOGIN) {

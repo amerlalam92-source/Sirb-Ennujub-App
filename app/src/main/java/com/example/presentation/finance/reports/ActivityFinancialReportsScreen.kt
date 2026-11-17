@@ -251,7 +251,8 @@ fun ActivityFinancialReportsScreen(
                                                     PdfExporter.shareActivityFinancePdf(
                                                         file = pdfFile,
                                                         activityTitle = activity.title,
-                                                        context = context
+                                                        context = context,
+                                                        terms = terms
                                                     )
                                                 },
                                                 onFailure = { error ->

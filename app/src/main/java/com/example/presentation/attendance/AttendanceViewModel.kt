@@ -22,6 +22,7 @@ import com.example.domain.finance.FinanceTransactionType
 import com.example.domain.finance.SubscriptionStatus
 import com.example.domain.scout.Scout
 import com.example.domain.scout.ScoutRepository
+import com.example.domain.settings.CustomTerms
 import com.example.domain.settings.SettingsRepository
 import com.example.presentation.reports.PdfExporter
 import java.text.Collator
@@ -198,7 +199,11 @@ class AttendanceViewModel(
         val activityTransactions = try {
             if (financeRepository != null) {
                 financeRepository.observeAllTransactions().first()
-                    .filter { it.relatedActivityId == activity.id && it.scoutId == scout.id }
+                    .filter {
+                        it.relatedActivityId == activity.id &&
+                            it.scoutId == scout.id &&
+                            !it.isRolledBack
+                    }
             } else emptyList()
         } catch (_: Exception) { emptyList() }
 
@@ -585,35 +590,58 @@ class AttendanceViewModel(
     /**
      * عكس معاملات سداد الديون والدفعات المقدمة المسجلة مسبقاً لهذا الشبل في هذا النشاط قبل حفظ التحديثات
      */
-    private suspend fun reverseOldPayments(activityId: String, scoutId: String) {
-        if (financeRepository == null) return
-        try {
+    private suspend fun reverseOldPayments(activityId: String, scoutId: String): Result<Unit> {
+        if (financeRepository == null) return Result.success(Unit)
+        return try {
             val existingTxs = financeRepository.observeAllTransactions().first()
                 .filter {
                     it.relatedActivityId == activityId &&
                         it.scoutId == scoutId &&
+                        !it.isRolledBack &&
                         (it.type == FinanceTransactionType.DEBT_PAYMENT ||
                             it.type == FinanceTransactionType.ADVANCE_PAYMENT)
                 }
 
             for (tx in existingTxs) {
+                if (tx.isRolledBack) continue
                 when (tx.type) {
                     FinanceTransactionType.DEBT_PAYMENT -> {
                         if (tx.amount > 0) {
-                            financeRepository.rollbackScoutDebts(scoutId, tx.amount)
+                            val rollbackResult = financeRepository.rollbackScoutDebts(
+                                scoutId = scoutId,
+                                amountToRollback = tx.amount,
+                                excludeActivityId = activityId
+                            )
+                            if (rollbackResult.isFailure) {
+                                return Result.failure(
+                                    Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.")
+                                )
+                            }
                         }
                     }
                     FinanceTransactionType.ADVANCE_PAYMENT -> {
                         if (tx.amount > 0) {
-                            scoutRepository.deductCreditFromScout(scoutId, tx.amount)
+                            val deductResult = scoutRepository.deductCreditFromScout(scoutId, tx.amount)
+                            if (deductResult.isFailure) {
+                                return Result.failure(
+                                    Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.")
+                                )
+                            }
                         }
                     }
                     else -> Unit
                 }
-                financeRepository.deleteTransaction(tx.id)
+                val auditResult = financeRepository.updateTransaction(tx.copy(isRolledBack = true))
+                if (auditResult.isFailure) {
+                    return Result.failure(
+                        Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.")
+                    )
+                }
             }
+            Result.success(Unit)
         } catch (e: Exception) {
             Log.e("AttendanceVM", "Error reversing old payments for $scoutId in $activityId: ${e.message}", e)
+            Result.failure(Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.", e))
         }
     }
 
@@ -628,8 +656,10 @@ class AttendanceViewModel(
         prevPaid: Int = _entryUiState.value.previousDebtPaid,
         todayReq: Int = _entryUiState.value.todaySubRequired,
         overpaymentCredit: Int = _entryUiState.value.overpaymentCredit
-    ) {
-        if (financeRepository == null || !_entryUiState.value.isFinanceSectionVisible) return
+    ): Result<Unit> {
+        if (financeRepository == null || !_entryUiState.value.isFinanceSectionVisible) {
+            return Result.success(Unit)
+        }
         val snapshot = FinanceSnapshot(
             status = currentStatus,
             todayPaid = todayPaid,
@@ -637,11 +667,17 @@ class AttendanceViewModel(
             todayReq = todayReq,
             credit = overpaymentCredit
         )
-        if (persistedFinanceSignature[scout.id] == snapshot) return
+        if (persistedFinanceSignature[scout.id] == snapshot) return Result.success(Unit)
 
-        try {
+        return try {
             // 1. عكس معاملات سداد الديون والرصيد المقدم السابقة لتفادي الازدواجية عند التعديل أو الحذف
-            reverseOldPayments(activity.id, scout.id)
+            val reverseResult = reverseOldPayments(activity.id, scout.id)
+            if (reverseResult.isFailure) {
+                val msg = reverseResult.exceptionOrNull()?.message
+                    ?: "فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى."
+                _entryUiState.update { it.copy(snackbarMessage = msg) }
+                return Result.failure(reverseResult.exceptionOrNull() ?: Exception(msg))
+            }
 
             // 2. تحديث اشتراك النشاط الحالي أولاً حتى لا يتأثر سداد الديون السابقة به
             val subStatus = SubscriptionStatus.fromKey(currentStatus.key)
@@ -658,43 +694,74 @@ class AttendanceViewModel(
                 debtAmount = (todayReq - todayPaid).coerceAtLeast(0),
                 updatedAt = System.currentTimeMillis()
             )
-            financeRepository.upsertSubscription(todaySub)
+            val subResult = financeRepository.upsertSubscription(todaySub)
+            if (subResult.isFailure) {
+                val err = subResult.exceptionOrNull() ?: Exception("فشل حفظ اشتراك النشاط")
+                _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل حفظ اشتراك النشاط") }
+                return Result.failure(err)
+            }
 
             // 3. تطبيق سداد الديون السابقة من جديد إن وجد
             if (prevPaid > 0) {
-                financeRepository.payScoutDebts(scout.id, prevPaid)
+                val payDebtResult = financeRepository.payScoutDebts(scout.id, prevPaid)
+                if (payDebtResult.isFailure) {
+                    val err = payDebtResult.exceptionOrNull() ?: Exception("فشل تسجيل سداد الديون السابقة")
+                    _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل تسجيل سداد الديون السابقة") }
+                    return Result.failure(err)
+                }
                 val debtTx = FinanceTransaction(
-                    id = "debt_pay_${activity.id}_${scout.id}",
+                    id = "",
                     type = FinanceTransactionType.DEBT_PAYMENT,
                     amount = prevPaid,
                     date = activity.startDate,
                     description = "سداد ديون سابقة",
                     source = scout.fullName,
                     scoutId = scout.id,
-                    relatedActivityId = activity.id
+                    relatedActivityId = activity.id,
+                    isRolledBack = false
                 )
-                financeRepository.upsertTransaction(debtTx)
+                val debtTxResult = financeRepository.addTransaction(debtTx)
+                if (debtTxResult.isFailure) {
+                    val err = debtTxResult.exceptionOrNull() ?: Exception("فشل حفظ معاملة سداد الديون")
+                    _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل حفظ معاملة سداد الديون") }
+                    return Result.failure(err)
+                }
             }
 
             // 4. تطبيق الدفعة المقدمة (الرصيد المقدم) من جديد إن وجدت
             if (overpaymentCredit > 0) {
-                scoutRepository.addCreditToScout(scout.id, overpaymentCredit)
+                val addCreditResult = scoutRepository.addCreditToScout(scout.id, overpaymentCredit)
+                if (addCreditResult.isFailure) {
+                    val err = addCreditResult.exceptionOrNull() ?: Exception("فشل تحديث الرصيد المقدم")
+                    _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل تحديث الرصيد المقدم") }
+                    return Result.failure(err)
+                }
                 val advanceTx = FinanceTransaction(
-                    id = "advance_pay_${activity.id}_${scout.id}",
+                    id = "",
                     type = FinanceTransactionType.ADVANCE_PAYMENT,
                     amount = overpaymentCredit,
                     date = activity.startDate,
                     description = "دفعة مقدمة (رصيد)",
                     source = scout.fullName,
                     scoutId = scout.id,
-                    relatedActivityId = activity.id
+                    relatedActivityId = activity.id,
+                    isRolledBack = false
                 )
-                financeRepository.upsertTransaction(advanceTx)
+                val advanceTxResult = financeRepository.addTransaction(advanceTx)
+                if (advanceTxResult.isFailure) {
+                    val err = advanceTxResult.exceptionOrNull() ?: Exception("فشل حفظ معاملة الدفعة المقدمة")
+                    _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل حفظ معاملة الدفعة المقدمة") }
+                    return Result.failure(err)
+                }
             }
 
             persistedFinanceSignature[scout.id] = snapshot
+            Result.success(Unit)
         } catch (e: Exception) {
             Log.e("AttendanceVM", "Error saving finance payment for ${scout.fullName}: ${e.message}", e)
+            val msg = e.message ?: "حدث خطأ أثناء حفظ البيانات المالية"
+            _entryUiState.update { it.copy(snackbarMessage = msg) }
+            Result.failure(e)
         }
     }
 
@@ -763,7 +830,10 @@ class AttendanceViewModel(
                 }
 
                 // 2. حفظ المدفوعات المالية
-                saveFinancePayment(scout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
+                val financeResult = saveFinancePayment(scout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
+                if (financeResult.isFailure) {
+                    return@launch
+                }
 
                 // 3. الانتقال للشبل التالي وتحميل بياناته المالية
                 _liveAmountInput.value = ""
@@ -839,7 +909,10 @@ class AttendanceViewModel(
                         Log.e("AttendanceVM", "Error saving attendance before going previous for ${currentScout.fullName}: ${e.message}", e)
                     }
 
-                    saveFinancePayment(currentScout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
+                    val financeResult = saveFinancePayment(currentScout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
+                    if (financeResult.isFailure) {
+                        return@launch
+                    }
 
                     _liveAmountInput.value = ""
                     _entryUiState.update {
@@ -923,7 +996,10 @@ class AttendanceViewModel(
                         Log.e("AttendanceVM", "Error saving attendance before jump for ${currentScout.fullName}: ${e.message}", e)
                     }
 
-                    saveFinancePayment(currentScout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
+                    val financeResult = saveFinancePayment(currentScout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
+                    if (financeResult.isFailure) {
+                        return@launch
+                    }
 
                     _liveAmountInput.value = ""
                     _entryUiState.update {
@@ -1009,7 +1085,11 @@ class AttendanceViewModel(
                     Log.e("AttendanceVM", "Error saving last scout attendance: ${e.message}", e)
                 }
 
-                saveFinancePayment(currentScout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
+                val financeResult = saveFinancePayment(currentScout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
+                if (financeResult.isFailure) {
+                    _entryUiState.update { it.copy(isSaving = false) }
+                    return@launch
+                }
             }
 
             _liveAmountInput.value = ""
@@ -1037,7 +1117,11 @@ class AttendanceViewModel(
     /**
      * تصدير استمارة تسجيل الحضور القابلة للطباعة (صفحة واحدة A4 عمودي) ومشاركتها
      */
-    fun exportAttendanceFormPdf(activity: Activity, context: Context) {
+    fun exportAttendanceFormPdf(
+        activity: Activity,
+        context: Context,
+        terms: CustomTerms = CustomTerms()
+    ) {
         viewModelScope.launch {
             try {
                 val activeScouts = scoutRepository.observeScouts().first().filter { it.isActive }
@@ -1061,13 +1145,15 @@ class AttendanceViewModel(
                         debtsMap = debtsMap,
                         context = context,
                         leaderNames = activity.responsibleName,
-                        activityDateMillis = activity.startDate
+                        activityDateMillis = activity.startDate,
+                        terms = terms
                     )
                 }
                 PdfExporter.shareAttendanceFormPdf(
                     file = file,
                     activityTitle = activity.title,
-                    context = context
+                    context = context,
+                    terms = terms
                 )
             } catch (e: Exception) {
                 Log.e("AttendanceVM", "Error exporting attendance form PDF: ${e.message}", e)

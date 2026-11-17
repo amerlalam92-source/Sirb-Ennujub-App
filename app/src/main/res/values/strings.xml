@@ -946,6 +946,8 @@
     <string name="update_download_failed">فشل تحميل التحديث، يرجى المحاولة لاحقاً</string>
     <string name="update_download_success">تم تحميل التحديث بنجاح، جارٍ التثبيت...</string>
     <string name="update_permission_required">يرجى منح إذن تثبيت التطبيقات لتثبيت التحديث</string>
+    <string name="update_invalid_url">رابط التحديث غير آمن أو من مصدر غير موثوق</string>
+    <string name="update_hash_verification_failed">فشل التحقق من سلامة ملف التحديث (SHA-256)، تم إلغاء التثبيت</string>
 
     <!-- التقارير العامة (General Reports) -->
     <string name="general_reports_title">التقارير العامة</string>
@@ -1044,6 +1046,14 @@
     <!-- إدارة قادة السرب ونظام الاعتماد -->
     <string name="pending_approval_title">حسابك قيد المراجعة</string>
     <string name="pending_approval_body">حسابك قيد المراجعة من قبل قائد السرب. يرجى المحاولة لاحقاً.</string>
+    <string name="email_verification_title">تأكيد البريد الإلكتروني</string>
+    <string name="email_verification_body">يرجى تأكيد بريدك الإلكتروني لتتمكن من الدخول.</string>
+    <string name="action_resend_verification">إعادة إرسال رابط التأكيد</string>
+    <string name="action_refresh_status">تحديث الحالة</string>
+    <string name="email_verification_sent">تم إرسال رابط التأكيد إلى بريدك الإلكتروني.</string>
+    <string name="email_verification_not_yet">لم يتم تأكيد البريد الإلكتروني بعد، يرجى التحقق من بريدك الإلكتروني.</string>
+    <string name="email_verification_resend_failed">تعذر إرسال رابط التأكيد، يرجى المحاولة بعد قليل.</string>
+    <string name="account_still_pending_approval">تم تأكيد البريد الإلكتروني، حسابك الآن بانتظار موافقة القائد الرئيسي.</string>
     <string name="leader_management_title">إدارة قادة السرب</string>
     <string name="tab_pending_leaders">قيد المراجعة</string>
     <string name="tab_approved_leaders">معتمدون</string>
@@ -1116,6 +1126,13 @@
     <string name="attendance_print_form_desc">طباعة استمارة الحضور</string>
     <string name="attendance_print_form_error">تعذر إنشاء استمارة الحضور</string>
     <string name="attendance_pick_activity_to_print_title">اختر النشاط لطباعة الاستمارة</string>
+
+    <!-- التحديث الإجباري للتطبيق (Force Update) -->
+    <string name="force_update_title">تحديث مطلوب</string>
+    <string name="force_update_message">لقد تم إصدار تحديث جديد للتطبيق. يجب تحديث التطبيق للاستمرار لحماية بياناتك ومنع حدوث أخطاء.</string>
+    <string name="force_update_button">تحديث الآن</string>
+    <string name="force_update_open_error">تعذر فتح رابط التحديث، يرجى المحاولة لاحقاً</string>
+    <string name="force_update_skip">تخطي مؤقت</string>
 </resources>
 
 

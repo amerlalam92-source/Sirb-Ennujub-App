@@ -9,6 +9,7 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import com.example.ScoutApplication
 import com.example.data.scout.ScoutFirestoreDataSource
 import com.example.domain.finance.FinanceRepository
+import com.example.domain.finance.FinanceSubscription
 import com.example.domain.finance.FinanceSummary
 import com.example.domain.finance.FinanceTransaction
 import com.example.domain.finance.ScoutDebt
@@ -16,7 +17,9 @@ import com.example.domain.scout.Scout
 import com.example.domain.scout.ScoutRepository
 import com.example.presentation.reports.PdfExporter
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +27,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -33,10 +37,12 @@ import java.io.File
 
 data class FinanceReportsUiState(
     val allTransactions: List<FinanceTransaction> = emptyList(),
+    val allSubscriptions: List<FinanceSubscription> = emptyList(),
     val summary: FinanceSummary? = null,
     val scouts: List<Scout> = emptyList(),
     val debts: List<ScoutDebt> = emptyList(),
     val isLoading: Boolean = true,
+    val errorMessage: String? = null,
     val isExporting: Boolean = false,
     val isExportingMultiple: Boolean = false,
     val exportMultipleProgress: Pair<Int, Int>? = null,
@@ -76,28 +82,43 @@ class FinanceReportsViewModel(
         loadTransactions()
     }
 
+    private var loadJob: Job? = null
+
     fun loadTransactions() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             val scoutsFlow: Flow<List<Scout>> = scoutRepository?.observeScouts()
                 ?: ScoutFirestoreDataSource(FirebaseFirestore.getInstance()).observeScouts()
 
             combine(
                 financeRepository.observeAllTransactions(),
+                financeRepository.observeAllSubscriptions(),
                 financeRepository.observeSummary(),
                 financeRepository.observeScoutDebts(),
                 scoutsFlow
-            ) { transactions, summary, debts, scouts ->
+            ) { transactions, subscriptions, summary, debts, scouts ->
                 val activeScouts = scouts.filter { it.isActive }
                 _uiState.update {
                     it.copy(
-                        allTransactions = transactions,
+                        allTransactions = transactions.filter { tx -> !tx.isRolledBack },
+                        allSubscriptions = subscriptions,
                         summary = summary,
                         debts = debts,
                         scouts = activeScouts,
-                        isLoading = false
+                        isLoading = false,
+                        errorMessage = null
                     )
                 }
+            }.catch { e ->
+                if (e is CancellationException) throw e
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = "فشل تحميل البيانات"
+                    )
+                }
+                _events.emit(FinanceReportsEvent.ShowMessage("فشل تحميل البيانات"))
             }.collect { }
         }
     }
@@ -158,11 +179,15 @@ class FinanceReportsViewModel(
             _uiState.update { it.copy(isExporting = true) }
             try {
                 val transactions = _uiState.value.allTransactions
+                val subscriptions = _uiState.value.allSubscriptions.ifEmpty {
+                    financeRepository.observeAllSubscriptions().first()
+                }
                 val summary = _uiState.value.summary ?: FinanceSummary()
                 val pdfFile = PdfExporter.exportMonthlyStatementPdf(
                     month = month,
                     year = year,
                     transactions = transactions,
+                    subscriptions = subscriptions,
                     summary = summary,
                     context = context,
                     terms = currentTerms
@@ -170,6 +195,8 @@ class FinanceReportsViewModel(
                 _uiState.update { it.copy(isExporting = false) }
                 PdfExporter.shareMonthlyStatementPdf(pdfFile, month, year, context, terms = currentTerms)
                 _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير كشف الحساب الشهري بنجاح"))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
                 _events.emit(FinanceReportsEvent.ShowMessage("حدث خطأ أثناء تصدير كشف الحساب: ${e.localizedMessage ?: "خطأ غير متوقع"}"))
@@ -190,6 +217,8 @@ class FinanceReportsViewModel(
                 _uiState.update { it.copy(isExporting = false) }
                 PdfExporter.shareExpensesByCategoryPdf(pdfFile, context, terms = currentTerms)
                 _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير تقرير المصاريف حسب التصنيف بنجاح"))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
                 _events.emit(FinanceReportsEvent.ShowMessage("حدث خطأ أثناء تصدير تقرير المصاريف: ${e.localizedMessage ?: "خطأ غير متوقع"}"))
@@ -239,6 +268,8 @@ class FinanceReportsViewModel(
                 _uiState.update { it.copy(isExporting = false) }
                 PdfExporter.shareSubscriptionsAndDebtsSummaryPdf(pdfFile, context, terms = currentTerms)
                 _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير تقرير الاشتراكات والديون بنجاح"))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
                 _events.emit(FinanceReportsEvent.ShowMessage("حدث خطأ أثناء تصدير تقرير الاشتراكات: ${e.localizedMessage ?: "خطأ غير متوقع"}"))
@@ -259,6 +290,8 @@ class FinanceReportsViewModel(
                 _uiState.update { it.copy(isExporting = false) }
                 PdfExporter.shareDetailedDebtsPdf(pdfFile, context, terms = currentTerms)
                 _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير تقرير الديون التفصيلي بنجاح"))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
                 _events.emit(FinanceReportsEvent.ShowMessage("حدث خطأ أثناء تصدير تقرير الديون: ${e.localizedMessage ?: "خطأ غير متوقع"}"))
@@ -271,12 +304,16 @@ class FinanceReportsViewModel(
             _uiState.update { it.copy(isExporting = true) }
             try {
                 val transactions = _uiState.value.allTransactions.ifEmpty {
-                    financeRepository.observeAllTransactions().first()
+                    financeRepository.observeAllTransactions().first().filter { !it.isRolledBack }
+                }
+                val subscriptions = _uiState.value.allSubscriptions.ifEmpty {
+                    financeRepository.observeAllSubscriptions().first()
                 }
                 val summary = _uiState.value.summary ?: financeRepository.observeSummary().first()
                 val pdfFile = PdfExporter.exportAnnualStatementPdf(
                     year = year,
                     transactions = transactions,
+                    subscriptions = subscriptions,
                     summary = summary,
                     context = context,
                     terms = currentTerms
@@ -284,6 +321,8 @@ class FinanceReportsViewModel(
                 _uiState.update { it.copy(isExporting = false) }
                 PdfExporter.shareAnnualStatementPdf(pdfFile, year, context, terms = currentTerms)
                 _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير التقرير السنوي لعام $year بنجاح"))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
                 _events.emit(FinanceReportsEvent.ShowMessage("حدث خطأ أثناء تصدير التقرير السنوي: ${e.localizedMessage ?: "خطأ غير متوقع"}"))
@@ -306,6 +345,8 @@ class FinanceReportsViewModel(
                 _uiState.update { it.copy(isExporting = false) }
                 PdfExporter.shareScoutStatementPdf(pdfFile, scout.fullName, context, terms = currentTerms)
                 _events.emit(FinanceReportsEvent.ShowMessage("تم تصدير كشف حساب ${currentTerms.scoutSingularDefinite} ${scout.fullName} بنجاح"))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false) }
                 _events.emit(FinanceReportsEvent.ShowMessage("حدث خطأ أثناء تصدير كشف حساب ${currentTerms.scoutSingularDefinite}: ${e.localizedMessage ?: "خطأ غير متوقع"}"))
@@ -390,6 +431,8 @@ class FinanceReportsViewModel(
                 _events.emit(
                     FinanceReportsEvent.ShowMessage("تم إنشاء ومشاركة ${generatedFiles.size} كشف حساب بنجاح")
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(

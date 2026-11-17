@@ -53,7 +53,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.navigation.Routes
-import com.example.presentation.common.StageTerms
 
 /**
  * محتوى القائمة الجانبية للتطبيق (App Navigation Drawer)
@@ -66,8 +65,7 @@ fun AppDrawerContent(
     onNavigate: (String) -> Unit,
     onLogout: () -> Unit,
     modifier: Modifier = Modifier,
-    isMainLeader: Boolean = false,
-    stageTerms: StageTerms = StageTerms()
+    isMainLeader: Boolean = false
 ) {
     val terms = LocalAppTerms.current
     Column(

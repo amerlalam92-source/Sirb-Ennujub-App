@@ -149,7 +149,7 @@ fun AttendanceReportScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = stringResource(id = R.string.report_empty_scouts),
+                        text = "لا يوجد ${terms.scoutPlural} نشطون لعرض التقرير",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -206,7 +206,7 @@ fun AttendanceReportScreen(
                                 ) {
                                     // عمود اسم الشبل
                                     ReportTableCell(
-                                        text = stringResource(id = R.string.report_column_scout_name),
+                                        text = "اسم ${terms.scoutSingularDefinite}",
                                         width = 140.dp,
                                         isHeader = true
                                     )

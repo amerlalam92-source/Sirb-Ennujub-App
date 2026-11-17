@@ -33,15 +33,13 @@ class AuthRepositoryImpl(
 
     companion object {
         private const val TAG = "AuthRepository"
-        private const val MAIN_LEADER_EMAIL = "amer92dz@gmail.com"
     }
 
     override val currentUser: FirebaseUser?
         get() = dataSource.currentUser
 
-    override fun isSuperAdmin(): Boolean {
-        return currentUser?.email?.equals(MAIN_LEADER_EMAIL, ignoreCase = true) == true
-    }
+    override val isEmailVerified: Boolean
+        get() = dataSource.currentUser?.isEmailVerified == true
 
     override suspend fun login(email: String, password: String): Result<FirebaseUser> {
         val result = dataSource.signInWithEmail(email, password)
@@ -76,15 +74,21 @@ class AuthRepositoryImpl(
             Log.w(TAG, "Failed to update profile display name for ${user.uid}, continuing anyway", e)
         }
 
-        val isDefaultMainLeader = email.trim().equals(MAIN_LEADER_EMAIL, ignoreCase = true)
+        try {
+            user.sendEmailVerification().await()
+            Log.d(TAG, "Verification email sent for user ${user.uid}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to send verification email for ${user.uid}", e)
+        }
+
         val leaderData = hashMapOf(
             "uid" to user.uid,
             "fullName" to fullName.trim(),
             "email" to email.trim(),
             "createdAt" to Timestamp.now(),
             "role" to "leader",
-            "isMainLeader" to isDefaultMainLeader,
-            "status" to if (isDefaultMainLeader) "approved" else "pending",
+            "isMainLeader" to false,
+            "status" to "pending",
             "unitId" to "default"
         )
 
@@ -111,16 +115,37 @@ class AuthRepositoryImpl(
         return Result.success(Unit)
     }
 
+    override suspend fun sendEmailVerification(): Result<Unit> {
+        val user = currentUser ?: return Result.failure(IllegalStateException("لا يوجد مستخدم مسجل حالياً"))
+        return try {
+            user.sendEmailVerification().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send verification email for ${user.uid}", e)
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun reloadUser(): Result<Boolean> {
+        val user = currentUser ?: return Result.failure(IllegalStateException("لا يوجد مستخدم مسجل حالياً"))
+        return try {
+            user.reload().await()
+            Result.success(currentUser?.isEmailVerified == true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to reload Firebase user ${user.uid}", e)
+            Result.failure(e)
+        }
+    }
+
     /**
      * دالة مساعدة للتأكد من وجود وثيقة القائد في Firestore واستكمالها تلقائياً إن كانت مفقودة.
-     * الحساب الافتراضي amer92dz@gmail.com يكون معتمداً ورئيساً تلقائياً.
+     * يتم إنشاء أي حساب جديد بصلاحيات قائد عادي وبحالة انتظار الاعتماد من الخادم فقط.
      */
     private suspend fun ensureLeaderDocument(user: FirebaseUser) {
         try {
             val docRef = firestore.collection("leaders").document(user.uid)
             val snapshot = docRef.get().await()
             val userPhotoUrl = user.photoUrl?.toString() ?: ""
-            val isDefaultMainLeader = user.email?.equals(MAIN_LEADER_EMAIL, ignoreCase = true) == true
 
             if (!snapshot.exists()) {
                 Log.d(TAG, "Leader document missing for ${user.uid}, auto-creating now.")
@@ -131,8 +156,8 @@ class AuthRepositoryImpl(
                     "photoUrl" to userPhotoUrl,
                     "createdAt" to Timestamp.now(),
                     "role" to "leader",
-                    "isMainLeader" to isDefaultMainLeader,
-                    "status" to if (isDefaultMainLeader) "approved" else "pending",
+                    "isMainLeader" to false,
+                    "status" to "pending",
                     "unitId" to "default"
                 )
                 docRef.set(leaderData).await()
@@ -143,15 +168,9 @@ class AuthRepositoryImpl(
                 if (storedPhotoUrl.isEmpty() && userPhotoUrl.isNotEmpty()) {
                     updates["photoUrl"] = userPhotoUrl
                 }
-                if (isDefaultMainLeader) {
-                    val isMain = snapshot.safeBoolean("isMainLeader", false)
-                    val status = snapshot.safeString("status")
-                    if (!isMain) updates["isMainLeader"] = true
-                    if (status != "approved") updates["status"] = "approved"
-                }
                 if (updates.isNotEmpty()) {
                     docRef.update(updates).await()
-                    Log.d(TAG, "Updated leader properties for ${user.uid}")
+                    Log.d(TAG, "Updated leader profile photo for ${user.uid}")
                 }
             }
         } catch (e: Exception) {
@@ -183,7 +202,7 @@ class AuthRepositoryImpl(
                 isMainLeader = isMainLeader,
                 status = status,
                 unitId = unitId,
-                isSuperAdmin = email.equals(MAIN_LEADER_EMAIL, ignoreCase = true)
+                isSuperAdmin = false
             )
         } catch (e: Exception) {
             Log.w(TAG, "Failed to map leader document ${doc.id}", e)
@@ -258,8 +277,8 @@ class AuthRepositoryImpl(
                     fullName = user.displayName ?: "قائد",
                     email = user.email ?: "",
                     role = "leader",
-                    isMainLeader = user.email?.equals(MAIN_LEADER_EMAIL, ignoreCase = true) == true,
-                    status = if (user.email?.equals(MAIN_LEADER_EMAIL, ignoreCase = true) == true) "approved" else "pending",
+                    isMainLeader = false,
+                    status = "pending",
                     unitId = "default"
                 )
             }

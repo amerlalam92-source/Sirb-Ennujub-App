@@ -72,6 +72,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -109,6 +110,7 @@ fun AttendanceEntryScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val state by viewModel.entryUiState.collectAsStateWithLifecycle()
     val currentScoutTotalPaid by viewModel.currentScoutTotalPaid.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -124,7 +126,7 @@ fun AttendanceEntryScreen(
         viewModel.initAttendanceEntry(activityId)
     }
 
-    val skippedMessage = stringResource(id = R.string.scout_skipped_readded_message)
+    val skippedMessage = "تم تخطي ${terms.scoutSingularDefinite} وسيعاد عرضه في نهاية القائمة"
     val selectStatusFirstMessage = stringResource(id = R.string.error_select_status_first)
 
     LaunchedEffect(state.snackbarMessage) {
@@ -176,7 +178,7 @@ fun AttendanceEntryScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Search,
-                                contentDescription = stringResource(id = R.string.attendance_search_scout_desc),
+                                contentDescription = "بحث عن ${terms.scoutSingular} للانتقال إليه",
                                 tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -226,7 +228,7 @@ fun AttendanceEntryScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = stringResource(id = R.string.empty_active_scouts_for_attendance),
+                        text = "لا يوجد ${terms.scoutPlural} نشطون لتسجيل الحضور لهم.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -590,6 +592,7 @@ private fun ScoutSearchDialog(
     onSelectScout: (Scout) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val terms = LocalAppTerms.current
     val indexedMatches = remember(query, scoutsQueue) {
         val trimmed = query.trim().lowercase()
         scoutsQueue.mapIndexedNotNull { index, scout ->
@@ -635,7 +638,7 @@ private fun ScoutSearchDialog(
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = stringResource(id = R.string.attendance_search_scout_title),
+                            text = "البحث عن ${terms.scoutSingular}",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -1091,6 +1094,7 @@ private fun AttendanceFinanceCard(
     isEditable: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val isStatusSelected = uiState.selectedStatus != null
     val canPay = uiState.canPay
     var isEditingTotal by remember { mutableStateOf(false) }
@@ -1393,7 +1397,7 @@ private fun AttendanceFinanceCard(
 
                 if (isStatusSelected && !canPay) {
                     Text(
-                        text = stringResource(id = R.string.msg_absent_cannot_pay),
+                        text = "${terms.scoutSingularDefinite} غائب، لا يمكن تسجيل الدفع الآن.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(start = 8.dp, top = 4.dp)
@@ -1414,7 +1418,7 @@ private fun AttendanceFinanceCard(
                 )
             },
             text = {
-                Text(text = stringResource(id = R.string.confirm_update_total_body))
+                Text(text = "هل أنت متأكد من تعديل إجمالي المبلغ المدفوع لهذا ${terms.scoutSingularDefinite}؟")
             },
             confirmButton = {
                 Button(

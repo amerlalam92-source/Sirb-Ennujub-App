@@ -1,6 +1,7 @@
 package com.example.data.finance
 
 import android.util.Log
+import com.example.data.firestore.safeBoolean
 import com.example.data.firestore.safeInt
 import com.example.data.firestore.safeLong
 import com.example.data.firestore.safeNullableInt
@@ -50,7 +51,7 @@ class FinanceFirestoreDataSource(
         val listenerRegistration = transactionsCollection
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    trySend(emptyList())
+                    close(error)
                     return@addSnapshotListener
                 }
                 val list = snapshot?.documents
@@ -62,16 +63,17 @@ class FinanceFirestoreDataSource(
         awaitClose { listenerRegistration.remove() }
     }
 
-    fun observeTransactionsBetween(from: Long, to: Long, unitId: String? = null): Flow<List<FinanceTransaction>> = callbackFlow {
+    fun observeTransactionsBetween(from: Long, to: Long): Flow<List<FinanceTransaction>> = callbackFlow {
         val listenerRegistration = transactionsCollection
+            .whereGreaterThanOrEqualTo("date", from)
+            .whereLessThanOrEqualTo("date", to)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    trySend(emptyList())
+                    close(error)
                     return@addSnapshotListener
                 }
                 val list = snapshot?.documents
                     ?.mapNotNull { mapDocumentToTransaction(it) }
-                    ?.filter { it.date in from..to }
                     ?.sortedByDescending { it.date }
                     ?: emptyList()
                 trySend(list)
@@ -83,7 +85,7 @@ class FinanceFirestoreDataSource(
         val listenerRegistration = transactionsCollection
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    trySend(emptyList())
+                    close(error)
                     return@addSnapshotListener
                 }
                 val list = snapshot?.documents
@@ -141,7 +143,7 @@ class FinanceFirestoreDataSource(
         val listenerRegistration = subscriptionsCollection
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    trySend(emptyList())
+                    close(error)
                     return@addSnapshotListener
                 }
                 val list = snapshot?.documents
@@ -157,7 +159,7 @@ class FinanceFirestoreDataSource(
         val listenerRegistration = subscriptionsCollection
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    trySend(emptyList())
+                    close(error)
                     return@addSnapshotListener
                 }
                 val list = snapshot?.documents
@@ -174,7 +176,7 @@ class FinanceFirestoreDataSource(
         val listenerRegistration = subscriptionsCollection
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    trySend(emptyList())
+                    close(error)
                     return@addSnapshotListener
                 }
                 val list = snapshot?.documents?.mapNotNull { mapDocumentToSubscription(it) } ?: emptyList()
@@ -202,6 +204,29 @@ class FinanceFirestoreDataSource(
         } catch (e: Exception) {
             Log.w("FinanceFirestoreDS", "Error getting subscription by id $subscriptionId", e)
             null
+        }
+    }
+
+    suspend fun getSubscriptionsForScout(scoutId: String): List<FinanceSubscription> {
+        val snapshot = subscriptionsCollection
+            .whereEqualTo("scoutId", scoutId)
+            .get()
+            .await()
+        return snapshot.documents
+            .mapNotNull { mapDocumentToSubscription(it) }
+            .sortedBy { it.activityDate }
+    }
+
+    suspend fun commitSubscriptionsBatch(subscriptions: List<FinanceSubscription>) {
+        if (subscriptions.isEmpty()) return
+        subscriptions.chunked(500).forEach { chunk ->
+            val batch = firestore.batch()
+            chunk.forEach { sub ->
+                val docId = sub.id.ifBlank { "${sub.activityId}_${sub.scoutId}" }
+                val finalSub = sub.copy(id = docId)
+                batch.set(subscriptionsCollection.document(docId), mapSubscriptionToMap(finalSub))
+            }
+            batch.commit().await()
         }
     }
 
@@ -327,7 +352,8 @@ class FinanceFirestoreDataSource(
                 unitId = doc.safeNullableString("unitId"),
                 createdAt = doc.safeLong("createdAt", now),
                 createdBy = doc.safeString("createdBy"),
-                createdByName = doc.safeString("createdByName")
+                createdByName = doc.safeString("createdByName"),
+                isRolledBack = doc.safeBoolean("isRolledBack", false)
             )
         } catch (e: Exception) {
             Log.w("FinanceFirestoreDS", "Failed to map transaction ${doc.id}", e)
@@ -347,7 +373,8 @@ class FinanceFirestoreDataSource(
             "unitId" to tx.unitId,
             "createdAt" to tx.createdAt,
             "createdBy" to tx.createdBy,
-            "createdByName" to tx.createdByName
+            "createdByName" to tx.createdByName,
+            "isRolledBack" to tx.isRolledBack
         )
         if (tx.type == FinanceTransactionType.EXPENSE && tx.category != null) {
             map["category"] = tx.category.key

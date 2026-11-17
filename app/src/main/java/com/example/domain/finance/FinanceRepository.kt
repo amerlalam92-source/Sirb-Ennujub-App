@@ -32,7 +32,7 @@ interface FinanceRepository {
         attendanceStatus: SubscriptionStatus
     ): Result<Unit>
     suspend fun payScoutDebts(scoutId: String, amountToPay: Int): Result<Unit>
-    suspend fun rollbackScoutDebts(scoutId: String, amountToRollback: Int): Result<Unit>
+    suspend fun rollbackScoutDebts(scoutId: String, amountToRollback: Int, excludeActivityId: String? = null): Result<Unit>
     suspend fun updateSubscriptionDebtManually(subscriptionId: String, newDebtAmount: Int): Result<Unit>
 
     // === Settings (إعدادات المالية) ===

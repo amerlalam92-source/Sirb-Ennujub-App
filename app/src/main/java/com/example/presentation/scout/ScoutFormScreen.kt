@@ -93,8 +93,7 @@ fun ScoutFormScreen(
     scoutId: String?,
     viewModel: ScoutViewModel,
     onNavigateBack: () -> Unit,
-    modifier: Modifier = Modifier,
-    stageTerms: com.example.presentation.common.StageTerms = com.example.presentation.common.LocalStageTerms.current
+    modifier: Modifier = Modifier
 ) {
     val terms = LocalAppTerms.current
     val formState by viewModel.formUiState.collectAsStateWithLifecycle()

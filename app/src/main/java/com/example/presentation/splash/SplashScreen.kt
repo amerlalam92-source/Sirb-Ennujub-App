@@ -24,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -66,14 +65,24 @@ fun SplashScreen(
         // مهلة بسيطة لعرض هوية الفوج الكشفي
         delay(900)
 
-        // فحص حالة الجلسة الحالية وحالة اعتماد القائد
+        // فحص حالة الجلسة الحالية، تأكيد البريد الإلكتروني، وحالة اعتماد القائد
         try {
             if (authRepository.currentUser != null) {
-                val leader = authRepository.getCurrentLeader()
-                if (leader?.status == "pending") {
+                try {
+                    authRepository.reloadUser()
+                } catch (_: Exception) {
+                    // استخدام الحالة المخزنة محلياً عند انقطاع الشبكة
+                }
+
+                if (!authRepository.isEmailVerified) {
                     onNavigateToPendingApproval()
                 } else {
-                    onNavigateToHome()
+                    val leader = authRepository.getCurrentLeader()
+                    if (leader == null || leader.status != "approved") {
+                        onNavigateToPendingApproval()
+                    } else {
+                        onNavigateToHome()
+                    }
                 }
             } else {
                 onNavigateToLogin()
@@ -91,7 +100,7 @@ fun SplashScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.White)
+            .background(MaterialTheme.colorScheme.background)
             .testTag("splash_screen_container"),
         contentAlignment = Alignment.Center
     ) {
@@ -114,7 +123,7 @@ fun SplashScreen(
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // اسم الوحدة / السرب الديناميكي باللون الأخضر الكشفي
+            // اسم الوحدة / السرب الديناميكي
             Text(
                 text = dynamicGroupTitle,
                 style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
@@ -124,11 +133,11 @@ fun SplashScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // الفوج باللون الكشفي الواضح
+            // الفوج بوضوح عالٍ في الوضعين الفاتح والداكن
             Text(
                 text = replaceCustomWords(stringResource(id = R.string.splash_subtitle), terms),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
                 textAlign = TextAlign.Center
             )
 

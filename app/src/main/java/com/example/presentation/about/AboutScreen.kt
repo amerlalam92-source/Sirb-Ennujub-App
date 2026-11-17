@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import com.example.BuildConfig
 import com.example.R
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
 
 /**
  * شاشة حول التطبيق الكشفي (About Screen)
@@ -50,6 +51,7 @@ fun AboutScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     BackHandler { onNavigateBack() }
 
     Surface(
@@ -141,7 +143,7 @@ fun AboutScreen(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = stringResource(id = R.string.about_app_description),
+                            text = "تطبيق إداري كشفي مخصص لقادة كشافة ${terms.groupName} ${terms.unitNameDefinite} التابع لفوج محمد رحال، لتيسير إدارة شؤون ${terms.scoutPluralDefinite}، برمجة الأنشطة، توثيق الاجتماعات، وتسجيل الحضور الميداني.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                             lineHeight = MaterialTheme.typography.bodyLarge.lineHeight

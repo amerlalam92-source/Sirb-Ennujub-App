@@ -5,10 +5,12 @@ import android.util.Log
 import com.example.di.AppContainer
 import com.example.di.DefaultAppContainer
 import com.google.firebase.FirebaseApp
+import com.google.firebase.appcheck.FirebaseAppCheck
+import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 
 /**
  * فئة التطبيق الرئيسية (Scout Application Class)
- * تقوم بتهيئة خدمات Firebase وإعداد حاوية التبعيات (Dependency Injection) ومسجل الأعطال العام (Crash Logger).
+ * تقوم بتهيئة خدمات Firebase و App Check وإعداد حاوية التبعيات (Dependency Injection) ومسجل الأعطال العام (Crash Logger).
  */
 class ScoutApplication : Application() {
 
@@ -25,14 +27,21 @@ class ScoutApplication : Application() {
             defaultHandler?.uncaughtException(thread, throwable)
         }
 
-        // تهيئة Firebase
+        // تهيئة Firebase و App Check قبل أي تهيئة لـ Auth أو Firestore
         try {
             FirebaseApp.initializeApp(this)
-        } catch (_: Exception) {
-            // يتم استخدام التهيئة الافتراضية
+            if (BuildConfig.DEBUG) {
+                AppCheckDebugInstaller.install()
+            } else {
+                FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+                    PlayIntegrityAppCheckProviderFactory.getInstance()
+                )
+            }
+        } catch (e: Exception) {
+            Log.w("ScoutApplication", "Firebase/AppCheck initialization skipped or deferred", e)
         }
 
-        // تهيئة حاوية التبعيات
+        // تهيئة حاوية التبعيات (تحتوي على FirebaseAuth و FirebaseFirestore)
         container = DefaultAppContainer(this)
     }
 }

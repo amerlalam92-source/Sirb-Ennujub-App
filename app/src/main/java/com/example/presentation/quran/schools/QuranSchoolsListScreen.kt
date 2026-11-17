@@ -173,7 +173,7 @@ fun QuranSchoolsListScreen(
                                 textAlign = TextAlign.Center
                             )
                             Text(
-                                text = stringResource(R.string.quran_schools_empty_description),
+                                text = "أضف المدارس القرآنية والكتاتيب لمتابعة انتظام ${terms.scoutPluralDefinite} وحفظهم لكتاب الله",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center

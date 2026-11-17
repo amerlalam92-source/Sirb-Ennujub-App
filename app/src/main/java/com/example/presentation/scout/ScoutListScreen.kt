@@ -102,8 +102,7 @@ fun ScoutListScreen(
     onNavigateToDetail: (String) -> Unit,
     onNavigateToAdd: () -> Unit,
     onNavigateBack: () -> Unit,
-    modifier: Modifier = Modifier,
-    stageTerms: com.example.presentation.common.StageTerms = com.example.presentation.common.LocalStageTerms.current
+    modifier: Modifier = Modifier
 ) {
     val terms = LocalAppTerms.current
     val uiState by viewModel.listUiState.collectAsStateWithLifecycle()

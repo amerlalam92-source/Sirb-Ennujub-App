@@ -186,6 +186,7 @@ interface AppContainer {
     val leaderManagementViewModelFactory: androidx.lifecycle.ViewModelProvider.Factory
     val brandingRepository: com.example.domain.settings.BrandingRepository
     val termsRepository: com.example.domain.settings.TermsRepository
+    val updateRepository: com.example.domain.update.UpdateRepository
 }
 
 class DefaultAppContainer(private val context: Context) : AppContainer {
@@ -817,6 +818,10 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
 
     override val termsRepository: com.example.domain.settings.TermsRepository by lazy {
         com.example.data.settings.TermsRepositoryImpl(termsFirestoreDataSource)
+    }
+
+    override val updateRepository: com.example.domain.update.UpdateRepository by lazy {
+        com.example.data.update.UpdateRepositoryImpl(firestore)
     }
 }
 

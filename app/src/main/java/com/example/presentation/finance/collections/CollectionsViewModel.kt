@@ -4,65 +4,87 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.domain.finance.FinanceRepository
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 
 /**
  * نموذج العرض لقائمة التحصيلات المالية الموحدة (CollectionsViewModel)
  * يدمج ويراقب بيانات الاشتراكات والمساهمات لكل نشاط ويحسب الإجماليات والمؤشرات.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class CollectionsViewModel(
     private val repository: FinanceRepository
 ) : ViewModel() {
 
     private val _selectedFilter = MutableStateFlow(CollectionsFilter.ALL)
+    private val _refreshTrigger = MutableStateFlow(0)
 
-    val uiState: StateFlow<CollectionsUiState> = combine(
-        repository.observeAllSubscriptions(),
-        _selectedFilter
-    ) { subscriptions, filter ->
-        // تجميع الاشتراكات حسب النشاط
-        val subsItems = subscriptions
-            .filter { it.activityId.isNotBlank() }
-            .groupBy { it.activityId }
-            .map { (actId, list) ->
-                val first = list.first()
-                val totalReq = list.sumOf { it.requiredAmount }
-                val totalPaid = list.sumOf { it.paidAmount }
-                val totalDebt = list.sumOf { it.debtAmount }
-                CollectionActivityItem(
-                    activityId = actId,
-                    activityTitle = first.activityTitle.ifBlank { "نشاط كشفي" },
-                    activityDate = first.activityDate,
-                    type = "subscriptions",
-                    participantsCount = list.size,
-                    totalRequired = totalReq,
-                    totalPaid = totalPaid,
-                    totalDebt = totalDebt,
-                    isFullyCollected = totalDebt == 0
-                )
+    fun refresh() {
+        _refreshTrigger.value += 1
+    }
+
+    val uiState: StateFlow<CollectionsUiState> = _refreshTrigger.flatMapLatest {
+        combine(
+            repository.observeAllSubscriptions(),
+            _selectedFilter
+        ) { subscriptions, filter ->
+            // تجميع الاشتراكات حسب النشاط
+            val subsItems = subscriptions
+                .filter { it.activityId.isNotBlank() }
+                .groupBy { it.activityId }
+                .map { (actId, list) ->
+                    val first = list.first()
+                    val totalReq = list.sumOf { it.requiredAmount }
+                    val totalPaid = list.sumOf { it.paidAmount }
+                    val totalDebt = list.sumOf { it.debtAmount }
+                    CollectionActivityItem(
+                        activityId = actId,
+                        activityTitle = first.activityTitle.ifBlank { "نشاط كشفي" },
+                        activityDate = first.activityDate,
+                        type = "subscriptions",
+                        participantsCount = list.size,
+                        totalRequired = totalReq,
+                        totalPaid = totalPaid,
+                        totalDebt = totalDebt,
+                        isFullyCollected = totalDebt == 0
+                    )
+                }
+
+            val allItems = subsItems.sortedByDescending { it.activityDate }
+            val filtered = when (filter) {
+                CollectionsFilter.ALL -> allItems
+                CollectionsFilter.SUBSCRIPTIONS -> allItems.filter { it.type == "subscriptions" }
             }
 
-        val allItems = subsItems.sortedByDescending { it.activityDate }
-        val filtered = when (filter) {
-            CollectionsFilter.ALL -> allItems
-            CollectionsFilter.SUBSCRIPTIONS -> allItems.filter { it.type == "subscriptions" }
+            CollectionsUiState(
+                items = allItems,
+                filteredItems = filtered,
+                selectedFilter = filter,
+                allCount = allItems.size,
+                subsCount = subsItems.size,
+                totalRequired = allItems.sumOf { it.totalRequired },
+                totalPaid = allItems.sumOf { it.totalPaid },
+                totalDebt = allItems.sumOf { it.totalDebt },
+                isLoading = false,
+                errorMessage = null
+            )
+        }.catch { e ->
+            if (e is CancellationException) throw e
+            emit(
+                CollectionsUiState(
+                    selectedFilter = _selectedFilter.value,
+                    isLoading = false,
+                    errorMessage = "فشل تحميل البيانات"
+                )
+            )
         }
-
-        CollectionsUiState(
-            items = allItems,
-            filteredItems = filtered,
-            selectedFilter = filter,
-            allCount = allItems.size,
-            subsCount = subsItems.size,
-            totalRequired = allItems.sumOf { it.totalRequired },
-            totalPaid = allItems.sumOf { it.totalPaid },
-            totalDebt = allItems.sumOf { it.totalDebt },
-            isLoading = false
-        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),

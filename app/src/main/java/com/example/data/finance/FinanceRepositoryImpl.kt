@@ -14,6 +14,7 @@ import com.example.domain.finance.SubscriptionStatus
 import android.util.Log
 import com.google.firebase.firestore.FirebaseFirestore
 import java.util.Calendar
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -348,11 +349,17 @@ class FinanceRepositoryImpl(
     override suspend fun payScoutDebts(scoutId: String, amountToPay: Int): Result<Unit> {
         if (amountToPay <= 0 || scoutId.isBlank()) return Result.success(Unit)
         return try {
-            val subs = dataSource.observeSubscriptionsForScout(scoutId).first()
+            val subs = dataSource.getSubscriptionsForScout(scoutId)
             val unpaid = subs.filter { it.paidAmount < it.requiredAmount && it.debtAmount > 0 }
                 .sortedBy { it.activityDate }
 
+            val currentUser = authRepository.currentUser
+            val leaderUnitId = authRepository.getCurrentLeader()?.unitId
+            val now = System.currentTimeMillis()
+            val updatedSubs = mutableListOf<FinanceSubscription>()
             var remainingPayment = amountToPay
+            var totalPaidApplied = 0
+
             for (sub in unpaid) {
                 if (remainingPayment <= 0) break
                 val currentDebt = (sub.requiredAmount - sub.paidAmount).coerceAtLeast(0)
@@ -365,48 +372,103 @@ class FinanceRepositoryImpl(
                 val updatedSub = sub.copy(
                     paidAmount = newPaid,
                     debtAmount = newDebt,
-                    updatedAt = System.currentTimeMillis()
+                    unitId = sub.unitId ?: leaderUnitId,
+                    recordedAt = now,
+                    recordedBy = sub.recordedBy.ifBlank { currentUser?.uid ?: "" },
+                    recordedByName = sub.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" },
+                    updatedAt = now
                 )
-                upsertSubscription(updatedSub)
+                updatedSubs.add(updatedSub)
                 remainingPayment -= toPay
+                totalPaidApplied += toPay
             }
+
+            if (updatedSubs.isNotEmpty()) {
+                dataSource.commitSubscriptionsBatch(updatedSubs)
+                val firstSub = updatedSubs.first()
+                activityLogDataSource.logActivity(
+                    userId = currentUser?.uid ?: "",
+                    userName = currentUser?.displayName ?: "قائد كشفي",
+                    action = "update",
+                    targetType = "finance_subscription",
+                    targetId = firstSub.id,
+                    targetName = "تسديد ديون: ${firstSub.scoutFullName}",
+                    details = "تسديد مبلغ $totalPaidApplied دج عبر ${updatedSubs.size} اشتراك(ات)",
+                    unitId = firstSub.unitId ?: leaderUnitId
+                )
+            }
+
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("FinanceRepo", "Error paying scout debts: ${e.message}", e)
             Result.failure(e)
         }
     }
 
-    override suspend fun rollbackScoutDebts(scoutId: String, amountToRollback: Int): Result<Unit> {
+    override suspend fun rollbackScoutDebts(
+        scoutId: String,
+        amountToRollback: Int,
+        excludeActivityId: String?
+    ): Result<Unit> {
         if (amountToRollback <= 0 || scoutId.isBlank()) return Result.success(Unit)
         return try {
-            val subs = dataSource.observeSubscriptionsForScout(scoutId).first()
-            val paidSubs = subs.filter { it.paidAmount > 0 }
+            val subs = dataSource.getSubscriptionsForScout(scoutId)
+            val paidSubs = subs
+                .filter {
+                    it.paidAmount > 0 &&
+                        (excludeActivityId.isNullOrBlank() || it.activityId != excludeActivityId)
+                }
                 .sortedBy { it.activityDate }
 
+            val currentUser = authRepository.currentUser
+            val leaderUnitId = authRepository.getCurrentLeader()?.unitId
+            val now = System.currentTimeMillis()
+            val updatedSubs = mutableListOf<FinanceSubscription>()
             var remainingRollback = amountToRollback
+            var totalRolledBack = 0
+
             for (sub in paidSubs) {
                 if (remainingRollback <= 0) break
                 val toRollback = minOf(sub.paidAmount, remainingRollback)
                 if (toRollback <= 0) continue
 
                 val newPaid = (sub.paidAmount - toRollback).coerceAtLeast(0)
-                val newDebt = sub.debtAmount + toRollback
+                val newDebt = (sub.requiredAmount - newPaid).coerceAtLeast(0)
 
                 val updatedSub = sub.copy(
                     paidAmount = newPaid,
                     debtAmount = newDebt,
-                    updatedAt = System.currentTimeMillis()
+                    unitId = sub.unitId ?: leaderUnitId,
+                    recordedAt = if (sub.recordedAt > 0L) sub.recordedAt else now,
+                    recordedBy = sub.recordedBy.ifBlank { currentUser?.uid ?: "" },
+                    recordedByName = sub.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" },
+                    updatedAt = now
                 )
-                val updateResult = upsertSubscription(updatedSub)
-                if (updateResult.isFailure) {
-                    return Result.failure(
-                        updateResult.exceptionOrNull() ?: Exception("فشل استعادة دين الاشتراك")
-                    )
-                }
+                updatedSubs.add(updatedSub)
                 remainingRollback -= toRollback
+                totalRolledBack += toRollback
             }
+
+            if (updatedSubs.isNotEmpty()) {
+                dataSource.commitSubscriptionsBatch(updatedSubs)
+                val firstSub = updatedSubs.first()
+                activityLogDataSource.logActivity(
+                    userId = currentUser?.uid ?: "",
+                    userName = currentUser?.displayName ?: "قائد كشفي",
+                    action = "update",
+                    targetType = "finance_subscription",
+                    targetId = firstSub.id,
+                    targetName = "التراجع عن تسديد ديون: ${firstSub.scoutFullName}",
+                    details = "استرجاع مبلغ $totalRolledBack دج عبر ${updatedSubs.size} اشتراك(ات)",
+                    unitId = firstSub.unitId ?: leaderUnitId
+                )
+            }
+
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("FinanceRepo", "Error rolling back scout debts: ${e.message}", e)
             Result.failure(e)
@@ -563,19 +625,21 @@ class FinanceRepositoryImpl(
         settings: FinanceSettings,
         activeScoutIds: Set<String>
     ): FinanceSummary {
-        val donations = transactions
+        val activeTransactions = transactions.filter { !it.isRolledBack }
+
+        val donations = activeTransactions
             .filter { it.type == FinanceTransactionType.DONATION }
             .sumOf { it.amount }
 
-        val advancePayments = transactions
+        val advancePayments = activeTransactions
             .filter { it.type == FinanceTransactionType.ADVANCE_PAYMENT }
             .sumOf { it.amount }
 
-        val contributions = transactions
+        val contributions = activeTransactions
             .filter { it.type == FinanceTransactionType.CONTRIBUTION }
             .sumOf { it.amount }
 
-        val txOpeningBalance = transactions
+        val txOpeningBalance = activeTransactions
             .filter { it.type == FinanceTransactionType.OPENING_BALANCE }
             .sumOf { it.amount }
 
@@ -586,7 +650,7 @@ class FinanceRepositoryImpl(
         val subscriptionsPaid = subscriptions.sumOf { it.paidAmount }
 
         val totalIncome = donations + effectiveOpeningBalance + subscriptionsPaid + advancePayments + contributions
-        val totalExpenses = transactions
+        val totalExpenses = activeTransactions
             .filter { it.type == FinanceTransactionType.EXPENSE }
             .sumOf { it.amount }
 
@@ -606,11 +670,11 @@ class FinanceRepositoryImpl(
         cal.add(Calendar.MONTH, 1)
         val endOfMonth = cal.timeInMillis
 
-        val monthlyExpenses = transactions
+        val monthlyExpenses = activeTransactions
             .filter { it.type == FinanceTransactionType.EXPENSE && it.date in startOfMonth until endOfMonth }
             .sumOf { it.amount }
 
-        val monthlyTxIncome = transactions
+        val monthlyTxIncome = activeTransactions
             .filter {
                 (it.type == FinanceTransactionType.DONATION ||
                     it.type == FinanceTransactionType.ADVANCE_PAYMENT ||

@@ -13,14 +13,16 @@ import com.example.domain.auth.AuthRepository
 import com.example.domain.evaluation.EvaluationRepository
 import com.example.domain.update.AppUpdateInfo
 import com.example.domain.update.UpdateRepository
-import com.example.presentation.common.StageTerms
 import com.example.presentation.update.AppUpdater
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -57,6 +59,14 @@ class HomeViewModel(
     private val _appUpdateInfo = MutableStateFlow<AppUpdateInfo?>(null)
     val appUpdateInfo: StateFlow<AppUpdateInfo?> = _appUpdateInfo.asStateFlow()
 
+    val isForceUpdateRequired: StateFlow<Boolean> = _appUpdateInfo
+        .map { info -> info != null && info.latestVersionCode > BuildConfig.VERSION_CODE }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = false
+        )
+
     private val _showUpdateDialog = MutableStateFlow(false)
     val showUpdateDialog: StateFlow<Boolean> = _showUpdateDialog.asStateFlow()
 
@@ -65,8 +75,6 @@ class HomeViewModel(
 
     private val _isMainLeader = MutableStateFlow(false)
     val isMainLeader: StateFlow<Boolean> = _isMainLeader.asStateFlow()
-
-    val stageTerms: StateFlow<StageTerms> = MutableStateFlow(StageTerms()).asStateFlow()
 
     private var leaderListenerRegistration: ListenerRegistration? = null
 
@@ -135,8 +143,12 @@ class HomeViewModel(
         AppUpdater.startDownloadAndInstall(
             context = context,
             apkUrl = info.apkUrl,
+            expectedSha256 = info.sha256,
             onDownloadStarted = {
                 _isDownloadingUpdate.value = true
+            },
+            onDownloadSuccess = {
+                _isDownloadingUpdate.value = false
             },
             onDownloadFailed = {
                 _isDownloadingUpdate.value = false

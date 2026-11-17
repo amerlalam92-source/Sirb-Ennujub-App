@@ -258,7 +258,38 @@ class ActivityRepositoryImpl(
         try {
             val firestore = FirebaseFirestore.getInstance()
 
-            // 1) Delete attendance subcollection
+            // 1) Rollback debts & advance credits linked via relatedActivityId BEFORE any deletions
+            val txByRelatedActivityId = firestore.collection("finance_transactions")
+                .whereEqualTo("relatedActivityId", id)
+                .get()
+                .await()
+
+            for (doc in txByRelatedActivityId.documents) {
+                if (doc.getBoolean("isRolledBack") == true) continue
+                val txType = FinanceTransactionType.fromKey(doc.getString("type"))
+                val scoutId = doc.getString("scoutId")?.takeIf { it.isNotBlank() }
+                val amount = (doc.get("amount") as? Number)?.toInt()
+                    ?: doc.getLong("amount")?.toInt()
+                    ?: 0
+                if (scoutId != null && amount > 0) {
+                    val rollbackResult = when (txType) {
+                        FinanceTransactionType.DEBT_PAYMENT -> {
+                            financeRepository.rollbackScoutDebts(scoutId, amount, excludeActivityId = id)
+                        }
+                        FinanceTransactionType.ADVANCE_PAYMENT -> {
+                            scoutRepository.deductCreditFromScout(scoutId, amount)
+                        }
+                        else -> Result.success(Unit)
+                    }
+                    if (rollbackResult.isFailure) {
+                        return Result.failure(
+                            Exception("فشل التراجع عن العمليات المالية. لم يتم حذف النشاط لحماية البيانات.")
+                        )
+                    }
+                }
+            }
+
+            // 2) Delete attendance subcollection
             val attendanceCollection = firestore.collection("activities")
                 .document(id)
                 .collection("attendance")
@@ -274,7 +305,7 @@ class ActivityRepositoryImpl(
                 }
             }
 
-            // 2) Delete finance_subscriptions for this activity
+            // 3) Delete finance_subscriptions for this activity
             val subsSnapshot = firestore.collection("finance_subscriptions")
                 .whereEqualTo("activityId", id)
                 .get()
@@ -287,31 +318,6 @@ class ActivityRepositoryImpl(
                         batch.delete(doc.reference)
                     }
                     batch.commit().await()
-                }
-            }
-
-            // 3) Rollback debts & advance credits linked via relatedActivityId BEFORE deleting transactions
-            val txByRelatedActivityId = firestore.collection("finance_transactions")
-                .whereEqualTo("relatedActivityId", id)
-                .get()
-                .await()
-
-            for (doc in txByRelatedActivityId.documents) {
-                val txType = FinanceTransactionType.fromKey(doc.getString("type"))
-                val scoutId = doc.getString("scoutId")?.takeIf { it.isNotBlank() }
-                val amount = (doc.get("amount") as? Number)?.toInt()
-                    ?: doc.getLong("amount")?.toInt()
-                    ?: 0
-                if (scoutId != null && amount > 0) {
-                    when (txType) {
-                        FinanceTransactionType.DEBT_PAYMENT -> {
-                            financeRepository.rollbackScoutDebts(scoutId, amount)
-                        }
-                        FinanceTransactionType.ADVANCE_PAYMENT -> {
-                            scoutRepository.deductCreditFromScout(scoutId, amount)
-                        }
-                        else -> Unit
-                    }
                 }
             }
 
@@ -337,7 +343,9 @@ class ActivityRepositoryImpl(
                 }
             }
         } catch (e: Exception) {
-            // Non-fatal if cascaded cleanup fails
+            return Result.failure(
+                Exception("فشل التراجع عن العمليات المالية. لم يتم حذف النشاط لحماية البيانات.", e)
+            )
         }
 
         val result = dataSource.deleteActivity(id)

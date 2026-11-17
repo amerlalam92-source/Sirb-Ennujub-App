@@ -81,7 +81,9 @@ class ActivityFinancialReportsViewModel(
                 .filter { it.paidAmount > 0 }
 
             val allTransactions = financeRepository.observeAllTransactions().first()
-            val activityTransactions = allTransactions.filter { it.relatedActivityId == activityId }
+            val activityTransactions = allTransactions.filter {
+                it.relatedActivityId == activityId && !it.isRolledBack
+            }
 
             val scoutsById = scoutRepository.observeScouts().first().associateBy { it.id }
 
@@ -121,7 +123,7 @@ class ActivityFinancialReportsViewModel(
                 val scoutName = scoutRecord?.fullName?.takeIf { it.isNotBlank() }
                     ?: scoutSubs.firstOrNull { it.scoutFullName.isNotBlank() }?.scoutFullName
                     ?: scoutTxs.firstOrNull { !it.source.isNullOrBlank() }?.source
-                    ?: "شبل"
+                    ?: currentTerms.scoutSingular
 
                 ScoutPaymentDetail(
                     scoutName = scoutName,

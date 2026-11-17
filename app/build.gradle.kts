@@ -1,13 +1,5 @@
-// ==============================================================================
-// PERMANENT PROJECT SIGNING KEYSTORE CONFIGURATION:
-// Keystore: app/release-keystore.jks (alias: sirb_key)
-// Store Password: sirb2026keystore
-// Key Password:   sirb2026keystore
-// SHA-1 Fingerprint:   60:AB:C2:2D:C8:60:DD:9A:2C:33:AA:13:14:BE:22:7C:45:60:BA:76
-// SHA-1 (no colons):   60abc22dc860dd9a2c33aa1314be227c4560ba76
-// SHA-256 Fingerprint: 3B:F4:38:F5:71:18:6B:A5:1B:07:5E:AB:EE:09:3F:23:8E:CE:74:84:AA:96:1B:FD:A7:32:13:8A:D5:93:20:79
-// ==============================================================================
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import org.gradle.api.GradleException
 
 plugins {
   alias(libs.plugins.android.application)
@@ -25,42 +17,35 @@ android {
     applicationId = "com.example"
     minSdk = 24
     targetSdk = 36
-    versionCode = 6
-    versionName = "1.2.0"
+    versionCode = 7
+    versionName = "1.2.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   signingConfigs {
-    create("sirbSigning") {
-      storeFile = file("release-keystore.jks")
-      storePassword = "sirb2026keystore"
-      keyAlias = "sirb_key"
-      keyPassword = "sirb2026keystore"
-    }
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
+      val keystorePath = System.getenv("KEYSTORE_PATH")
+      if (!keystorePath.isNullOrBlank()) {
+        storeFile = file(keystorePath)
+      }
       storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
+      keyAlias = System.getenv("KEY_ALIAS")
       keyPassword = System.getenv("KEY_PASSWORD")
-    }
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
     }
   }
 
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("sirbSigning")
+      signingConfig = signingConfigs.getByName("release")
     }
-    debug { signingConfig = signingConfigs.getByName("sirbSigning") }
+    debug {
+      signingConfig = signingConfigs.getByName("debug")
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -74,6 +59,19 @@ android {
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
+  }
+}
+
+gradle.taskGraph.whenReady {
+  val isReleaseBuild = allTasks.any { it.name.contains("Release", ignoreCase = true) }
+  if (isReleaseBuild) {
+    val missingVars = listOf("KEYSTORE_PATH", "STORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD")
+      .filter { System.getenv(it).isNullOrBlank() }
+    if (missingVars.isNotEmpty()) {
+      throw GradleException(
+        "Release keystore environment variables are missing: ${missingVars.joinToString(", ")}"
+      )
+    }
   }
 }
 
@@ -111,26 +109,18 @@ dependencies {
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.core.splashscreen)
-  implementation(libs.androidx.room.ktx)
-  implementation(libs.androidx.room.runtime)
   implementation(libs.androidx.credentials)
   implementation(libs.androidx.credentials.play.services)
   implementation(libs.googleid)
   implementation(libs.coil.compose)
-  implementation(libs.converter.moshi)
-  implementation(libs.firebase.ai)
   implementation(libs.firebase.firestore)
   implementation(libs.firebase.auth)
-  implementation(libs.firebase.appcheck.recaptcha)
-  implementation(libs.firebase.appcheck.debug)
+  // implementation(libs.firebase.appcheck.recaptcha)
+  implementation(libs.firebase.appcheck.playintegrity)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.kotlinx.coroutines.play.services)
-  implementation(libs.logging.interceptor)
-  implementation(libs.moshi.kotlin)
-  implementation(libs.okhttp)
   // implementation(libs.play.services.location)
-  implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
@@ -144,6 +134,5 @@ dependencies {
   androidTestImplementation(libs.androidx.runner)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
-  "ksp"(libs.androidx.room.compiler)
-  "ksp"(libs.moshi.kotlin.codegen)
+  debugImplementation(libs.firebase.appcheck.debug)
 }

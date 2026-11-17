@@ -138,8 +138,6 @@ fun HomeScreen(
 
     val isMainLeader by (viewModel?.isMainLeader ?: kotlinx.coroutines.flow.flowOf(false))
         .collectAsStateWithLifecycle(initialValue = false)
-    val stageTerms by (viewModel?.stageTerms ?: kotlinx.coroutines.flow.flowOf(com.example.presentation.common.StageTerms()))
-        .collectAsStateWithLifecycle(initialValue = com.example.presentation.common.StageTerms())
 
     // مراقبة حية لعدد الأشبال من Firestore بدون أي رقم ثابت
     val scoutsList by scoutRepository.observeScouts().collectAsStateWithLifecycle(initialValue = emptyList())
@@ -189,7 +187,6 @@ fun HomeScreen(
                     currentRoute = Routes.HOME,
                     leaderName = leaderFullName,
                     isMainLeader = isMainLeader,
-                    stageTerms = stageTerms,
                     onNavigate = { route ->
                         scope.launch { drawerState.close() }
                         when (route) {

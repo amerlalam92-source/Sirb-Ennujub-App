@@ -9,9 +9,12 @@ import kotlinx.coroutines.flow.Flow
  */
 interface AuthRepository {
     val currentUser: FirebaseUser?
+    val isEmailVerified: Boolean
     suspend fun login(email: String, password: String): Result<FirebaseUser>
     suspend fun signInWithGoogle(idToken: String): Result<FirebaseUser>
     suspend fun signUp(fullName: String, email: String, password: String): Result<Unit>
+    suspend fun sendEmailVerification(): Result<Unit>
+    suspend fun reloadUser(): Result<Boolean>
     fun logout()
     fun observeAllLeaders(): Flow<List<Leader>>
     fun observeCurrentLeader(): Flow<Leader?>
@@ -22,5 +25,4 @@ interface AuthRepository {
     suspend fun toggleMainLeader(uid: String, isMainLeader: Boolean): Result<Unit>
     suspend fun updateMainLeader(newLeaderId: String): Result<Unit>
     suspend fun deleteAccount(user: FirebaseUser): Result<Unit>
-    fun isSuperAdmin(): Boolean
 }

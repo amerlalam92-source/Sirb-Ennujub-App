@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
 import kotlinx.coroutines.launch
 
 // إعدادات أبعاد الأعمدة الثابتة للمصفوفة
@@ -80,6 +81,7 @@ fun ProgressReportScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val uiState by viewModel.progressReportData.collectAsStateWithLifecycle()
     val isExportingPdf by viewModel.isExportingPdf.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -152,7 +154,7 @@ fun ProgressReportScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = stringResource(id = R.string.report_empty_scouts),
+                        text = "لا يوجد ${terms.scoutPlural} نشطون لعرض التقرير",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -205,7 +207,7 @@ fun ProgressReportScreen(
                                 ) {
                                     // عمود اسم الشبل (140.dp)
                                     ProgressTableCell(
-                                        text = stringResource(id = R.string.report_column_scout_name),
+                                        text = "اسم ${terms.scoutSingularDefinite}",
                                         width = COL_NAME_WIDTH,
                                         isHeader = true,
                                         alignment = Alignment.CenterStart
@@ -438,6 +440,7 @@ private fun ProgressSummaryGrid(
     totalHobbies: Int,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -448,7 +451,7 @@ private fun ProgressSummaryGrid(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             SummaryGridCard(
-                title = stringResource(id = R.string.report_total_scouts),
+                title = "إجمالي ${terms.scoutPluralDefinite}",
                 value = "$totalScouts",
                 icon = Icons.Default.People,
                 color = MaterialTheme.colorScheme.primary,

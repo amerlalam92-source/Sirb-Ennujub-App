@@ -1006,7 +1006,7 @@ fun ActivityDetailScreen(
  */
 private fun buildActivityShareText(activity: Activity, terms: com.example.domain.settings.CustomTerms? = null): String {
     val resolvedTerms = terms ?: com.example.domain.settings.CustomTerms()
-    val groupHeader = if (terms != null) "${terms.groupName} ${terms.unitNameDefinite}" else "سرب النُّجُب"
+    val groupHeader = "${resolvedTerms.groupName} ${resolvedTerms.unitNameDefinite}"
     return buildString {
         append("⚜️ $groupHeader — فوج محمد رحال ⚜️\n\n")
         append("📌 النشاط: ${activity.title}\n")

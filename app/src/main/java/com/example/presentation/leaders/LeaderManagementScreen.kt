@@ -63,6 +63,7 @@ import com.example.R
 import com.example.domain.auth.Leader
 import com.example.presentation.common.AppAlertDialog
 import com.example.presentation.common.CustomTopAppBar
+import com.example.presentation.common.LocalAppTerms
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,6 +72,7 @@ fun LeaderManagementScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val terms = LocalAppTerms.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -91,7 +93,7 @@ fun LeaderManagementScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             CustomTopAppBar(
-                title = stringResource(id = R.string.leader_management_title),
+                title = "إدارة قادة ${terms.groupNameDefinite}",
                 navigationIcon = {
                     IconButton(
                         onClick = onNavigateBack,
@@ -250,7 +252,7 @@ fun LeaderManagementScreen(
                 text = {
                     Text(
                         text = if (isMakingMain) {
-                            stringResource(id = R.string.confirm_make_main_leader_body_format, leaderToToggle.fullName)
+                            "هل أنت متأكد من تعيين القائد '${leaderToToggle.fullName}' كقائد رئيسي لـ${terms.groupNameDefinite}؟"
                         } else {
                             stringResource(id = R.string.confirm_revoke_main_leader_body_format, leaderToToggle.fullName)
                         },

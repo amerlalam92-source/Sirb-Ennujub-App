@@ -6,9 +6,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.domain.activity.ActivityRepository
 import com.example.domain.activity.ActivityStatus
+import com.example.domain.activity.ActivityType
 import com.example.domain.attendance.AttendancePointsSettings
 import com.example.domain.attendance.AttendanceRepository
 import com.example.domain.auth.AuthRepository
+import com.example.domain.auth.Leader
 import com.example.domain.evaluation.CriteriaType
 import com.example.domain.evaluation.EvaluationCriteria
 import com.example.domain.evaluation.EvaluationRepository
@@ -19,7 +21,6 @@ import com.example.domain.scout.ScoutRepository
 import com.example.domain.settings.CustomTerms
 import com.example.domain.settings.TermsRepository
 import com.example.presentation.reports.PdfExporter
-import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,7 +29,6 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import java.text.Collator
 import java.util.Locale
 
@@ -127,15 +127,25 @@ class EvaluationViewModel(
     }
 
     /**
-     * مراقبة الأشبال النشطين
+     * مراقبة الأشبال النشطين مرتبين أبجدياً باللغة العربية
      */
     private fun observeScouts() {
+        val collator = Collator.getInstance(Locale("ar", "DZ")).apply {
+            strength = Collator.PRIMARY
+        }
         viewModelScope.launch {
             scoutRepository.observeScouts()
                 .catch { /* ignore or log */ }
                 .collect { scouts ->
+                    val sortedScouts = scouts
+                        .filter { it.isActive }
+                        .sortedWith(
+                            compareBy(collator) {
+                                it.fullName.ifBlank { "${it.name} ${it.surname}".trim() }
+                            }
+                        )
                     _uiState.update { state ->
-                        state.copy(scouts = scouts.filter { it.isActive })
+                        state.copy(scouts = sortedScouts)
                     }
                 }
         }
@@ -418,14 +428,48 @@ class EvaluationViewModel(
     fun shareRawPointsPdf(context: Context) {
         viewModelScope.launch {
             try {
+                val selectedTerm = _uiState.value.selectedTerm.ifBlank { "TERM_1" }
+                val termLabel = when (selectedTerm) {
+                    "TERM_1" -> "الفصل الأول"
+                    "TERM_2" -> "الفصل الثاني"
+                    "TERM_3" -> "الفصل الثالث"
+                    else -> selectedTerm
+                }
+
                 val scouts = scoutRepository.observeScouts().first().filter { it.isActive }
+                val activeScoutIds = scouts.map { it.id }.toSet()
                 val allEvaluations = evaluationRepository.observeAllEvaluations().first()
+                val termEvaluations = allEvaluations.filter {
+                    it.activityId == selectedTerm && it.scoutId in activeScoutIds
+                }
+
                 val criteriaList = evaluationRepository.observeCriteria().first()
                 val criteriaMap = criteriaList.associateBy { it.id }
 
-                val meetings = attendanceRepository?.getTrainingMeetingsRegister()?.first() ?: emptyList()
+                val meetings = (attendanceRepository?.getTrainingMeetingsRegister()?.first() ?: emptyList())
+                    .filter { meeting ->
+                        meeting.activity.type == ActivityType.TRAINING_MEETING.key ||
+                            meeting.activity.activityType == ActivityType.TRAINING_MEETING
+                    }
                 val pointsSettings = attendanceRepository?.observePointsSettings()?.first()
                     ?: AttendancePointsSettings()
+
+                val allLeaders = try {
+                    authRepository.observeAllLeaders().first()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                val leaderNamesMap = mutableMapOf<String, String>()
+                termEvaluations.forEach { eval ->
+                    if (eval.leaderId.isNotBlank() && eval.leaderName.isNotBlank()) {
+                        leaderNamesMap[eval.leaderId] = eval.leaderName
+                    }
+                }
+                allLeaders.forEach { leader ->
+                    if (leader.uid.isNotBlank() && leader.fullName.isNotBlank()) {
+                        leaderNamesMap[leader.uid] = leader.fullName
+                    }
+                }
 
                 val currentTime = System.currentTimeMillis()
                 val passedMeetings = meetings.filter { meeting ->
@@ -451,21 +495,33 @@ class EvaluationViewModel(
                             it.name.contains("كراس")
                 }
 
-                // جلب بيانات الشارات الممنوحة والمتطلبات لحساب نقاط التقدم
-                val firestore = FirebaseFirestore.getInstance()
-                val scoutBadgesSnapshot = firestore.collection("scout_badges").get().await()
-                val progressReqsSnapshot = firestore.collection("progress_requirements").get().await()
-                val hobbyBadgesSnapshot = firestore.collection("scout_hobby_badges").get().await()
-
-                val scoutBadges = scoutBadgesSnapshot.documents.mapNotNull { it.data }
-                val progressReqs = progressReqsSnapshot.documents.mapNotNull { it.data }
-                val hobbyBadges = hobbyBadgesSnapshot.documents.mapNotNull { it.data }
-
-                val requiredHobbyCount = progressReqs.mapNotNull { (it["linkedHobbyBadgesCount"] as? Number)?.toInt() }.maxOrNull() ?: 0
+                fun extractLeaderCriteriaScores(eval: ScoutEvaluation): Collection<Int> {
+                    return eval.criteriaScores.filterKeys { criteriaId ->
+                        val c = criteriaMap[criteriaId]
+                        criteriaId != quranCriteria?.id &&
+                                criteriaId != notebookCriteria?.id &&
+                                c != null &&
+                                c.type != EvaluationCriteria.TYPE_QURAN &&
+                                c.type != CriteriaType.QURAN.name &&
+                                c.type != CriteriaType.QURAN.value &&
+                                c.type != EvaluationCriteria.TYPE_NOTEBOOK &&
+                                c.type != CriteriaType.NOTEBOOK.name &&
+                                c.type != CriteriaType.NOTEBOOK.value
+                    }.values
+                }
 
                 val collator = Collator.getInstance(Locale("ar", "DZ")).apply {
                     strength = Collator.PRIMARY
                 }
+
+                // جلب جميع القادة المعتمدين والنشطين مرتبين أبجدياً لعرض عمود لكل قائد
+                val approvedLeaders = allLeaders
+                    .filter { it.uid.isNotBlank() && it.status == "approved" }
+                    .sortedWith { a, b ->
+                        val nameA = a.fullName.ifBlank { leaderNamesMap[a.uid] ?: "قائد" }
+                        val nameB = b.fullName.ifBlank { leaderNamesMap[b.uid] ?: "قائد" }
+                        collator.compare(nameA, nameB)
+                    }
 
                 val scoutPointsList = scouts.map { scout ->
                     // 1) تقييم الحضور (نقاط من 20)
@@ -478,33 +534,26 @@ class EvaluationViewModel(
                         null
                     }
 
-                    val quarterlyEvals = allEvaluations.filter {
-                        it.scoutId == scout.id && it.activityId.startsWith("TERM_")
-                    }
+                    val quarterlyEvals = termEvaluations.filter { it.scoutId == scout.id }
 
-                    // 2) تقييم القادة من التقييمات الفصلية (من 20)
-                    val leaderAverages = quarterlyEvals
+                    // 2) تقييم القادة من التقييمات الفصلية (من 20) مع درجة كل قائد بشكل منفصل
+                    val leaderScoresById = quarterlyEvals
                         .groupBy { it.leaderId }
-                        .mapNotNull { (_, leaderEvals) ->
+                        .mapNotNull { (leaderId, leaderEvals) ->
                             val evalAverages = leaderEvals.mapNotNull { eval ->
-                                val leaderScores = eval.criteriaScores.filterKeys { criteriaId ->
-                                    val c = criteriaMap[criteriaId]
-                                    criteriaId != quranCriteria?.id &&
-                                            criteriaId != notebookCriteria?.id &&
-                                            c != null &&
-                                            c.type != EvaluationCriteria.TYPE_QURAN &&
-                                            c.type != CriteriaType.QURAN.name &&
-                                            c.type != CriteriaType.QURAN.value &&
-                                            c.type != EvaluationCriteria.TYPE_NOTEBOOK &&
-                                            c.type != CriteriaType.NOTEBOOK.name &&
-                                            c.type != CriteriaType.NOTEBOOK.value
-                                }.values
-                                if (leaderScores.isNotEmpty()) leaderScores.sum().toDouble() / 4.0 else null
+                                val leaderScores = extractLeaderCriteriaScores(eval)
+                                if (leaderScores.isNotEmpty()) {
+                                    leaderScores.sum().toDouble() / leaderScores.size.toDouble()
+                                } else null
                             }
-                            if (evalAverages.isNotEmpty()) evalAverages.average() else null
+                            if (evalAverages.isNotEmpty()) {
+                                leaderId to evalAverages.average().coerceIn(0.0, 20.0)
+                            } else null
                         }
-                    val leaderPoints: Double? = if (leaderAverages.isNotEmpty()) {
-                        leaderAverages.average().coerceIn(0.0, 20.0)
+                        .toMap()
+
+                    val leaderPoints: Double? = if (leaderScoresById.isNotEmpty()) {
+                        leaderScoresById.values.average().coerceIn(0.0, 20.0)
                     } else {
                         null
                     }
@@ -527,44 +576,13 @@ class EvaluationViewModel(
                             ?.criteriaScores?.get(notebookId)
                     } else null
 
-                    // 5) نقاط التقدم (شارات الكفاية + شارات الهواية الإضافية)
-                    val kafaaCount = scoutBadges.count {
-                        it["scoutId"] == scout.id && it["revokedAt"] == null
-                    }
-                    val kafaaPoints = kafaaCount * pointsSettings.kafaaBadgePoints
-
-                    val totalHobbyBadges = hobbyBadges.count {
-                        it["scoutId"] == scout.id && it["revokedAt"] == null
-                    }
-                    val extraHobbyBadges = maxOf(0, totalHobbyBadges - requiredHobbyCount)
-                    val extraHobbyPoints = extraHobbyBadges * pointsSettings.extraHobbyBadgePoints
-
-                    val calculatedProgress = kafaaPoints + extraHobbyPoints
-                    val hasAnyProgressData = kafaaCount > 0 || totalHobbyBadges > 0
-                    val progressScore: Int? = if (calculatedProgress > 0) {
-                        calculatedProgress
-                    } else if (hasAnyProgressData) {
-                        0
-                    } else {
-                        null
-                    }
-
-                    // 6) المجموع الكلي: مجموع درجات الحضور، القادة، القرآن، الكراس، ونقاط التقدم
-                    val baseScores = listOfNotNull(attendanceScore, leaderPoints, quranPoints?.toDouble(), notebookPoints?.toDouble())
-                    val totalScore: Int? = if (baseScores.isNotEmpty()) {
-                        Math.round(baseScores.sum() + (progressScore ?: 0)).toInt()
-                    } else {
-                        progressScore
-                    }
-
                     PdfExporter.ScoutRawPoints(
                         scoutName = scout.fullName.ifBlank { "${scout.name} ${scout.surname}".trim() },
                         attendanceScore = attendanceScore,
                         leaderPoints = leaderPoints,
                         quranPoints = quranPoints,
                         notebookPoints = notebookPoints,
-                        progressScore = progressScore,
-                        totalScore = totalScore
+                        leaderScoresById = leaderScoresById
                     )
                 }.sortedWith { a, b ->
                     collator.compare(a.scoutName, b.scoutName)
@@ -575,7 +593,14 @@ class EvaluationViewModel(
                     return@launch
                 }
 
-                val file = PdfExporter.exportRawPointsPdf(scoutPointsList, context, terms = currentTerms)
+                val file = PdfExporter.exportRawPointsPdf(
+                    scoutPointsList = scoutPointsList,
+                    context = context,
+                    terms = currentTerms,
+                    evaluatedLeaders = approvedLeaders,
+                    leaderNames = leaderNamesMap,
+                    termLabel = termLabel
+                )
                 PdfExporter.shareRawPointsPdf(file, context, terms = currentTerms)
             } catch (e: Exception) {
                 _uiState.update { it.copy(snackbarMessage = "فشل تصدير ملف PDF: ${e.localizedMessage}") }
