@@ -3,6 +3,7 @@ package com.example.data.finance
 import com.example.data.log.ActivityLogDataSource
 import com.example.data.scout.ScoutFirestoreDataSource
 import com.example.domain.auth.AuthRepository
+import com.example.domain.finance.DebtAllocationCalculator
 import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.FinanceSettings
 import com.example.domain.finance.FinanceSubscription
@@ -346,55 +347,90 @@ class FinanceRepositoryImpl(
         }
     }
 
+    private data class TransactionDebtResult(
+        val appliedAmount: Int,
+        val updatedCount: Int,
+        val firstUpdated: FinanceSubscription?
+    )
+
     override suspend fun payScoutDebts(scoutId: String, amountToPay: Int): Result<Unit> {
         if (amountToPay <= 0 || scoutId.isBlank()) return Result.success(Unit)
         return try {
-            val subs = dataSource.getSubscriptionsForScout(scoutId)
-            val unpaid = subs.filter { it.paidAmount < it.requiredAmount && it.debtAmount > 0 }
-                .sortedBy { it.activityDate }
+            val candidateRefs = dataSource.getSubscriptionReferencesForScout(scoutId)
+                .filter { (_, sub) -> sub.paidAmount < sub.requiredAmount && sub.debtAmount > 0 }
+                .sortedBy { (_, sub) -> sub.activityDate }
+                .map { (ref, _) -> ref }
+
+            if (candidateRefs.isEmpty()) return Result.success(Unit)
 
             val currentUser = authRepository.currentUser
             val leaderUnitId = authRepository.getCurrentLeader()?.unitId
             val now = System.currentTimeMillis()
-            val updatedSubs = mutableListOf<FinanceSubscription>()
             var remainingPayment = amountToPay
             var totalPaidApplied = 0
+            var totalUpdatedCount = 0
+            var firstUpdatedSub: FinanceSubscription? = null
 
-            for (sub in unpaid) {
+            for (chunk in candidateRefs.chunked(500)) {
                 if (remainingPayment <= 0) break
-                val currentDebt = (sub.requiredAmount - sub.paidAmount).coerceAtLeast(0)
-                if (currentDebt <= 0) continue
+                val chunkTarget = remainingPayment
 
-                val toPay = minOf(remainingPayment, currentDebt)
-                val newPaid = sub.paidAmount + toPay
-                val newDebt = (sub.requiredAmount - newPaid).coerceAtLeast(0)
+                val chunkResult = firestore.runTransaction { tx ->
+                    // 1. Re-read all candidate documents in this chunk before any writes
+                    val freshPairs = chunk.mapNotNull { ref ->
+                        val snap = tx.get(ref)
+                        if (!snap.exists()) {
+                            null
+                        } else {
+                            dataSource.mapDocumentToSubscription(snap)?.let { sub -> ref to sub }
+                        }
+                    }
+                    val refsById = freshPairs.associate { (ref, sub) -> sub.id to ref }
 
-                val updatedSub = sub.copy(
-                    paidAmount = newPaid,
-                    debtAmount = newDebt,
-                    unitId = sub.unitId ?: leaderUnitId,
-                    recordedAt = now,
-                    recordedBy = sub.recordedBy.ifBlank { currentUser?.uid ?: "" },
-                    recordedByName = sub.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" },
-                    updatedAt = now
-                )
-                updatedSubs.add(updatedSub)
-                remainingPayment -= toPay
-                totalPaidApplied += toPay
+                    // 2. Allocate payment on fresh snapshot data (oldest first, skips externally paid docs)
+                    val allocation = DebtAllocationCalculator.allocatePayment(
+                        subscriptions = freshPairs.map { it.second },
+                        amountToPay = chunkTarget,
+                        now = now
+                    )
+
+                    // 3. Apply all writes after all reads
+                    val preparedSubs = allocation.updatedSubscriptions.mapNotNull { updated ->
+                        val ref = refsById[updated.id] ?: return@mapNotNull null
+                        val prepared = updated.copy(
+                            unitId = updated.unitId ?: leaderUnitId,
+                            recordedBy = updated.recordedBy.ifBlank { currentUser?.uid ?: "" },
+                            recordedByName = updated.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" }
+                        )
+                        tx.set(ref, dataSource.mapSubscriptionToMap(prepared))
+                        prepared
+                    }
+
+                    TransactionDebtResult(
+                        appliedAmount = allocation.totalApplied,
+                        updatedCount = preparedSubs.size,
+                        firstUpdated = preparedSubs.firstOrNull()
+                    )
+                }.await()
+
+                remainingPayment -= chunkResult.appliedAmount
+                totalPaidApplied += chunkResult.appliedAmount
+                totalUpdatedCount += chunkResult.updatedCount
+                if (firstUpdatedSub == null) {
+                    firstUpdatedSub = chunkResult.firstUpdated
+                }
             }
 
-            if (updatedSubs.isNotEmpty()) {
-                dataSource.commitSubscriptionsBatch(updatedSubs)
-                val firstSub = updatedSubs.first()
+            if (totalUpdatedCount > 0 && firstUpdatedSub != null) {
                 activityLogDataSource.logActivity(
                     userId = currentUser?.uid ?: "",
                     userName = currentUser?.displayName ?: "قائد كشفي",
                     action = "update",
                     targetType = "finance_subscription",
-                    targetId = firstSub.id,
-                    targetName = "تسديد ديون: ${firstSub.scoutFullName}",
-                    details = "تسديد مبلغ $totalPaidApplied دج عبر ${updatedSubs.size} اشتراك(ات)",
-                    unitId = firstSub.unitId ?: leaderUnitId
+                    targetId = firstUpdatedSub.id,
+                    targetName = "تسديد ديون: ${firstUpdatedSub.scoutFullName}",
+                    details = "تسديد مبلغ $totalPaidApplied دج عبر $totalUpdatedCount اشتراك(ات)",
+                    unitId = firstUpdatedSub.unitId ?: leaderUnitId
                 )
             }
 
@@ -414,55 +450,85 @@ class FinanceRepositoryImpl(
     ): Result<Unit> {
         if (amountToRollback <= 0 || scoutId.isBlank()) return Result.success(Unit)
         return try {
-            val subs = dataSource.getSubscriptionsForScout(scoutId)
-            val paidSubs = subs
-                .filter {
-                    it.paidAmount > 0 &&
-                        (excludeActivityId.isNullOrBlank() || it.activityId != excludeActivityId)
+            val candidateRefs = dataSource.getSubscriptionReferencesForScout(scoutId)
+                .filter { (_, sub) ->
+                    sub.paidAmount > 0 &&
+                        (excludeActivityId.isNullOrBlank() || sub.activityId != excludeActivityId)
                 }
-                .sortedBy { it.activityDate }
+                .sortedBy { (_, sub) -> sub.activityDate }
+                .map { (ref, _) -> ref }
+
+            if (candidateRefs.isEmpty()) return Result.success(Unit)
 
             val currentUser = authRepository.currentUser
             val leaderUnitId = authRepository.getCurrentLeader()?.unitId
             val now = System.currentTimeMillis()
-            val updatedSubs = mutableListOf<FinanceSubscription>()
             var remainingRollback = amountToRollback
             var totalRolledBack = 0
+            var totalUpdatedCount = 0
+            var firstUpdatedSub: FinanceSubscription? = null
 
-            for (sub in paidSubs) {
+            for (chunk in candidateRefs.chunked(500)) {
                 if (remainingRollback <= 0) break
-                val toRollback = minOf(sub.paidAmount, remainingRollback)
-                if (toRollback <= 0) continue
+                val chunkTarget = remainingRollback
 
-                val newPaid = (sub.paidAmount - toRollback).coerceAtLeast(0)
-                val newDebt = (sub.requiredAmount - newPaid).coerceAtLeast(0)
+                val chunkResult = firestore.runTransaction { tx ->
+                    // 1. Re-read all candidate documents in this chunk before any writes
+                    val freshPairs = chunk.mapNotNull { ref ->
+                        val snap = tx.get(ref)
+                        if (!snap.exists()) {
+                            null
+                        } else {
+                            dataSource.mapDocumentToSubscription(snap)?.let { sub -> ref to sub }
+                        }
+                    }
+                    val refsById = freshPairs.associate { (ref, sub) -> sub.id to ref }
 
-                val updatedSub = sub.copy(
-                    paidAmount = newPaid,
-                    debtAmount = newDebt,
-                    unitId = sub.unitId ?: leaderUnitId,
-                    recordedAt = if (sub.recordedAt > 0L) sub.recordedAt else now,
-                    recordedBy = sub.recordedBy.ifBlank { currentUser?.uid ?: "" },
-                    recordedByName = sub.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" },
-                    updatedAt = now
-                )
-                updatedSubs.add(updatedSub)
-                remainingRollback -= toRollback
-                totalRolledBack += toRollback
+                    // 2. Allocate rollback on fresh snapshot data (oldest first, preserves excludeActivityId)
+                    val allocation = DebtAllocationCalculator.allocateRollback(
+                        subscriptions = freshPairs.map { it.second },
+                        amountToRollback = chunkTarget,
+                        excludeActivityId = excludeActivityId,
+                        now = now
+                    )
+
+                    // 3. Apply all writes after all reads
+                    val preparedSubs = allocation.updatedSubscriptions.mapNotNull { updated ->
+                        val ref = refsById[updated.id] ?: return@mapNotNull null
+                        val prepared = updated.copy(
+                            unitId = updated.unitId ?: leaderUnitId,
+                            recordedBy = updated.recordedBy.ifBlank { currentUser?.uid ?: "" },
+                            recordedByName = updated.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" }
+                        )
+                        tx.set(ref, dataSource.mapSubscriptionToMap(prepared))
+                        prepared
+                    }
+
+                    TransactionDebtResult(
+                        appliedAmount = allocation.totalApplied,
+                        updatedCount = preparedSubs.size,
+                        firstUpdated = preparedSubs.firstOrNull()
+                    )
+                }.await()
+
+                remainingRollback -= chunkResult.appliedAmount
+                totalRolledBack += chunkResult.appliedAmount
+                totalUpdatedCount += chunkResult.updatedCount
+                if (firstUpdatedSub == null) {
+                    firstUpdatedSub = chunkResult.firstUpdated
+                }
             }
 
-            if (updatedSubs.isNotEmpty()) {
-                dataSource.commitSubscriptionsBatch(updatedSubs)
-                val firstSub = updatedSubs.first()
+            if (totalUpdatedCount > 0 && firstUpdatedSub != null) {
                 activityLogDataSource.logActivity(
                     userId = currentUser?.uid ?: "",
                     userName = currentUser?.displayName ?: "قائد كشفي",
                     action = "update",
                     targetType = "finance_subscription",
-                    targetId = firstSub.id,
-                    targetName = "التراجع عن تسديد ديون: ${firstSub.scoutFullName}",
-                    details = "استرجاع مبلغ $totalRolledBack دج عبر ${updatedSubs.size} اشتراك(ات)",
-                    unitId = firstSub.unitId ?: leaderUnitId
+                    targetId = firstUpdatedSub.id,
+                    targetName = "التراجع عن تسديد ديون: ${firstUpdatedSub.scoutFullName}",
+                    details = "استرجاع مبلغ $totalRolledBack دج عبر $totalUpdatedCount اشتراك(ات)",
+                    unitId = firstUpdatedSub.unitId ?: leaderUnitId
                 )
             }
 

@@ -163,6 +163,8 @@ class MainActivity : ComponentActivity() {
                     )
                     val isForceUpdateRequired by updateViewModel.isForceUpdateRequired.collectAsStateWithLifecycle()
                     val appUpdateInfo by updateViewModel.appUpdateInfo.collectAsStateWithLifecycle()
+                    val isDownloadingUpdate by updateViewModel.isDownloading.collectAsStateWithLifecycle()
+                    val updateDownloadError by updateViewModel.downloadError.collectAsStateWithLifecycle()
 
                     Box(modifier = Modifier.fillMaxSize()) {
                         ScoutNavGraph(
@@ -173,9 +175,10 @@ class MainActivity : ComponentActivity() {
 
                         if (isForceUpdateRequired) {
                             ForceUpdateScreen(
-                                apkUrl = appUpdateInfo?.apkUrl.orEmpty(),
                                 latestVersionName = appUpdateInfo?.latestVersionName.orEmpty(),
-                                onSkip = { updateViewModel.skipForceUpdate() }
+                                isDownloading = isDownloadingUpdate,
+                                downloadError = updateDownloadError,
+                                onUpdateClick = { updateViewModel.startUpdateDownload(appContext) }
                             )
                         }
                     }

@@ -13,6 +13,7 @@ import com.example.domain.finance.FinanceSubscription
 import com.example.domain.finance.FinanceTransaction
 import com.example.domain.finance.FinanceTransactionType
 import com.example.domain.finance.SubscriptionStatus
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -207,27 +208,16 @@ class FinanceFirestoreDataSource(
         }
     }
 
-    suspend fun getSubscriptionsForScout(scoutId: String): List<FinanceSubscription> {
+    suspend fun getSubscriptionReferencesForScout(scoutId: String): List<Pair<DocumentReference, FinanceSubscription>> {
         val snapshot = subscriptionsCollection
             .whereEqualTo("scoutId", scoutId)
             .get()
             .await()
         return snapshot.documents
-            .mapNotNull { mapDocumentToSubscription(it) }
-            .sortedBy { it.activityDate }
-    }
-
-    suspend fun commitSubscriptionsBatch(subscriptions: List<FinanceSubscription>) {
-        if (subscriptions.isEmpty()) return
-        subscriptions.chunked(500).forEach { chunk ->
-            val batch = firestore.batch()
-            chunk.forEach { sub ->
-                val docId = sub.id.ifBlank { "${sub.activityId}_${sub.scoutId}" }
-                val finalSub = sub.copy(id = docId)
-                batch.set(subscriptionsCollection.document(docId), mapSubscriptionToMap(finalSub))
+            .mapNotNull { doc ->
+                mapDocumentToSubscription(doc)?.let { sub -> doc.reference to sub }
             }
-            batch.commit().await()
-        }
+            .sortedBy { it.second.activityDate }
     }
 
     suspend fun upsertSubscription(sub: FinanceSubscription): Result<Unit> {
@@ -389,7 +379,7 @@ class FinanceFirestoreDataSource(
         return map
     }
 
-    private fun mapDocumentToSubscription(doc: DocumentSnapshot): FinanceSubscription? {
+    internal fun mapDocumentToSubscription(doc: DocumentSnapshot): FinanceSubscription? {
         return try {
             val statusKey = doc.safeNullableString("attendanceStatus")
                 ?: doc.safeNullableString("status")
@@ -438,7 +428,7 @@ class FinanceFirestoreDataSource(
         }
     }
 
-    private fun mapSubscriptionToMap(sub: FinanceSubscription): Map<String, Any?> {
+    internal fun mapSubscriptionToMap(sub: FinanceSubscription): Map<String, Any?> {
         return hashMapOf(
             "id" to sub.id,
             "scoutId" to sub.scoutId,

@@ -1,9 +1,11 @@
 package com.example.presentation.update
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
+import com.example.R
 import com.example.domain.auth.AuthRepository
 import com.example.domain.update.AppUpdateInfo
 import com.example.domain.update.UpdateRepository
@@ -11,9 +13,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -25,8 +28,6 @@ class UpdateViewModel(
     updateRepository: UpdateRepository,
     authRepository: AuthRepository
 ) : ViewModel() {
-
-    private val isTemporarilySkipped = MutableStateFlow(false)
 
     val appUpdateInfo: StateFlow<AppUpdateInfo?> = authRepository.observeCurrentLeader()
         .flatMapLatest {
@@ -40,27 +41,56 @@ class UpdateViewModel(
             initialValue = null
         )
 
-    val isForceUpdateRequired: StateFlow<Boolean> = combine(
-        appUpdateInfo,
-        isTemporarilySkipped
-    ) { info, skipped ->
-        if (skipped || info == null) {
-            false
-        } else {
-            val url = info.apkUrl.trim()
-            val hasValidUrl = url.isNotBlank() &&
-                (url.startsWith("http://", ignoreCase = true) ||
-                    url.startsWith("https://", ignoreCase = true))
-            hasValidUrl && info.latestVersionCode > BuildConfig.VERSION_CODE
+    val isForceUpdateRequired: StateFlow<Boolean> = appUpdateInfo
+        .map { info ->
+            if (info == null) {
+                false
+            } else {
+                val url = info.apkUrl.trim()
+                val sha = info.sha256.trim()
+                val hasValidHttpsUrl = url.startsWith("https", ignoreCase = true)
+                val hasValidSha256 = sha.isNotBlank() &&
+                    sha.length == 64 &&
+                    sha.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+                hasValidHttpsUrl && hasValidSha256 && info.latestVersionCode > BuildConfig.VERSION_CODE
+            }
         }
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.Eagerly,
-        initialValue = false
-    )
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = false
+        )
 
-    fun skipForceUpdate() {
-        isTemporarilySkipped.value = true
+    private val _isDownloading = MutableStateFlow(false)
+    val isDownloading: StateFlow<Boolean> = _isDownloading.asStateFlow()
+
+    private val _downloadError = MutableStateFlow<String?>(null)
+    val downloadError: StateFlow<String?> = _downloadError.asStateFlow()
+
+    fun startUpdateDownload(context: Context) {
+        val info = appUpdateInfo.value ?: return
+        val appContext = context.applicationContext
+        _downloadError.value = null
+        _isDownloading.value = true
+        AppUpdater.startDownloadAndInstall(
+            context = appContext,
+            apkUrl = info.apkUrl,
+            expectedSha256 = info.sha256,
+            onDownloadStarted = {
+                _isDownloading.value = true
+                _downloadError.value = null
+            },
+            onDownloadSuccess = {
+                _isDownloading.value = false
+                _downloadError.value = null
+            },
+            onDownloadFailed = { errorMsg ->
+                _isDownloading.value = false
+                _downloadError.value = errorMsg.ifBlank {
+                    appContext.getString(R.string.update_download_failed)
+                }
+            }
+        )
     }
 
     class Factory(

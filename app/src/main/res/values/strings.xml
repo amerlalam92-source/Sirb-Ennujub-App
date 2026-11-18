@@ -1133,6 +1133,8 @@
     <string name="force_update_button">تحديث الآن</string>
     <string name="force_update_open_error">تعذر فتح رابط التحديث، يرجى المحاولة لاحقاً</string>
     <string name="force_update_skip">تخطي مؤقت</string>
+    <string name="force_update_retry">إعادة المحاولة</string>
+    <string name="force_update_downloading">جاري تحميل التحديث...</string>
 </resources>
 
 
