@@ -8,6 +8,8 @@ import com.example.data.evaluation.pickNotebookCriterion
 import com.example.data.evaluation.pickQuranCriterion
 import com.example.domain.evaluation.CriteriaType
 import com.example.domain.evaluation.EvaluationCriteria
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -97,5 +99,20 @@ class BatchBDataAndCriteriaTest {
         )
         assertEquals("k_1", pickNotebookCriterion(fallbackOnly)?.id)
         assertNull(pickNotebookCriterion(emptyList()))
+    }
+
+    @Test
+    fun `dataLoadErrorReporter StateFlow emits reported and cleared errors deterministically`() = runTest {
+        val reporter = DataLoadErrorReporter()
+        assertTrue(reporter.errors.first().isEmpty())
+
+        reporter.report("scouts", IllegalStateException("network error"))
+        val afterReport = reporter.errors.first()
+        assertEquals(setOf("scouts"), afterReport.keys)
+        assertEquals(DataLoadErrorKind.OTHER, afterReport["scouts"]?.kind)
+        assertEquals("network error", afterReport["scouts"]?.message)
+
+        reporter.clear("scouts")
+        assertTrue(reporter.errors.first().isEmpty())
     }
 }
