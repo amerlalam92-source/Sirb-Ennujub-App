@@ -46,7 +46,7 @@ class AttendanceFirestoreDataSource(
      * activities/{activityId}/attendance
      */
     fun getAttendanceForActivity(activityId: String): Flow<List<Attendance>> = callbackFlow {
-        val fallbackState = ListenerFallbackState<Attendance>("attendance", errorReporter)
+        val fallbackState = ListenerFallbackState<Attendance>("attendance:activity:$activityId", errorReporter)
         val listenerRegistration = getAttendanceSubcollection(activityId)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -59,7 +59,10 @@ class AttendanceFirestoreDataSource(
                 } ?: emptyList()
                 trySend(fallbackState.onSnapshot(list))
             }
-        awaitClose { listenerRegistration.remove() }
+        awaitClose {
+            listenerRegistration.remove()
+            fallbackState.clear()
+        }
     }
 
     /**
@@ -84,7 +87,7 @@ class AttendanceFirestoreDataSource(
      * الاستماع لسجلات الحضور لشبل محدد عبر جميع الأنشطة باستخدام Collection Group
      */
     fun getAttendanceForScout(scoutId: String): Flow<List<Attendance>> = callbackFlow {
-        val fallbackState = ListenerFallbackState<Attendance>("attendance", errorReporter)
+        val fallbackState = ListenerFallbackState<Attendance>("attendance:scout:$scoutId", errorReporter)
         val listenerRegistration = firestore.collectionGroup(SUBCOLLECTION_ATTENDANCE)
             .whereEqualTo("scoutId", scoutId)
             .addSnapshotListener { snapshot, error ->
@@ -98,14 +101,17 @@ class AttendanceFirestoreDataSource(
                 } ?: emptyList()
                 trySend(fallbackState.onSnapshot(list))
             }
-        awaitClose { listenerRegistration.remove() }
+        awaitClose {
+            listenerRegistration.remove()
+            fallbackState.clear()
+        }
     }
 
     /**
      * الاستماع لجميع سجلات الحضور عبر التطبيق باستخدام Collection Group
      */
     fun observeAllAttendance(): Flow<List<Attendance>> = callbackFlow {
-        val fallbackState = ListenerFallbackState<Attendance>("attendance", errorReporter)
+        val fallbackState = ListenerFallbackState<Attendance>("attendance:all", errorReporter)
         val listenerRegistration = firestore.collectionGroup(SUBCOLLECTION_ATTENDANCE)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -118,7 +124,10 @@ class AttendanceFirestoreDataSource(
                 } ?: emptyList()
                 trySend(fallbackState.onSnapshot(list))
             }
-        awaitClose { listenerRegistration.remove() }
+        awaitClose {
+            listenerRegistration.remove()
+            fallbackState.clear()
+        }
     }
 
     /**

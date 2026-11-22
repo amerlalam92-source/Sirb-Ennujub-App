@@ -49,7 +49,10 @@ class ScoutFirestoreDataSource(
             } ?: emptyList()
             trySend(fallbackState.onSnapshot(scouts))
         }
-        awaitClose { listenerRegistration.remove() }
+        awaitClose {
+            listenerRegistration.remove()
+            fallbackState.clear()
+        }
     }
 
     /**

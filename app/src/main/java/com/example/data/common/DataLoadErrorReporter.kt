@@ -85,4 +85,8 @@ class ListenerFallbackState<T>(
         reporter?.report(source, error)
         return lastGood ?: emptyList()
     }
+
+    fun clear() {
+        reporter?.clear(source)
+    }
 }

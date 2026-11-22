@@ -97,7 +97,8 @@ class ActivityLogDataSource(
      * مراقبة كافة العمليات المسجلة بتدفق مباشر ومفلترة بالوحدة
      */
     fun observeLogs(unitId: String? = null): Flow<List<ActivityLog>> = callbackFlow {
-        val fallbackState = ListenerFallbackState<ActivityLog>("activity_log", errorReporter)
+        val sourceKey = if (!unitId.isNullOrBlank()) "activity_log:$unitId" else "activity_log"
+        val fallbackState = ListenerFallbackState<ActivityLog>(sourceKey, errorReporter)
         val baseQuery = if (!unitId.isNullOrBlank()) {
             firestore.collection(COLLECTION_NAME).whereEqualTo("unitId", unitId)
         } else {
@@ -136,7 +137,10 @@ class ActivityLogDataSource(
                     trySend(fallbackState.onSnapshot(logs))
                 }
             }
-        awaitClose { listenerRegistration.remove() }
+        awaitClose {
+            listenerRegistration.remove()
+            fallbackState.clear()
+        }
     }
 
     /**

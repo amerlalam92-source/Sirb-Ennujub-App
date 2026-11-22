@@ -102,6 +102,70 @@ class BatchBDataAndCriteriaTest {
     }
 
     @Test
+    fun `listenerFallbackState isolates distinct listener keys and clear removes only own key`() {
+        val reporter = DataLoadErrorReporter()
+        val activityAttendance = ListenerFallbackState<String>("attendance:activity:act_1", reporter)
+        val allAttendance = ListenerFallbackState<String>("attendance:all", reporter)
+        val upcomingActivities = ListenerFallbackState<String>("activities:upcoming", reporter)
+
+        activityAttendance.onError(IllegalStateException("permission denied"))
+        allAttendance.onError(IllegalStateException("index missing"))
+        upcomingActivities.onError(IllegalStateException("offline"))
+        assertEquals(
+            setOf("attendance:activity:act_1", "attendance:all", "activities:upcoming"),
+            reporter.errors.value.keys
+        )
+
+        // Healthy snapshot on attendance:all clears only attendance:all
+        allAttendance.onSnapshot(listOf("att-1"))
+        assertEquals(
+            setOf("attendance:activity:act_1", "activities:upcoming"),
+            reporter.errors.value.keys
+        )
+
+        // Collector cancellation (awaitClose -> fallbackState.clear()) removes only that key
+        activityAttendance.clear()
+        assertEquals(setOf("activities:upcoming"), reporter.errors.value.keys)
+    }
+
+    @Test
+    fun `pickQuranCriterion prefers non-archived criteria even when archived has lower order`() {
+        val criteria = listOf(
+            EvaluationCriteria(id = "arch_quran", name = "قرآن مؤرشف", type = EvaluationCriteria.TYPE_QURAN, order = 1, archived = true),
+            EvaluationCriteria(id = "active_quran", name = "تقييم حفظ القرآن", type = EvaluationCriteria.TYPE_QURAN, order = 8, archived = false)
+        )
+        assertEquals("active_quran", pickQuranCriterion(criteria)?.id)
+
+        val archivedTypedVsActiveNameOnly = listOf(
+            EvaluationCriteria(id = "arch_quran", name = "قرآن مؤرشف", type = EvaluationCriteria.TYPE_QURAN, order = 1, archived = true),
+            EvaluationCriteria(id = "active_name", name = "حفظ السور", type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 5, archived = false)
+        )
+        assertEquals("active_name", pickQuranCriterion(archivedTypedVsActiveNameOnly)?.id)
+
+        val allArchived = listOf(
+            EvaluationCriteria(id = "arch_name", name = "حفظ القرآن", type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 1, archived = true),
+            EvaluationCriteria(id = "arch_type_2", name = "قرآن 2", type = EvaluationCriteria.TYPE_QURAN, order = 4, archived = true),
+            EvaluationCriteria(id = "arch_type_1", name = "قرآن 1", type = CriteriaType.QURAN.value, order = 3, archived = true)
+        )
+        assertEquals("arch_type_1", pickQuranCriterion(allArchived)?.id)
+    }
+
+    @Test
+    fun `pickNotebookCriterion prefers non-archived criteria over lower-order archived and falls back when only archived exist`() {
+        val criteria = listOf(
+            EvaluationCriteria(id = "arch_nb", name = "كراس مؤرشف", type = EvaluationCriteria.TYPE_NOTEBOOK, order = 1, archived = true),
+            EvaluationCriteria(id = "active_nb", name = "تقييم الكراس", type = EvaluationCriteria.TYPE_NOTEBOOK, order = 9, archived = false)
+        )
+        assertEquals("active_nb", pickNotebookCriterion(criteria)?.id)
+
+        val allArchived = listOf(
+            EvaluationCriteria(id = "arch_name", name = "كراس قديم", type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 1, archived = true),
+            EvaluationCriteria(id = "arch_type", name = "تقييم الكراس", type = EvaluationCriteria.TYPE_NOTEBOOK, order = 6, archived = true)
+        )
+        assertEquals("arch_type", pickNotebookCriterion(allArchived)?.id)
+    }
+
+    @Test
     fun `dataLoadErrorReporter StateFlow emits reported and cleared errors deterministically`() = runTest {
         val reporter = DataLoadErrorReporter()
         assertTrue(reporter.errors.first().isEmpty())

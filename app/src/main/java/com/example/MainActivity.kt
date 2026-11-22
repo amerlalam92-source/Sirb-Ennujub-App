@@ -253,7 +253,9 @@ class MainActivity : ComponentActivity() {
                                 latestVersionName = appUpdateInfo?.latestVersionName.orEmpty(),
                                 isDownloading = isDownloadingUpdate,
                                 downloadError = updateDownloadError,
-                                onUpdateClick = { updateViewModel.startUpdateDownload(appContext) }
+                                onUpdateClick = { updateViewModel.startUpdateDownload(appContext) },
+                                apkUrl = appUpdateInfo?.apkUrl.orEmpty(),
+                                onManualDownloadClick = { updateViewModel.openManualDownload(appContext) }
                             )
                         }
                     }

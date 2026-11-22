@@ -390,25 +390,35 @@ class EvaluationFirestoreDataSource(
 }
 
 internal fun pickQuranCriterion(criteria: List<EvaluationCriteria>): EvaluationCriteria? {
-    val exactTypeMatches = criteria.filter {
-        it.type == EvaluationCriteria.TYPE_QURAN ||
-            it.type == CriteriaType.QURAN.name ||
-            it.type == CriteriaType.QURAN.value
+    fun pickFrom(pool: List<EvaluationCriteria>): EvaluationCriteria? {
+        val exactTypeMatches = pool.filter {
+            it.type == EvaluationCriteria.TYPE_QURAN ||
+                it.type == CriteriaType.QURAN.name ||
+                it.type == CriteriaType.QURAN.value
+        }
+        val candidates = exactTypeMatches.ifEmpty {
+            pool.filter { it.name.contains("قرآن") || it.name.contains("حفظ") }
+        }
+        return candidates.minWithOrNull(compareBy<EvaluationCriteria>({ it.order }, { it.id }))
     }
-    val candidates = exactTypeMatches.ifEmpty {
-        criteria.filter { it.name.contains("قرآن") || it.name.contains("حفظ") }
-    }
-    return candidates.minWithOrNull(compareBy<EvaluationCriteria>({ it.order }, { it.id }))
+
+    return pickFrom(criteria.filter { !it.archived })
+        ?: pickFrom(criteria.filter { it.archived })
 }
 
 internal fun pickNotebookCriterion(criteria: List<EvaluationCriteria>): EvaluationCriteria? {
-    val exactTypeMatches = criteria.filter {
-        it.type == EvaluationCriteria.TYPE_NOTEBOOK ||
-            it.type == CriteriaType.NOTEBOOK.name ||
-            it.type == CriteriaType.NOTEBOOK.value
+    fun pickFrom(pool: List<EvaluationCriteria>): EvaluationCriteria? {
+        val exactTypeMatches = pool.filter {
+            it.type == EvaluationCriteria.TYPE_NOTEBOOK ||
+                it.type == CriteriaType.NOTEBOOK.name ||
+                it.type == CriteriaType.NOTEBOOK.value
+        }
+        val candidates = exactTypeMatches.ifEmpty {
+            pool.filter { it.name.contains("كراس") }
+        }
+        return candidates.minWithOrNull(compareBy<EvaluationCriteria>({ it.order }, { it.id }))
     }
-    val candidates = exactTypeMatches.ifEmpty {
-        criteria.filter { it.name.contains("كراس") }
-    }
-    return candidates.minWithOrNull(compareBy<EvaluationCriteria>({ it.order }, { it.id }))
+
+    return pickFrom(criteria.filter { !it.archived })
+        ?: pickFrom(criteria.filter { it.archived })
 }

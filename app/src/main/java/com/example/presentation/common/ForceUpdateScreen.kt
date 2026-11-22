@@ -35,7 +35,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,14 +45,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import com.example.R
-import com.example.domain.update.AppUpdateInfo
 import com.example.presentation.update.AppUpdater
-import com.example.presentation.update.UpdateViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * شاشة التحديث الإجباري للتطبيق (Force Update Screen)
@@ -73,21 +66,8 @@ fun ForceUpdateScreen(
     BackHandler(enabled = true) {}
 
     val context = LocalContext.current
-    val viewModelStoreOwner = LocalViewModelStoreOwner.current
-    val updateViewModel = remember(viewModelStoreOwner) {
-        viewModelStoreOwner?.let { owner ->
-            try {
-                ViewModelProvider(owner)[UpdateViewModel::class.java]
-            } catch (_: Exception) {
-                null
-            }
-        }
-    }
-    val emptyUpdateFlow = remember { MutableStateFlow<AppUpdateInfo?>(null) }
-    val observedUpdateInfo by (updateViewModel?.appUpdateInfo ?: emptyUpdateFlow).collectAsStateWithLifecycle()
-    val resolvedApkUrl = apkUrl.ifBlank { observedUpdateInfo?.apkUrl.orEmpty() }
-    val isManualDownloadAllowed = remember(resolvedApkUrl) {
-        AppUpdater.isTrustedDownloadUrl(resolvedApkUrl)
+    val isManualDownloadAllowed = remember(apkUrl) {
+        AppUpdater.isTrustedDownloadUrl(apkUrl)
     }
 
     Box(
@@ -250,7 +230,7 @@ fun ForceUpdateScreen(
                         if (onManualDownloadClick != null) {
                             onManualDownloadClick()
                         } else {
-                            AppUpdater.openManualDownload(context, resolvedApkUrl)
+                            AppUpdater.openManualDownload(context, apkUrl)
                         }
                     },
                     modifier = Modifier

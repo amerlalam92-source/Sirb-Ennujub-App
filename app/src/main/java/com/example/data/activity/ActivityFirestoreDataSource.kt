@@ -39,7 +39,7 @@ class ActivityFirestoreDataSource(
      * الاستماع لجميع الأنشطة مرتبة زمنياً
      */
     fun observeActivities(@Suppress("UNUSED_PARAMETER") unitId: String? = null): Flow<List<Activity>> = callbackFlow {
-        val fallbackState = ListenerFallbackState<Activity>("activities", errorReporter)
+        val fallbackState = ListenerFallbackState<Activity>("activities:all", errorReporter)
         val listenerRegistration = collection.addSnapshotListener { snapshot, error ->
             if (error != null) {
                 Log.w("ActivityFirestoreDS", "Error observing activities", error)
@@ -51,14 +51,17 @@ class ActivityFirestoreDataSource(
             }?.sortedBy { it.startDate } ?: emptyList()
             trySend(fallbackState.onSnapshot(activities))
         }
-        awaitClose { listenerRegistration.remove() }
+        awaitClose {
+            listenerRegistration.remove()
+            fallbackState.clear()
+        }
     }
 
     /**
      * الاستماع للأنشطة القادمة فقط
      */
     fun observeUpcomingActivities(limit: Int = 20, @Suppress("UNUSED_PARAMETER") unitId: String? = null): Flow<List<Activity>> = callbackFlow {
-        val fallbackState = ListenerFallbackState<Activity>("activities", errorReporter)
+        val fallbackState = ListenerFallbackState<Activity>("activities:upcoming", errorReporter)
         val listenerRegistration = collection.addSnapshotListener { snapshot, error ->
             if (error != null) {
                 Log.w("ActivityFirestoreDS", "Error observing upcoming activities", error)
@@ -73,7 +76,10 @@ class ActivityFirestoreDataSource(
                 ?: emptyList()
             trySend(fallbackState.onSnapshot(activities))
         }
-        awaitClose { listenerRegistration.remove() }
+        awaitClose {
+            listenerRegistration.remove()
+            fallbackState.clear()
+        }
     }
 
     /**

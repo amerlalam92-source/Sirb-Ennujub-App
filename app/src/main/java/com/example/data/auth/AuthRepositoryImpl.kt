@@ -227,7 +227,10 @@ class AuthRepositoryImpl(
                 }.orEmpty()
                 trySend(fallbackState.onSnapshot(leaders))
             }
-        awaitClose { listener.remove() }
+        awaitClose {
+            listener.remove()
+            fallbackState.clear()
+        }
     }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
