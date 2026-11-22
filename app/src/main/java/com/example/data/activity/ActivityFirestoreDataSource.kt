@@ -1,6 +1,8 @@
 package com.example.data.activity
 
 import android.util.Log
+import com.example.data.common.DataLoadErrorReporter
+import com.example.data.common.ListenerFallbackState
 import com.example.data.firestore.safeBoolean
 import com.example.data.firestore.safeLong
 import com.example.data.firestore.safeNullableInt
@@ -23,7 +25,8 @@ import kotlinx.coroutines.tasks.await
  * يدعم الاستماع الفوري ومزامنة التحديثات دون اتصال، وحفظ مواضيع الاجتماع والتقرير الأدبي.
  */
 class ActivityFirestoreDataSource(
-    private val firestore: FirebaseFirestore
+    private val firestore: FirebaseFirestore,
+    private val errorReporter: DataLoadErrorReporter? = null
 ) {
     companion object {
         const val COLLECTION_ACTIVITIES = "activities"
@@ -36,16 +39,17 @@ class ActivityFirestoreDataSource(
      * الاستماع لجميع الأنشطة مرتبة زمنياً
      */
     fun observeActivities(@Suppress("UNUSED_PARAMETER") unitId: String? = null): Flow<List<Activity>> = callbackFlow {
+        val fallbackState = ListenerFallbackState<Activity>("activities", errorReporter)
         val listenerRegistration = collection.addSnapshotListener { snapshot, error ->
             if (error != null) {
                 Log.w("ActivityFirestoreDS", "Error observing activities", error)
-                trySend(emptyList())
+                trySend(fallbackState.onError(error))
                 return@addSnapshotListener
             }
             val activities = snapshot?.documents?.mapNotNull { doc ->
                 mapDocumentToActivity(doc)
             }?.sortedBy { it.startDate } ?: emptyList()
-            trySend(activities)
+            trySend(fallbackState.onSnapshot(activities))
         }
         awaitClose { listenerRegistration.remove() }
     }
@@ -54,10 +58,11 @@ class ActivityFirestoreDataSource(
      * الاستماع للأنشطة القادمة فقط
      */
     fun observeUpcomingActivities(limit: Int = 20, @Suppress("UNUSED_PARAMETER") unitId: String? = null): Flow<List<Activity>> = callbackFlow {
+        val fallbackState = ListenerFallbackState<Activity>("activities", errorReporter)
         val listenerRegistration = collection.addSnapshotListener { snapshot, error ->
             if (error != null) {
                 Log.w("ActivityFirestoreDS", "Error observing upcoming activities", error)
-                trySend(emptyList())
+                trySend(fallbackState.onError(error))
                 return@addSnapshotListener
             }
             val activities = snapshot?.documents?.mapNotNull { doc ->
@@ -66,7 +71,7 @@ class ActivityFirestoreDataSource(
                 ?.sortedBy { it.endDate }
                 ?.take(limit)
                 ?: emptyList()
-            trySend(activities)
+            trySend(fallbackState.onSnapshot(activities))
         }
         awaitClose { listenerRegistration.remove() }
     }

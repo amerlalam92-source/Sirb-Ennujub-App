@@ -1,6 +1,8 @@
 package com.example.data.scout
 
 import android.util.Log
+import com.example.data.common.DataLoadErrorReporter
+import com.example.data.common.ListenerFallbackState
 import com.example.data.firestore.safeInt
 import com.example.data.firestore.safeLong
 import com.example.data.firestore.safeNullableLong
@@ -21,7 +23,8 @@ import kotlinx.coroutines.tasks.await
  * يدعم الاستماع الفوري (Realtime Flow)، والتحقق الصارم، والترحيل التسامحي للحقول السابقة (Legacy Migration).
  */
 class ScoutFirestoreDataSource(
-    private val firestore: FirebaseFirestore
+    private val firestore: FirebaseFirestore,
+    private val errorReporter: DataLoadErrorReporter? = null
 ) {
     companion object {
         const val COLLECTION_SCOUTS = "scouts"
@@ -34,16 +37,17 @@ class ScoutFirestoreDataSource(
      * الاستماع المباشر لقائمة الأشبال مع التحديث الفوري
      */
     fun observeScouts(@Suppress("UNUSED_PARAMETER") unitId: String? = null): Flow<List<Scout>> = callbackFlow {
+        val fallbackState = ListenerFallbackState<Scout>("scouts", errorReporter)
         val listenerRegistration = collection.addSnapshotListener { snapshot, error ->
             if (error != null) {
                 Log.w("ScoutFirestoreDS", "Error observing scouts", error)
-                trySend(emptyList())
+                trySend(fallbackState.onError(error))
                 return@addSnapshotListener
             }
             val scouts = snapshot?.documents?.mapNotNull { doc ->
                 mapDocumentToScout(doc)
             } ?: emptyList()
-            trySend(scouts)
+            trySend(fallbackState.onSnapshot(scouts))
         }
         awaitClose { listenerRegistration.remove() }
     }

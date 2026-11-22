@@ -47,6 +47,7 @@ import com.google.firebase.firestore.PersistentCacheSettings
  * توفر كائنات المستودعات ومصادر البيانات وحالات الاستخدام للأشبال والأنشطة والمصادقة.
  */
 interface AppContainer {
+    val dataLoadErrorReporter: com.example.data.common.DataLoadErrorReporter
     val authRepository: AuthRepository
     val googleSignInHelper: com.example.data.auth.GoogleSignInHelper
     val firestore: FirebaseFirestore
@@ -218,12 +219,16 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
         db
     }
 
+    override val dataLoadErrorReporter: com.example.data.common.DataLoadErrorReporter by lazy {
+        com.example.data.common.DataLoadErrorReporter()
+    }
+
     private val authDataSource: FirebaseAuthDataSource by lazy {
         FirebaseAuthDataSource(firebaseAuth)
     }
 
     override val authRepository: AuthRepository by lazy {
-        AuthRepositoryImpl(authDataSource, firestore)
+        AuthRepositoryImpl(authDataSource, firestore, dataLoadErrorReporter)
     }
 
     override val googleSignInHelper: com.example.data.auth.GoogleSignInHelper by lazy {
@@ -231,12 +236,12 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
     }
 
     private val activityLogDataSource: ActivityLogDataSource by lazy {
-        ActivityLogDataSource(firestore)
+        ActivityLogDataSource(firestore, dataLoadErrorReporter)
     }
 
     // الأشبال
     private val scoutFirestoreDataSource: ScoutFirestoreDataSource by lazy {
-        ScoutFirestoreDataSource(firestore)
+        ScoutFirestoreDataSource(firestore, dataLoadErrorReporter)
     }
 
     override val scoutRepository: ScoutRepository by lazy {
@@ -273,7 +278,7 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
 
     // الأنشطة الكشفية
     private val activityFirestoreDataSource: ActivityFirestoreDataSource by lazy {
-        ActivityFirestoreDataSource(firestore)
+        ActivityFirestoreDataSource(firestore, dataLoadErrorReporter)
     }
 
     override val activityRepository: ActivityRepository by lazy {
@@ -328,7 +333,7 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
 
     // تسجيل الحضور
     private val attendanceFirestoreDataSource: AttendanceFirestoreDataSource by lazy {
-        AttendanceFirestoreDataSource(firestore)
+        AttendanceFirestoreDataSource(firestore, dataLoadErrorReporter)
     }
 
     override val attendanceRepository: AttendanceRepository by lazy {

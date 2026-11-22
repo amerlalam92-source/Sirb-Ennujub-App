@@ -1136,6 +1136,14 @@
     <string name="force_update_retry">إعادة المحاولة</string>
     <string name="force_update_downloading">جاري تحميل التحديث...</string>
     <string name="force_update_manual_download">تحميل يدوي</string>
+
+    <!-- تنبيه أخطاء تحميل بيانات Firestore -->
+    <string name="data_error_no_permission">لا تملك صلاحية قراءة بعض البيانات؛ قد تكون القوائم ناقصة. تواصل مع القائد الرئيسي.</string>
+    <string name="data_error_quota">تم تجاوز حصة القراءة اليومية في Firebase؛ قد لا تتحدث البيانات.</string>
+    <string name="data_error_missing_index">فهرس قاعدة البيانات ناقص؛ أبلغ المطوّر.</string>
+    <string name="data_error_signed_out">انتهت الجلسة، سجّل الدخول من جديد.</string>
+    <string name="data_error_other">تعذّر تحميل بعض البيانات؛ قد تكون القوائم ناقصة.</string>
+    <string name="data_error_dismiss">إغلاق التنبيه</string>
 </resources>
 
 

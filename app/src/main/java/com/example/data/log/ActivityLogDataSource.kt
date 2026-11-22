@@ -1,6 +1,8 @@
 package com.example.data.log
 
 import android.util.Log
+import com.example.data.common.DataLoadErrorReporter
+import com.example.data.common.ListenerFallbackState
 import com.example.domain.log.ActivityLog
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -18,7 +20,8 @@ import kotlinx.coroutines.tasks.await
  * مرتبة تنازلياً حسب الطابع الزمني.
  */
 class ActivityLogDataSource(
-    private val firestore: FirebaseFirestore
+    private val firestore: FirebaseFirestore,
+    private val errorReporter: DataLoadErrorReporter? = null
 ) {
     companion object {
         private const val TAG = "ActivityLog"
@@ -94,6 +97,7 @@ class ActivityLogDataSource(
      * مراقبة كافة العمليات المسجلة بتدفق مباشر ومفلترة بالوحدة
      */
     fun observeLogs(unitId: String? = null): Flow<List<ActivityLog>> = callbackFlow {
+        val fallbackState = ListenerFallbackState<ActivityLog>("activity_log", errorReporter)
         val baseQuery = if (!unitId.isNullOrBlank()) {
             firestore.collection(COLLECTION_NAME).whereEqualTo("unitId", unitId)
         } else {
@@ -106,7 +110,7 @@ class ActivityLogDataSource(
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     Log.w(TAG, "Error observing activity logs: ${error.message}")
-                    trySend(emptyList())
+                    trySend(fallbackState.onError(error))
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
@@ -129,7 +133,7 @@ class ActivityLogDataSource(
                             null
                         }
                     }
-                    trySend(logs)
+                    trySend(fallbackState.onSnapshot(logs))
                 }
             }
         awaitClose { listenerRegistration.remove() }

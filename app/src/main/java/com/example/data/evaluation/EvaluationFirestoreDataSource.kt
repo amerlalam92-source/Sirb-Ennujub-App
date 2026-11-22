@@ -21,7 +21,7 @@ class EvaluationFirestoreDataSource(
     private val evaluationsCollection = firestore.collection("evaluations")
 
     /**
-     * الاستماع لجميع معايير التقييم مع بذر المعايير الافتراضية إذا كانت المجموعة فارغة
+     * الاستماع لجميع معايير التقييم مع بذر المعايير الافتراضية فقط عند خلو السحابة (وليس الكاش)
      */
     fun observeCriteria(): Flow<List<EvaluationCriteria>> = callbackFlow {
         val listenerRegistration = criteriaCollection.addSnapshotListener { snapshot, error ->
@@ -30,29 +30,37 @@ class EvaluationFirestoreDataSource(
                 return@addSnapshotListener
             }
 
-            if (snapshot == null || snapshot.isEmpty) {
-                // بذر المعايير الافتراضية تلقائياً
-                seedDefaultCriteria()
+            if (snapshot == null) {
                 return@addSnapshotListener
             }
 
-            // هجرة سريعة لتحديث المعايير القديمة في فايرستور إلى النظام الفصلي من 20
-            snapshot.documents.forEach { doc ->
-                val rawName = doc.getString("name")
-                val rawType = doc.getString("type")
-                val rawMaxScore = doc.getLong("maxScore")
-                if (rawName == "تقييم الحفظ") {
-                    criteriaCollection.document(doc.id).update("name", "تقييم حفظ القرآن")
+            if (snapshot.isEmpty) {
+                if (!snapshot.metadata.isFromCache) {
+                    // بذر المعايير الافتراضية تلقائياً فقط بعد التأكد من السحابة
+                    seedDefaultCriteria()
                 }
-                if (rawName == "الحيوية") {
-                    criteriaCollection.document(doc.id).update("name", "الاهتمام")
-                }
-                val isLeaderType = rawType == null ||
-                    rawType == EvaluationCriteria.TYPE_LEADER_CRITERIA ||
-                    rawType == CriteriaType.LEADER_CRITERIA.name ||
-                    rawType == CriteriaType.LEADER_CRITERIA.value
-                if (isLeaderType && rawMaxScore == 10L) {
-                    criteriaCollection.document(doc.id).update("maxScore", 20)
+                return@addSnapshotListener
+            }
+
+            // هجرة سريعة لتحديث المعايير القديمة في فايرستور إلى النظام الفصلي من 20 (عند عدم كون اللقطة من الكاش فقط)
+            if (!snapshot.metadata.isFromCache) {
+                snapshot.documents.forEach { doc ->
+                    val rawName = doc.getString("name")
+                    val rawType = doc.getString("type")
+                    val rawMaxScore = doc.getLong("maxScore")
+                    if (rawName == "تقييم الحفظ") {
+                        criteriaCollection.document(doc.id).update("name", "تقييم حفظ القرآن")
+                    }
+                    if (rawName == "الحيوية") {
+                        criteriaCollection.document(doc.id).update("name", "الاهتمام")
+                    }
+                    val isLeaderType = rawType == null ||
+                        rawType == EvaluationCriteria.TYPE_LEADER_CRITERIA ||
+                        rawType == CriteriaType.LEADER_CRITERIA.name ||
+                        rawType == CriteriaType.LEADER_CRITERIA.value
+                    if (isLeaderType && rawMaxScore == 10L) {
+                        criteriaCollection.document(doc.id).update("maxScore", 20)
+                    }
                 }
             }
 
@@ -69,20 +77,22 @@ class EvaluationFirestoreDataSource(
 
     private fun seedDefaultCriteria() {
         val defaultList = listOf(
-            EvaluationCriteria(name = "الأخلاق", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 1),
-            EvaluationCriteria(name = "المشاركة", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 2),
-            EvaluationCriteria(name = "الاهتمام", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 3),
-            EvaluationCriteria(name = "الانضباط", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 4),
-            EvaluationCriteria(name = "تقييم حفظ القرآن", maxScore = 20, type = EvaluationCriteria.TYPE_QURAN, order = 5),
-            EvaluationCriteria(name = "تقييم الكراس", maxScore = 20, type = EvaluationCriteria.TYPE_NOTEBOOK, order = 6)
+            EvaluationCriteria(id = "default_akhlaq", name = "الأخلاق", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 1),
+            EvaluationCriteria(id = "default_participation", name = "المشاركة", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 2),
+            EvaluationCriteria(id = "default_interest", name = "الاهتمام", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 3),
+            EvaluationCriteria(id = "default_discipline", name = "الانضباط", maxScore = 20, type = EvaluationCriteria.TYPE_LEADER_CRITERIA, order = 4),
+            EvaluationCriteria(id = "default_quran", name = "تقييم حفظ القرآن", maxScore = 20, type = EvaluationCriteria.TYPE_QURAN, order = 5),
+            EvaluationCriteria(id = "default_notebook", name = "تقييم الكراس", maxScore = 20, type = EvaluationCriteria.TYPE_NOTEBOOK, order = 6)
         )
 
         val batch = firestore.batch()
         defaultList.forEach { item ->
-            val docRef = criteriaCollection.document()
-            batch.set(docRef, mapCriteriaToMap(item.copy(id = docRef.id)))
+            val docRef = criteriaCollection.document(item.id)
+            batch.set(docRef, mapCriteriaToMap(item))
         }
-        batch.commit()
+        batch.commit().addOnFailureListener { e ->
+            Log.e("EvaluationDataSource", "Failed to seed default criteria: ${e.message}", e)
+        }
     }
 
     suspend fun addCriteria(criteria: EvaluationCriteria): Result<Unit> {
@@ -140,19 +150,8 @@ class EvaluationFirestoreDataSource(
             try {
                 val criteriaSnapshot = criteriaCollection.get().await()
                 val criteriaList = criteriaSnapshot.documents.mapNotNull { mapDocumentToCriteria(it) }
-                val quranCriteria = criteriaList.firstOrNull {
-                    it.type == EvaluationCriteria.TYPE_QURAN ||
-                        it.type == CriteriaType.QURAN.name ||
-                        it.type == CriteriaType.QURAN.value ||
-                        it.name.contains("قرآن") ||
-                        it.name.contains("حفظ")
-                }
-                val notebookCriteria = criteriaList.firstOrNull {
-                    it.type == EvaluationCriteria.TYPE_NOTEBOOK ||
-                        it.type == CriteriaType.NOTEBOOK.name ||
-                        it.type == CriteriaType.NOTEBOOK.value ||
-                        it.name.contains("كراس")
-                }
+                val quranCriteria = pickQuranCriterion(criteriaList)
+                val notebookCriteria = pickNotebookCriterion(criteriaList)
                 quranId = quranCriteria?.id
                 notebookId = notebookCriteria?.id
 
@@ -388,4 +387,28 @@ class EvaluationFirestoreDataSource(
             "createdAt" to evaluation.createdAt
         )
     }
+}
+
+internal fun pickQuranCriterion(criteria: List<EvaluationCriteria>): EvaluationCriteria? {
+    val exactTypeMatches = criteria.filter {
+        it.type == EvaluationCriteria.TYPE_QURAN ||
+            it.type == CriteriaType.QURAN.name ||
+            it.type == CriteriaType.QURAN.value
+    }
+    val candidates = exactTypeMatches.ifEmpty {
+        criteria.filter { it.name.contains("قرآن") || it.name.contains("حفظ") }
+    }
+    return candidates.minWithOrNull(compareBy<EvaluationCriteria>({ it.order }, { it.id }))
+}
+
+internal fun pickNotebookCriterion(criteria: List<EvaluationCriteria>): EvaluationCriteria? {
+    val exactTypeMatches = criteria.filter {
+        it.type == EvaluationCriteria.TYPE_NOTEBOOK ||
+            it.type == CriteriaType.NOTEBOOK.name ||
+            it.type == CriteriaType.NOTEBOOK.value
+    }
+    val candidates = exactTypeMatches.ifEmpty {
+        criteria.filter { it.name.contains("كراس") }
+    }
+    return candidates.minWithOrNull(compareBy<EvaluationCriteria>({ it.order }, { it.id }))
 }

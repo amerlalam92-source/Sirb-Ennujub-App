@@ -1,6 +1,8 @@
 package com.example.data.auth
 
 import android.util.Log
+import com.example.data.common.DataLoadErrorReporter
+import com.example.data.common.ListenerFallbackState
 import com.example.data.firestore.safeBoolean
 import com.example.data.firestore.safeNullableString
 import com.example.data.firestore.safeString
@@ -28,7 +30,8 @@ import kotlinx.coroutines.tasks.await
  */
 class AuthRepositoryImpl(
     private val dataSource: FirebaseAuthDataSource,
-    private val firestore: FirebaseFirestore
+    private val firestore: FirebaseFirestore,
+    private val errorReporter: DataLoadErrorReporter? = null
 ) : AuthRepository {
 
     companion object {
@@ -211,17 +214,18 @@ class AuthRepositoryImpl(
     }
 
     override fun observeAllLeaders(): Flow<List<Leader>> = callbackFlow {
+        val fallbackState = ListenerFallbackState<Leader>("leaders", errorReporter)
         val listener = firestore.collection("leaders")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     Log.e(TAG, "Error observing all leaders: ${error.message}", error)
-                    trySend(emptyList())
+                    trySend(fallbackState.onError(error))
                     return@addSnapshotListener
                 }
                 val leaders = snapshot?.documents?.mapNotNull { doc ->
                     mapSnapshotToLeader(doc)
                 }.orEmpty()
-                trySend(leaders)
+                trySend(fallbackState.onSnapshot(leaders))
             }
         awaitClose { listener.remove() }
     }

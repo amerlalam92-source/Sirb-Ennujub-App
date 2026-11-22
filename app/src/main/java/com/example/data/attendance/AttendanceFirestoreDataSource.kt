@@ -1,6 +1,8 @@
 package com.example.data.attendance
 
 import android.util.Log
+import com.example.data.common.DataLoadErrorReporter
+import com.example.data.common.ListenerFallbackState
 import com.example.data.firestore.safeInt
 import com.example.data.firestore.safeLong
 import com.example.data.firestore.safeNullableInt
@@ -21,7 +23,8 @@ import kotlinx.coroutines.tasks.await
  * يدعم الاستماع الفوري والحفظ الجماعي (Batch Writes) وإنشاء الإعدادات الافتراضية ذاتياً.
  */
 class AttendanceFirestoreDataSource(
-    private val firestore: FirebaseFirestore
+    private val firestore: FirebaseFirestore,
+    private val errorReporter: DataLoadErrorReporter? = null
 ) {
     companion object {
         const val COLLECTION_ACTIVITIES = "activities"
@@ -43,16 +46,18 @@ class AttendanceFirestoreDataSource(
      * activities/{activityId}/attendance
      */
     fun getAttendanceForActivity(activityId: String): Flow<List<Attendance>> = callbackFlow {
+        val fallbackState = ListenerFallbackState<Attendance>("attendance", errorReporter)
         val listenerRegistration = getAttendanceSubcollection(activityId)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    trySend(emptyList())
+                    Log.w("AttendanceFirestoreDS", "Error observing attendance for activity $activityId", error)
+                    trySend(fallbackState.onError(error))
                     return@addSnapshotListener
                 }
                 val list = snapshot?.documents?.mapNotNull { doc ->
                     mapDocumentToAttendance(doc, defaultActivityId = activityId)
                 } ?: emptyList()
-                trySend(list)
+                trySend(fallbackState.onSnapshot(list))
             }
         awaitClose { listenerRegistration.remove() }
     }
@@ -79,17 +84,19 @@ class AttendanceFirestoreDataSource(
      * الاستماع لسجلات الحضور لشبل محدد عبر جميع الأنشطة باستخدام Collection Group
      */
     fun getAttendanceForScout(scoutId: String): Flow<List<Attendance>> = callbackFlow {
+        val fallbackState = ListenerFallbackState<Attendance>("attendance", errorReporter)
         val listenerRegistration = firestore.collectionGroup(SUBCOLLECTION_ATTENDANCE)
             .whereEqualTo("scoutId", scoutId)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    trySend(emptyList())
+                    Log.w("AttendanceFirestoreDS", "Error observing attendance for scout $scoutId", error)
+                    trySend(fallbackState.onError(error))
                     return@addSnapshotListener
                 }
                 val list = snapshot?.documents?.mapNotNull { doc ->
                     mapDocumentToAttendance(doc)
                 } ?: emptyList()
-                trySend(list)
+                trySend(fallbackState.onSnapshot(list))
             }
         awaitClose { listenerRegistration.remove() }
     }
@@ -98,16 +105,18 @@ class AttendanceFirestoreDataSource(
      * الاستماع لجميع سجلات الحضور عبر التطبيق باستخدام Collection Group
      */
     fun observeAllAttendance(): Flow<List<Attendance>> = callbackFlow {
+        val fallbackState = ListenerFallbackState<Attendance>("attendance", errorReporter)
         val listenerRegistration = firestore.collectionGroup(SUBCOLLECTION_ATTENDANCE)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    trySend(emptyList())
+                    Log.w("AttendanceFirestoreDS", "Error observing all attendance", error)
+                    trySend(fallbackState.onError(error))
                     return@addSnapshotListener
                 }
                 val list = snapshot?.documents?.mapNotNull { doc ->
                     mapDocumentToAttendance(doc)
                 } ?: emptyList()
-                trySend(list)
+                trySend(fallbackState.onSnapshot(list))
             }
         awaitClose { listenerRegistration.remove() }
     }
