@@ -14,7 +14,11 @@ import com.example.domain.finance.ScoutDebt
 import com.example.domain.finance.SubscriptionStatus
 import android.util.Log
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Source
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -139,17 +143,45 @@ class FinanceRepositoryImpl(
 
     override suspend fun deleteTransaction(id: String): Result<Unit> {
         val currentUser = authRepository.currentUser
+        val existingTx = dataSource.getTransactionById(id)
         val result = dataSource.deleteTransaction(id)
         if (result.isSuccess) {
-            val currentUnitId = authRepository.getCurrentLeader()?.unitId
+            val currentUnitId = existingTx?.unitId ?: authRepository.getCurrentLeader()?.unitId
+            val targetName: String
+            val details: String
+            val meta: Map<String, Any?>
+            if (existingTx != null) {
+                val formattedDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(existingTx.date))
+                val categoryLabel = existingTx.category?.arabicLabel ?: "غير محدد"
+                val descText = existingTx.description.ifBlank { "بدون بيان" }
+                targetName = "${existingTx.type.arabicLabel}: ${existingTx.amount} دج"
+                details = "تم حذف المعاملة المالية | النوع: ${existingTx.type.arabicLabel} | المبلغ: ${existingTx.amount} دج | التاريخ: $formattedDate | التصنيف: $categoryLabel | البيان: $descText"
+                meta = mapOf(
+                    "transactionId" to id,
+                    "amount" to existingTx.amount,
+                    "type" to existingTx.type.key,
+                    "date" to existingTx.date,
+                    "formattedDate" to formattedDate,
+                    "description" to existingTx.description,
+                    "category" to existingTx.category?.key
+                )
+            } else {
+                targetName = "معاملة مالية ($id)"
+                details = "تم حذف المعاملة المالية (تعذر قراءة تفاصيل المعاملة قبل الحذف | المعرف: $id)"
+                meta = mapOf(
+                    "transactionId" to id,
+                    "readBeforeDeleteFailed" to true
+                )
+            }
             activityLogDataSource.logActivity(
                 userId = currentUser?.uid ?: "",
                 userName = currentUser?.displayName ?: "قائد كشفي",
                 action = "delete",
                 targetType = "finance_transaction",
                 targetId = id,
-                targetName = "معاملة مالية",
-                details = "تم حذف المعاملة المالية",
+                targetName = targetName,
+                details = details,
+                meta = meta,
                 unitId = currentUnitId
             )
         }
@@ -771,19 +803,27 @@ class FinanceRepositoryImpl(
 
     override suspend fun cleanupOrphanedRecords(): Result<Int> {
         return try {
-            // 1. Get all existing activity IDs
-            val activitiesSnapshot = firestore.collection("activities").get().await()
+            // 1. Read all collections from Source.SERVER before any deletes.
+            // If any read fails, abort cleanly and delete nothing.
+            val activitiesSnapshot = firestore.collection("activities").get(Source.SERVER).await()
+            val subsSnapshot = firestore.collection("finance_subscriptions").get(Source.SERVER).await()
+            val txSnapshot = firestore.collection("finance_transactions").get(Source.SERVER).await()
+
             val validActivityIds = activitiesSnapshot.documents.map { it.id }.toSet()
 
-            var deletedCount = 0
-
-            // 2. Check Finance Subscriptions
-            val subsSnapshot = firestore.collection("finance_subscriptions").get().await()
-            val subsToDelete = subsSnapshot.documents.filter { 
+            val subsToDelete = subsSnapshot.documents.filter {
                 val actId = it.getString("activityId")
                 actId != null && !validActivityIds.contains(actId)
             }
-            // Batch delete
+
+            val txToDelete = txSnapshot.documents.filter { doc ->
+                val actId = doc.getString("activityId") ?: doc.getString("targetId")
+                !actId.isNullOrBlank() && !validActivityIds.contains(actId)
+            }
+
+            var deletedCount = 0
+
+            // 2. Batch delete orphaned subscriptions
             if (subsToDelete.isNotEmpty()) {
                 subsToDelete.chunked(500).forEach { chunk ->
                     val batch = firestore.batch()
@@ -793,14 +833,7 @@ class FinanceRepositoryImpl(
                 deletedCount += subsToDelete.size
             }
 
-
-
-            // 4. Check Finance Transactions linked to deleted activities (activityId or targetId)
-            val txSnapshot = firestore.collection("finance_transactions").get().await()
-            val txToDelete = txSnapshot.documents.filter { doc ->
-                val actId = doc.getString("activityId") ?: doc.getString("targetId")
-                !actId.isNullOrBlank() && !validActivityIds.contains(actId)
-            }
+            // 3. Batch delete orphaned transactions
             if (txToDelete.isNotEmpty()) {
                 txToDelete.chunked(500).forEach { chunk ->
                     val batch = firestore.batch()
@@ -810,7 +843,28 @@ class FinanceRepositoryImpl(
                 deletedCount += txToDelete.size
             }
 
+            // 4. Record cleanup in activity_log
+            val currentUser = authRepository.currentUser
+            val currentUnitId = authRepository.getCurrentLeader()?.unitId
+            activityLogDataSource.logActivity(
+                userId = currentUser?.uid ?: "",
+                userName = currentUser?.displayName ?: "قائد كشفي",
+                action = "cleanup",
+                targetType = "finance",
+                targetId = "orphaned_records",
+                targetName = "تنظيف السجلات المالية المعلقة",
+                details = "تم حذف $deletedCount سجل معلق (اشتراكات: ${subsToDelete.size}، معاملات: ${txToDelete.size})",
+                meta = mapOf(
+                    "deletedCount" to deletedCount,
+                    "deletedSubscriptionsCount" to subsToDelete.size,
+                    "deletedTransactionsCount" to txToDelete.size
+                ),
+                unitId = currentUnitId
+            )
+
             Result.success(deletedCount)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("FinanceCleanup", "Error cleaning orphaned records", e)
             Result.failure(e)

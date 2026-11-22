@@ -73,6 +73,7 @@ fun FinanceSettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val isMainLeader by viewModel.isMainLeader.collectAsStateWithLifecycle()
     val terms = LocalAppTerms.current
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -352,48 +353,50 @@ fun FinanceSettingsScreen(
                     }
                 }
 
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                )
+                if (isMainLeader) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
 
-                // زر تنظيف السجلات المالية المعلقة
-                OutlinedButton(
-                    onClick = { viewModel.onOpenCleanOrphanedDialog() },
-                    enabled = !uiState.isCleaningOrphanedRecords,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("clean_orphaned_finance_button"),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    ),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    if (uiState.isCleaningOrphanedRecords) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(id = R.string.settings_cleaning_orphaned))
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(id = R.string.settings_clean_orphaned_records))
+                    // زر تنظيف السجلات المالية المعلقة (للقائد الرئيسي فقط)
+                    OutlinedButton(
+                        onClick = { viewModel.onOpenCleanOrphanedDialog() },
+                        enabled = !uiState.isCleaningOrphanedRecords,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("clean_orphaned_finance_button"),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        ),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (uiState.isCleaningOrphanedRecords) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(id = R.string.settings_cleaning_orphaned))
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(id = R.string.settings_clean_orphaned_records))
+                        }
                     }
                 }
             }
         }
 
         // حوار تأكيد تنظيف السجلات المالية المعلقة
-        if (uiState.isCleanOrphanedDialogOpen) {
+        if (isMainLeader && uiState.isCleanOrphanedDialogOpen) {
             AppAlertDialog(
                 onDismissRequest = { viewModel.onDismissCleanOrphanedDialog() },
                 title = {

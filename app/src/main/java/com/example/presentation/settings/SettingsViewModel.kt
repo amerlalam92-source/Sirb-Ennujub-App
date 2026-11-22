@@ -359,6 +359,12 @@ class SettingsViewModel(
     }
 
     fun onOpenCleanOrphanedDialog() {
+        if (!_isMainLeader.value) {
+            viewModelScope.launch {
+                _events.emit(SettingsEvent.ShowMessage("هذه العملية متاحة للقائد الرئيسي فقط"))
+            }
+            return
+        }
         _uiState.update { it.copy(isCleanOrphanedDialogOpen = true) }
     }
 
@@ -367,6 +373,13 @@ class SettingsViewModel(
     }
 
     fun onConfirmCleanOrphanedRecords() {
+        if (!_isMainLeader.value) {
+            _uiState.update { it.copy(isCleanOrphanedDialogOpen = false) }
+            viewModelScope.launch {
+                _events.emit(SettingsEvent.ShowMessage("هذه العملية متاحة للقائد الرئيسي فقط"))
+            }
+            return
+        }
         _uiState.update { it.copy(isCleanOrphanedDialogOpen = false, isCleaningOrphanedRecords = true) }
         viewModelScope.launch {
             val result = financeRepository.cleanupOrphanedRecords()

@@ -17,6 +17,7 @@ import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -120,6 +121,19 @@ class FinanceFirestoreDataSource(
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    suspend fun getTransactionById(id: String): FinanceTransaction? {
+        if (id.isBlank()) return null
+        return try {
+            val doc = transactionsCollection.document(id).get().await()
+            if (doc.exists()) mapDocumentToTransaction(doc) else null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("FinanceFirestoreDS", "Failed to fetch transaction $id", e)
+            null
         }
     }
 

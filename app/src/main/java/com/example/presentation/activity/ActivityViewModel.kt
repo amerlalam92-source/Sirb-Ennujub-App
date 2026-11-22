@@ -27,6 +27,8 @@ import com.example.domain.settings.CustomTerms
 import com.example.domain.settings.TermsRepository
 import java.util.Calendar
 import java.util.LinkedHashMap
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,6 +40,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * نموذج العرض لإدارة الأنشطة الكشفية (Activity ViewModel)
@@ -85,15 +88,29 @@ class ActivityViewModel(
         return getAttendanceRowsForActivityUseCase?.invoke(activityId) ?: flowOf(emptyList())
     }
 
+    private val _isExportingReportPdf = MutableStateFlow(false)
+    val isExportingReportPdf: StateFlow<Boolean> = _isExportingReportPdf.asStateFlow()
+
     fun shareActivityFullReport(context: Context, activity: Activity) {
+        if (_isExportingReportPdf.value) return
         viewModelScope.launch {
-            val file = com.example.presentation.reports.PdfExporter.exportActivityDetailsPdf(
-                activity = activity,
-                meetingTopics = activity.meetingTopics,
-                context = context,
-                terms = currentTerms
-            )
-            com.example.presentation.reports.PdfExporter.shareActivityPdf(file, activity.title, context, terms = currentTerms)
+            _isExportingReportPdf.value = true
+            try {
+                val file = withContext(Dispatchers.IO) {
+                    com.example.presentation.reports.PdfExporter.exportActivityDetailsPdf(
+                        activity = activity,
+                        meetingTopics = activity.meetingTopics,
+                        context = context,
+                        terms = currentTerms
+                    )
+                }
+                com.example.presentation.reports.PdfExporter.shareActivityPdf(file, activity.title, context, terms = currentTerms)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            } finally {
+                _isExportingReportPdf.value = false
+            }
         }
     }
 

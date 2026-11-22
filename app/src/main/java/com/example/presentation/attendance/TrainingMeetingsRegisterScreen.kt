@@ -74,8 +74,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -112,9 +117,11 @@ fun TrainingMeetingsRegisterScreen(
     val terms = LocalAppTerms.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val horizontalScrollState = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope()
 
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var expandedMeetingIds by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var isExportingPdf by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -143,11 +150,33 @@ fun TrainingMeetingsRegisterScreen(
                                     context.getString(R.string.register_empty_message),
                                     Toast.LENGTH_SHORT
                                 ).show()
-                            } else {
-                                val file = PdfExporter.exportTrainingMeetingsRegisterPdf(successState.meetings, context, terms = terms)
-                                PdfExporter.shareTrainingMeetingsRegisterPdf(file, context, terms = terms)
+                            } else if (!isExportingPdf) {
+                                isExportingPdf = true
+                                coroutineScope.launch {
+                                    try {
+                                        val file = withContext(Dispatchers.IO) {
+                                            PdfExporter.exportTrainingMeetingsRegisterPdf(
+                                                successState.meetings,
+                                                context,
+                                                terms = terms
+                                            )
+                                        }
+                                        PdfExporter.shareTrainingMeetingsRegisterPdf(file, context, terms = terms)
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        Toast.makeText(
+                                            context,
+                                            e.localizedMessage ?: "تعذر إنشاء ملف PDF",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } finally {
+                                        isExportingPdf = false
+                                    }
+                                }
                             }
                         },
+                        enabled = !isExportingPdf,
                         modifier = Modifier.testTag("share_training_register_pdf_button")
                     ) {
                         Icon(

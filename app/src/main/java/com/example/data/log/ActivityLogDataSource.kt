@@ -3,6 +3,7 @@ package com.example.data.log
 import android.util.Log
 import com.example.domain.log.ActivityLog
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Query
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -13,8 +14,8 @@ import kotlinx.coroutines.tasks.await
 
 /**
  * مصدر بيانات سجل العمليات والتدقيق (Activity Log Data Source)
- * يسجل ويسترجع كافة العمليات المنفذة في مجموعة "activity_log"
- * دون استخدام فهارس مركبة (composite indexes) حيث تتم التصفية والترتيب في الذاكرة.
+ * يسجل ويسترجع أحدث العمليات المنفذة (حد أقصى 300 سجل) في مجموعة "activity_log"
+ * مرتبة تنازلياً حسب الطابع الزمني.
  */
 class ActivityLogDataSource(
     private val firestore: FirebaseFirestore
@@ -93,11 +94,14 @@ class ActivityLogDataSource(
      * مراقبة كافة العمليات المسجلة بتدفق مباشر ومفلترة بالوحدة
      */
     fun observeLogs(unitId: String? = null): Flow<List<ActivityLog>> = callbackFlow {
-        val query = if (!unitId.isNullOrBlank()) {
+        val baseQuery = if (!unitId.isNullOrBlank()) {
             firestore.collection(COLLECTION_NAME).whereEqualTo("unitId", unitId)
         } else {
             firestore.collection(COLLECTION_NAME)
         }
+        val query = baseQuery
+            .orderBy("timestamp", Query.Direction.DESCENDING)
+            .limit(300)
         val listenerRegistration = query
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -124,7 +128,7 @@ class ActivityLogDataSource(
                         } catch (e: Exception) {
                             null
                         }
-                    }.sortedByDescending { it.timestamp }
+                    }
                     trySend(logs)
                 }
             }
@@ -132,15 +136,18 @@ class ActivityLogDataSource(
     }
 
     /**
-     * جلب كافة العمليات المسجلة لمرة واحدة ومفلترة بالوحدة
+     * جلب أحدث العمليات المسجلة لمرة واحدة ومفلترة بالوحدة
      */
     suspend fun getLogs(unitId: String? = null): List<ActivityLog> {
         return try {
-            val query = if (!unitId.isNullOrBlank()) {
+            val baseQuery = if (!unitId.isNullOrBlank()) {
                 firestore.collection(COLLECTION_NAME).whereEqualTo("unitId", unitId)
             } else {
                 firestore.collection(COLLECTION_NAME)
             }
+            val query = baseQuery
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .limit(300)
             val snapshot = query.get().await()
             snapshot.documents.mapNotNull { doc ->
                 try {
@@ -160,7 +167,7 @@ class ActivityLogDataSource(
                 } catch (e: Exception) {
                     null
                 }
-            }.sortedByDescending { it.timestamp }
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to get logs: ${e.message}")
             emptyList()

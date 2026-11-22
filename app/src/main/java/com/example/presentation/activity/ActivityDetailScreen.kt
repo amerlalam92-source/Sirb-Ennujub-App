@@ -68,8 +68,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -117,6 +122,8 @@ fun ActivityDetailScreen(
     val attendanceRows by viewModel.observeAttendanceRowsForActivity(activityId).collectAsStateWithLifecycle(initialValue = emptyList())
     val hasRecordedAttendance = remember(attendanceRows) { attendanceRows.any { it.attendance != null } }
     val meetingNumbers by viewModel.meetingNumbers.collectAsStateWithLifecycle()
+    val isExportingReportPdf by viewModel.isExportingReportPdf.collectAsStateWithLifecycle()
+    val coroutineScope = rememberCoroutineScope()
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showCancelDialog by remember { mutableStateOf(false) }
@@ -124,6 +131,7 @@ fun ActivityDetailScreen(
     var isEditingReportOnly by remember { mutableStateOf(false) }
     var reportText by remember { mutableStateOf("") }
     var isAttendanceListExpanded by rememberSaveable { mutableStateOf(false) }
+    var isExportingAttendancePdf by remember { mutableStateOf(false) }
 
     LaunchedEffect(activityId) {
         viewModel.loadActivityDetail(activityId)
@@ -164,6 +172,7 @@ fun ActivityDetailScreen(
                             onClick = {
                                 viewModel.shareActivityFullReport(context, activity)
                             },
+                            enabled = !isExportingReportPdf,
                             modifier = Modifier.testTag("share_activity_button")
                         ) {
                             Icon(
@@ -447,15 +456,35 @@ fun ActivityDetailScreen(
                                 // زر مشاركة قائمة الحضور كـ PDF (يبقى مرئياً دائماً حتى لو كانت القائمة مطوية)
                                 OutlinedButton(
                                     onClick = {
-                                        val file = PdfExporter.exportActivityAttendancePdf(
-                                            activity = activity,
-                                            rows = attendanceRows,
-                                            trainingMeetingNumber = meetingNum,
-                                            context = context,
-                                            terms = terms
-                                        )
-                                        PdfExporter.shareActivityAttendancePdf(file, activity.title, context, terms = terms)
+                                        if (!isExportingAttendancePdf) {
+                                            isExportingAttendancePdf = true
+                                            coroutineScope.launch {
+                                                try {
+                                                    val file = withContext(Dispatchers.IO) {
+                                                        PdfExporter.exportActivityAttendancePdf(
+                                                            activity = activity,
+                                                            rows = attendanceRows,
+                                                            trainingMeetingNumber = meetingNum,
+                                                            context = context,
+                                                            terms = terms
+                                                        )
+                                                    }
+                                                    PdfExporter.shareActivityAttendancePdf(file, activity.title, context, terms = terms)
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    Toast.makeText(
+                                                        context,
+                                                        e.localizedMessage ?: "تعذر إنشاء ملف PDF",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                } finally {
+                                                    isExportingAttendancePdf = false
+                                                }
+                                            }
+                                        }
                                     },
+                                    enabled = !isExportingAttendancePdf,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("share_attendance_pdf_button"),
