@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -30,19 +31,29 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import com.example.R
+import com.example.domain.update.AppUpdateInfo
+import com.example.presentation.update.AppUpdater
+import com.example.presentation.update.UpdateViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * شاشة التحديث الإجباري للتطبيق (Force Update Screen)
@@ -54,10 +65,30 @@ fun ForceUpdateScreen(
     isDownloading: Boolean = false,
     downloadError: String? = null,
     onUpdateClick: () -> Unit,
+    apkUrl: String = "",
+    onManualDownloadClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     // منع الرجوع أو إغلاق شاشة التحديث الإجباري
     BackHandler(enabled = true) {}
+
+    val context = LocalContext.current
+    val viewModelStoreOwner = LocalViewModelStoreOwner.current
+    val updateViewModel = remember(viewModelStoreOwner) {
+        viewModelStoreOwner?.let { owner ->
+            try {
+                ViewModelProvider(owner)[UpdateViewModel::class.java]
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+    val emptyUpdateFlow = remember { MutableStateFlow<AppUpdateInfo?>(null) }
+    val observedUpdateInfo by (updateViewModel?.appUpdateInfo ?: emptyUpdateFlow).collectAsStateWithLifecycle()
+    val resolvedApkUrl = apkUrl.ifBlank { observedUpdateInfo?.apkUrl.orEmpty() }
+    val isManualDownloadAllowed = remember(resolvedApkUrl) {
+        AppUpdater.isTrustedDownloadUrl(resolvedApkUrl)
+    }
 
     Box(
         modifier = modifier
@@ -208,6 +239,35 @@ fun ForceUpdateScreen(
                     Text(
                         text = stringResource(id = R.string.force_update_button),
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+            }
+
+            if (isManualDownloadAllowed) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = {
+                        if (onManualDownloadClick != null) {
+                            onManualDownloadClick()
+                        } else {
+                            AppUpdater.openManualDownload(context, resolvedApkUrl)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("force_update_manual_button"),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(id = R.string.force_update_manual_download),
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
                     )
                 }
             }

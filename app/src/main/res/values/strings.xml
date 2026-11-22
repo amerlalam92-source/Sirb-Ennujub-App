@@ -1135,6 +1135,7 @@
     <string name="force_update_skip">تخطي مؤقت</string>
     <string name="force_update_retry">إعادة المحاولة</string>
     <string name="force_update_downloading">جاري تحميل التحديث...</string>
+    <string name="force_update_manual_download">تحميل يدوي</string>
 </resources>
 
 

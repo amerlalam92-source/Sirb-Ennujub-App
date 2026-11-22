@@ -67,13 +67,16 @@ class UpdateViewModel(
     private val _downloadError = MutableStateFlow<String?>(null)
     val downloadError: StateFlow<String?> = _downloadError.asStateFlow()
 
+    private var appContext: Context? = null
+
     fun startUpdateDownload(context: Context) {
         val info = appUpdateInfo.value ?: return
-        val appContext = context.applicationContext
+        val applicationContext = context.applicationContext
+        appContext = applicationContext
         _downloadError.value = null
         _isDownloading.value = true
         AppUpdater.startDownloadAndInstall(
-            context = appContext,
+            context = applicationContext,
             apkUrl = info.apkUrl,
             expectedSha256 = info.sha256,
             onDownloadStarted = {
@@ -87,10 +90,21 @@ class UpdateViewModel(
             onDownloadFailed = { errorMsg ->
                 _isDownloading.value = false
                 _downloadError.value = errorMsg.ifBlank {
-                    appContext.getString(R.string.update_download_failed)
+                    applicationContext.getString(R.string.update_download_failed)
                 }
             }
         )
+    }
+
+    fun openManualDownload(context: Context) {
+        val url = appUpdateInfo.value?.apkUrl.orEmpty()
+        AppUpdater.openManualDownload(context.applicationContext, url)
+    }
+
+    override fun onCleared() {
+        appContext?.let { AppUpdater.cleanup(it) }
+        appContext = null
+        super.onCleared()
     }
 
     class Factory(
