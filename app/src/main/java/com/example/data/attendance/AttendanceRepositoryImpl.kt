@@ -60,7 +60,7 @@ class AttendanceRepositoryImpl(
         }
     }
 
-    override suspend fun saveAttendance(attendance: Attendance): Result<Unit> {
+    override suspend fun saveAttendance(attendance: Attendance, syncSubscription: Boolean): Result<Unit> {
         val currentUser = authRepository.currentUser
         val existingRecords = if (attendance.activityId.isNotBlank()) {
             try {
@@ -120,7 +120,7 @@ class AttendanceRepositoryImpl(
                 activity.activityType == ActivityType.TRAINING_MEETING ||
                 activity.activityType.isMeetingType()
             val shouldCollect = activity?.collectSubscriptions ?: true
-            if (isMeeting && shouldCollect) {
+            if (syncSubscription && isMeeting && shouldCollect) {
                 try {
                     val subStatus = SubscriptionStatus.fromKey(prepared.status)
                     val actDate = if (prepared.activityDate > 0) prepared.activityDate else (activity?.startDate ?: System.currentTimeMillis())

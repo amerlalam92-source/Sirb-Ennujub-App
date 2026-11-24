@@ -27,8 +27,11 @@ import com.example.domain.settings.SettingsRepository
 import com.example.presentation.reports.PdfExporter
 import java.text.Collator
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -118,8 +121,23 @@ class AttendanceViewModel(
         initialValue = 0
     )
 
-    private var isTransitioning = false
-    private var activeSaveJob: Job? = null
+    private sealed interface SaveQueueItem {
+        data class PersistScout(
+            val scout: Scout,
+            val activity: Activity,
+            val status: AttendanceStatus,
+            val pointsSettings: AttendancePointsSettings,
+            val syncFinance: Boolean,
+            val todayPaid: Int,
+            val prevPaid: Int,
+            val todayReq: Int,
+            val credit: Int
+        ) : SaveQueueItem
+
+        data class FlushBarrier(
+            val completion: CompletableDeferred<Result<Unit>>
+        ) : SaveQueueItem
+    }
 
     private data class FinanceSnapshot(
         val status: AttendanceStatus,
@@ -129,7 +147,202 @@ class AttendanceViewModel(
         val credit: Int
     )
 
+    private data class ScoutFinanceDraft(
+        val prevDebtRequired: Int,
+        val todaySubRequired: Int,
+        val todaySubPaid: Int,
+        val prevDebtPaid: Int,
+        val totalPaid: Int,
+        val overpaymentCredit: Int
+    )
+
+    private val saveQueue = Channel<SaveQueueItem>(Channel.UNLIMITED)
+    private val pendingSavesCounter = AtomicInteger(0)
+
+    private val persistedAttendanceStatus = mutableMapOf<String, AttendanceStatus>()
     private val persistedFinanceSignature = mutableMapOf<String, FinanceSnapshot>()
+    private val scoutFinanceCache = mutableMapOf<String, ScoutFinanceDraft>()
+    private val cachedRequiredAmounts = mutableMapOf<SubscriptionStatus, Int>()
+    private val scoutsWithReversibleTxs = mutableSetOf<String>()
+    private val failedSaveTasks = mutableMapOf<String, SaveQueueItem.PersistScout>()
+    private var transactionsPreloaded = false
+    private var currentSessionActivityId: String? = null
+
+    init {
+        startSaveWorker()
+    }
+
+    private fun startSaveWorker() {
+        viewModelScope.launch {
+            for (item in saveQueue) {
+                when (item) {
+                    is SaveQueueItem.PersistScout -> {
+                        try {
+                            val result = executePersistScout(item)
+                            if (result.isSuccess) {
+                                failedSaveTasks.remove(item.scout.id)
+                            } else {
+                                failedSaveTasks[item.scout.id] = item
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            failedSaveTasks[item.scout.id] = item
+                            Log.e("AttendanceVM", "Unexpected error saving ${item.scout.fullName}: ${e.message}", e)
+                        } finally {
+                            val remaining = pendingSavesCounter.decrementAndGet().coerceAtLeast(0)
+                            _entryUiState.update { state ->
+                                state.copy(
+                                    pendingSyncCount = remaining,
+                                    isSaving = remaining > 0 || state.isFinishing
+                                )
+                            }
+                        }
+                    }
+                    is SaveQueueItem.FlushBarrier -> {
+                        var flushError: Throwable? = null
+                        if (failedSaveTasks.isNotEmpty()) {
+                            for (failedItem in failedSaveTasks.values.toList()) {
+                                try {
+                                    val retryResult = executePersistScout(failedItem)
+                                    if (retryResult.isSuccess) {
+                                        failedSaveTasks.remove(failedItem.scout.id)
+                                    } else {
+                                        failedSaveTasks[failedItem.scout.id] = failedItem
+                                        flushError = retryResult.exceptionOrNull()
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    failedSaveTasks[failedItem.scout.id] = failedItem
+                                    flushError = e
+                                }
+                            }
+                        }
+                        if (flushError != null) {
+                            item.completion.complete(Result.failure(flushError))
+                        } else {
+                            item.completion.complete(Result.success(Unit))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun enqueueScoutSave(item: SaveQueueItem.PersistScout) {
+        val count = pendingSavesCounter.incrementAndGet()
+        _entryUiState.update { it.copy(isSaving = true, pendingSyncCount = count) }
+        val sendResult = saveQueue.trySend(item)
+        if (sendResult.isFailure) {
+            val remaining = pendingSavesCounter.decrementAndGet().coerceAtLeast(0)
+            _entryUiState.update { state ->
+                state.copy(
+                    pendingSyncCount = remaining,
+                    isSaving = remaining > 0 || state.isFinishing
+                )
+            }
+        }
+    }
+
+    private suspend fun executePersistScout(item: SaveQueueItem.PersistScout): Result<Unit> {
+        if (currentSessionActivityId != null && item.activity.id != currentSessionActivityId) {
+            return Result.success(Unit)
+        }
+
+        var attendanceFailed = false
+        var attendanceError: Throwable? = null
+        if (persistedAttendanceStatus[item.scout.id] != item.status) {
+            val singleAttendance = buildAttendanceRecord(
+                scout = item.scout,
+                activity = item.activity,
+                status = item.status,
+                pointsSettings = item.pointsSettings
+            )
+            try {
+                // عند تفعيل التحصيل المالي يتكفل saveFinancePayment بحفظ الاشتراك مرة واحدة لتفادي التكرار
+                val attResult = attendanceRepository.saveAttendance(
+                    attendance = singleAttendance,
+                    syncSubscription = !item.syncFinance
+                )
+                if (attResult.isSuccess) {
+                    persistedAttendanceStatus[item.scout.id] = item.status
+                } else {
+                    attendanceFailed = true
+                    attendanceError = attResult.exceptionOrNull()
+                    Log.e(
+                        "AttendanceVM",
+                        "Error saving attendance for ${item.scout.fullName}: ${attendanceError?.message}",
+                        attendanceError
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                attendanceFailed = true
+                attendanceError = e
+                Log.e("AttendanceVM", "Error saving attendance for ${item.scout.fullName}: ${e.message}", e)
+            }
+        }
+
+        if (item.syncFinance) {
+            val financeResult = saveFinancePayment(
+                scout = item.scout,
+                activity = item.activity,
+                currentStatus = item.status,
+                todayPaid = item.todayPaid,
+                prevPaid = item.prevPaid,
+                todayReq = item.todayReq,
+                overpaymentCredit = item.credit,
+                isFinanceEnabled = true
+            )
+            if (financeResult.isFailure) {
+                return financeResult
+            }
+        }
+
+        if (attendanceFailed) {
+            val err = attendanceError ?: Exception("فشل حفظ سجل الحضور")
+            _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل حفظ سجل الحضور") }
+            return Result.failure(err)
+        }
+
+        return Result.success(Unit)
+    }
+
+    private fun isTrainingMeeting(activity: Activity): Boolean {
+        return activity.activityType == ActivityType.TRAINING_MEETING ||
+            activity.type == ActivityType.TRAINING_MEETING.key ||
+            activity.type == "اجتماع تدريبي"
+    }
+
+    private fun computeCanPay(isTrainingMeeting: Boolean, status: AttendanceStatus?): Boolean {
+        if (status == null) return false
+        return if (isTrainingMeeting) {
+            status == AttendanceStatus.PRESENT ||
+                status == AttendanceStatus.LATE ||
+                status == AttendanceStatus.VERY_LATE
+        } else {
+            status == AttendanceStatus.PRESENT
+        }
+    }
+
+    private fun computeRequiredAmountFromCache(
+        activity: Activity,
+        isTrainingMeeting: Boolean,
+        status: AttendanceStatus?
+    ): Int? {
+        if (status == null) return 0
+        if (!isTrainingMeeting) {
+            return if (status == AttendanceStatus.PRESENT) {
+                activity.customSubscriptionAmount ?: 0
+            } else {
+                0
+            }
+        }
+        val subStatus = SubscriptionStatus.fromKey(status.key)
+        return cachedRequiredAmounts[subStatus]
+    }
 
     private fun normalizeDigits(input: String): String {
         val sb = StringBuilder(input.length)
@@ -157,37 +370,25 @@ class AttendanceViewModel(
     }
 
     /**
-     * تحميل البيانات المالية الخاصة بالشبل المحدد وإعادة تعيين القيم المسددة والإدخال السريع
+     * تحميل البيانات المالية الخاصة بالشبل المحدد (احتياطياً في حال لم تُخزن مسبقاً)
      */
     private suspend fun loadScoutFinanceData(scout: Scout, activity: Activity) {
         val existingStatus = _entryUiState.value.recordedStatuses[scout.id]
-        val isTrainingMeeting = activity.activityType == ActivityType.TRAINING_MEETING ||
-            activity.type == ActivityType.TRAINING_MEETING.key ||
-            activity.type == "اجتماع تدريبي"
-
-        val canPay = if (isTrainingMeeting) {
-            existingStatus != null && (existingStatus == AttendanceStatus.PRESENT || existingStatus == AttendanceStatus.LATE || existingStatus == AttendanceStatus.VERY_LATE)
-        } else {
-            existingStatus == AttendanceStatus.PRESENT
-        }
+        val trainingMeeting = isTrainingMeeting(activity)
+        val canPay = computeCanPay(trainingMeeting, existingStatus)
 
         val subRequired = if (existingStatus != null) {
-            if (isTrainingMeeting) {
-                if (financeRepository != null) {
+            computeRequiredAmountFromCache(activity, trainingMeeting, existingStatus)
+                ?: if (trainingMeeting && financeRepository != null) {
                     val subStatus = SubscriptionStatus.fromKey(existingStatus.key)
-                    financeRepository.getRequiredAmountFor(activity.id, subStatus)
+                    financeRepository.getRequiredAmountFor(activity.id, subStatus).also {
+                        cachedRequiredAmounts[subStatus] = it
+                    }
                 } else 0
-            } else {
-                if (existingStatus == AttendanceStatus.PRESENT) {
-                    activity.customSubscriptionAmount ?: 0
-                } else {
-                    0
-                }
-            }
         } else 0
+
         val rawPrevDebt = calculatePreviousDebt(scout.id, activity.id)
 
-        // التحقق إن كان هناك دفع سابق مسجل لهذا الشبل في هذا النشاط (اشتراك + سداد ديون + رصيد مقدم)
         val existingSub = try {
             if (financeRepository != null) {
                 val subs = financeRepository.observeSubscriptionsForActivity(activity.id).first()
@@ -214,8 +415,11 @@ class AttendanceViewModel(
             .filter { it.type == FinanceTransactionType.ADVANCE_PAYMENT }
             .sumOf { it.amount }
 
+        if (debtPaid > 0 || advancePaid > 0) {
+            scoutsWithReversibleTxs.add(scout.id)
+        }
+
         val totalPaid = subPaid + debtPaid + advancePaid
-        // إعادة إضافة الديون المسددة بهذا النشاط حتى لا يتحول جزء منها إلى رصيد مقدم عند إعادة التوزيع
         val prevDebt = rawPrevDebt + debtPaid
 
         if (existingSub != null && existingStatus != null) {
@@ -230,6 +434,31 @@ class AttendanceViewModel(
             persistedFinanceSignature.remove(scout.id)
         }
 
+        val effectivePaid = if (existingStatus != null && canPay && totalPaid > 0) totalPaid else 0
+        val todayPaid = minOf(effectivePaid, subRequired)
+        val remaining = effectivePaid - todayPaid
+        val prevPaid = minOf(remaining, prevDebt)
+        val credit = remaining - prevPaid
+
+        scoutFinanceCache[scout.id] = ScoutFinanceDraft(
+            prevDebtRequired = prevDebt,
+            todaySubRequired = subRequired,
+            todaySubPaid = todayPaid,
+            prevDebtPaid = prevPaid,
+            totalPaid = effectivePaid,
+            overpaymentCredit = credit
+        )
+
+        if (effectivePaid > 0) {
+            _sessionPaidByScout.update { currentMap ->
+                currentMap + (scout.id to effectivePaid)
+            }
+        } else {
+            _sessionPaidByScout.update { it - scout.id }
+        }
+
+        if (_entryUiState.value.currentScout?.id != scout.id) return
+
         _liveAmountInput.value = ""
         _entryUiState.update {
             it.copy(
@@ -237,33 +466,76 @@ class AttendanceViewModel(
                 canPay = canPay,
                 previousDebtRequired = prevDebt,
                 todaySubRequired = subRequired,
-                previousDebtPaid = 0,
-                todaySubPaid = 0,
-                totalPaidToday = 0,
-                overpaymentCredit = 0,
+                previousDebtPaid = prevPaid,
+                todaySubPaid = todayPaid,
+                totalPaidToday = effectivePaid,
+                overpaymentCredit = credit,
                 quickInputAmount = ""
             )
-        }
-
-        if (existingStatus != null && canPay && totalPaid > 0) {
-            distributePayment(totalPaid)
-            _sessionPaidByScout.update { currentMap ->
-                currentMap + (scout.id to totalPaid)
-            }
-        } else {
-            _sessionPaidByScout.update { it - scout.id }
         }
     }
 
     /**
-     * تهيئة معالج الحضور للنشاط المحدد
+     * الانتقال الفوري المتفائل لشبل محدد من الذاكرة المحلية دون انتظار الشبكة
+     */
+    private fun transitionToScout(
+        targetIndex: Int,
+        updatedQueue: List<Scout>? = null
+    ) {
+        _liveAmountInput.value = ""
+        val currentState = _entryUiState.value
+        val queue = updatedQueue ?: currentState.scoutsQueue
+        val targetScout = queue.getOrNull(targetIndex)
+        val activity = currentState.activity
+        val targetStatus = targetScout?.let { currentState.recordedStatuses[it.id] }
+        val trainingMeeting = activity?.let { isTrainingMeeting(it) } ?: true
+        val canPay = computeCanPay(trainingMeeting, targetStatus)
+        val draft = targetScout?.let { scoutFinanceCache[it.id] }
+
+        val todayRequired = if (activity != null && activity.collectSubscriptions && targetStatus != null) {
+            draft?.todaySubRequired
+                ?: computeRequiredAmountFromCache(activity, trainingMeeting, targetStatus)
+                ?: 0
+        } else 0
+
+        _entryUiState.update { state ->
+            state.copy(
+                scoutsQueue = queue,
+                currentIndex = targetIndex,
+                selectedStatus = targetStatus,
+                canPay = canPay,
+                previousDebtRequired = draft?.prevDebtRequired ?: 0,
+                todaySubRequired = todayRequired,
+                previousDebtPaid = draft?.prevDebtPaid ?: 0,
+                todaySubPaid = draft?.todaySubPaid ?: 0,
+                totalPaidToday = draft?.totalPaid ?: 0,
+                overpaymentCredit = draft?.overpaymentCredit ?: 0,
+                quickInputAmount = ""
+            )
+        }
+
+        if (targetScout != null && activity != null && activity.collectSubscriptions && draft == null) {
+            viewModelScope.launch {
+                loadScoutFinanceData(targetScout, activity)
+            }
+        }
+    }
+
+    /**
+     * تهيئة معالج الحضور للنشاط المحدد مع التحميل المسبق للبيانات المالية في الذاكرة
      */
     fun initAttendanceEntry(activityId: String) {
+        currentSessionActivityId = activityId
         _sessionPaidByScout.value = emptyMap()
         _liveAmountInput.value = ""
+        persistedAttendanceStatus.clear()
         persistedFinanceSignature.clear()
-        isTransitioning = false
-        _entryUiState.update { it.copy(isLoading = true, errorMessage = null) }
+        scoutFinanceCache.clear()
+        cachedRequiredAmounts.clear()
+        scoutsWithReversibleTxs.clear()
+        failedSaveTasks.clear()
+        transactionsPreloaded = false
+        _entryUiState.update { it.copy(isLoading = true, isFinishing = false, errorMessage = null) }
 
         viewModelScope.launch {
             try {
@@ -285,19 +557,113 @@ class AttendanceViewModel(
                 val existingMap = existingRecords.associate {
                     it.scoutId to it.attendanceStatus
                 }
+                persistedAttendanceStatus.putAll(existingMap)
 
                 val pointsSettings = observePointsSettingsUseCase().first()
-                val isTrainingMeeting = activity.activityType == ActivityType.TRAINING_MEETING ||
-                    activity.type == ActivityType.TRAINING_MEETING.key ||
-                    activity.type == "اجتماع تدريبي"
+                val trainingMeeting = isTrainingMeeting(activity)
                 val collectSubs = activity.collectSubscriptions
 
-                val initialSelectedStatus = sortedScouts.firstOrNull()?.let { existingMap[it.id] }
-                val initialCanPay = if (isTrainingMeeting) {
-                    initialSelectedStatus != null && (initialSelectedStatus == AttendanceStatus.PRESENT || initialSelectedStatus == AttendanceStatus.LATE || initialSelectedStatus == AttendanceStatus.VERY_LATE)
-                } else {
-                    initialSelectedStatus == AttendanceStatus.PRESENT
+                val initialSessionPaid = mutableMapOf<String, Int>()
+                if (collectSubs && financeRepository != null) {
+                    if (trainingMeeting) {
+                        for (subStatus in SubscriptionStatus.entries) {
+                            try {
+                                cachedRequiredAmounts[subStatus] = financeRepository.getRequiredAmountFor(activity.id, subStatus)
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+
+                    val allSubscriptions = try {
+                        financeRepository.observeAllSubscriptions().first()
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                    val allTransactions = try {
+                        val txs = financeRepository.observeAllTransactions().first()
+                        transactionsPreloaded = true
+                        txs
+                    } catch (_: Exception) {
+                        transactionsPreloaded = false
+                        emptyList()
+                    }
+
+                    val prevDebtByScout = allSubscriptions
+                        .filter { it.activityId != activity.id }
+                        .groupBy { it.scoutId }
+                        .mapValues { (_, subs) -> subs.sumOf { it.debtAmount } }
+
+                    val activitySubByScout = allSubscriptions
+                        .filter { it.activityId == activity.id }
+                        .associateBy { it.scoutId }
+
+                    val activityTxsByScout = allTransactions
+                        .filter { it.relatedActivityId == activity.id && !it.isRolledBack }
+                        .groupBy { it.scoutId }
+
+                    for (scout in sortedScouts) {
+                        val existingStatus = existingMap[scout.id]
+                        val canPay = computeCanPay(trainingMeeting, existingStatus)
+                        val subRequired = if (existingStatus != null) {
+                            computeRequiredAmountFromCache(activity, trainingMeeting, existingStatus) ?: 0
+                        } else 0
+
+                        val rawPrevDebt = prevDebtByScout[scout.id] ?: 0
+                        val existingSub = activitySubByScout[scout.id]
+                        val subPaid = existingSub?.paidAmount ?: 0
+                        val scoutTxs = activityTxsByScout[scout.id] ?: emptyList()
+
+                        val debtPaid = scoutTxs
+                            .filter { it.type == FinanceTransactionType.DEBT_PAYMENT }
+                            .sumOf { it.amount }
+                        val advancePaid = scoutTxs
+                            .filter { it.type == FinanceTransactionType.ADVANCE_PAYMENT }
+                            .sumOf { it.amount }
+
+                        if (debtPaid > 0 || advancePaid > 0) {
+                            scoutsWithReversibleTxs.add(scout.id)
+                        }
+
+                        val totalPaid = subPaid + debtPaid + advancePaid
+                        val prevDebt = rawPrevDebt + debtPaid
+
+                        if (existingSub != null && existingStatus != null) {
+                            persistedFinanceSignature[scout.id] = FinanceSnapshot(
+                                status = existingStatus,
+                                todayPaid = subPaid,
+                                prevPaid = debtPaid,
+                                todayReq = existingSub.requiredAmount,
+                                credit = advancePaid
+                            )
+                        }
+
+                        val effectivePaid = if (existingStatus != null && canPay && totalPaid > 0) totalPaid else 0
+                        val todayPaid = minOf(effectivePaid, subRequired)
+                        val remaining = effectivePaid - todayPaid
+                        val prevPaid = minOf(remaining, prevDebt)
+                        val credit = remaining - prevPaid
+
+                        scoutFinanceCache[scout.id] = ScoutFinanceDraft(
+                            prevDebtRequired = prevDebt,
+                            todaySubRequired = subRequired,
+                            todaySubPaid = todayPaid,
+                            prevDebtPaid = prevPaid,
+                            totalPaid = effectivePaid,
+                            overpaymentCredit = credit
+                        )
+
+                        if (effectivePaid > 0) {
+                            initialSessionPaid[scout.id] = effectivePaid
+                        }
+                    }
                 }
+
+                _sessionPaidByScout.value = initialSessionPaid
+
+                val firstScout = sortedScouts.firstOrNull()
+                val initialSelectedStatus = firstScout?.let { existingMap[it.id] }
+                val initialCanPay = computeCanPay(trainingMeeting, initialSelectedStatus)
+                val initialDraft = firstScout?.let { scoutFinanceCache[it.id] }
 
                 _entryUiState.value = AttendanceEntryUiState(
                     activity = activity,
@@ -309,12 +675,13 @@ class AttendanceViewModel(
                     isLoading = false,
                     selectedStatus = initialSelectedStatus,
                     canPay = initialCanPay,
-                    todaySubRequired = 0
+                    previousDebtRequired = initialDraft?.prevDebtRequired ?: 0,
+                    todaySubRequired = initialDraft?.todaySubRequired ?: 0,
+                    previousDebtPaid = initialDraft?.prevDebtPaid ?: 0,
+                    todaySubPaid = initialDraft?.todaySubPaid ?: 0,
+                    totalPaidToday = initialDraft?.totalPaid ?: 0,
+                    overpaymentCredit = initialDraft?.overpaymentCredit ?: 0
                 )
-
-                if (sortedScouts.isNotEmpty() && collectSubs) {
-                    loadScoutFinanceData(sortedScouts[0], activity)
-                }
             } catch (e: Exception) {
                 _entryUiState.update { it.copy(isLoading = false, errorMessage = e.localizedMessage) }
             }
@@ -327,17 +694,12 @@ class AttendanceViewModel(
     fun onSelectStatus(status: AttendanceStatus) {
         val currentScout = _entryUiState.value.currentScout ?: return
         val activity = _entryUiState.value.activity
-        val isTrainingMeeting = activity?.let {
-            it.activityType == ActivityType.TRAINING_MEETING ||
-            it.type == ActivityType.TRAINING_MEETING.key ||
-            it.type == "اجتماع تدريبي"
-        } ?: true
+        val trainingMeeting = activity?.let { isTrainingMeeting(it) } ?: true
+        val canPay = computeCanPay(trainingMeeting, status)
 
-        val canPay = if (isTrainingMeeting) {
-            status == AttendanceStatus.PRESENT || status == AttendanceStatus.LATE || status == AttendanceStatus.VERY_LATE
-        } else {
-            status == AttendanceStatus.PRESENT
-        }
+        val cachedRequired = if (activity != null && activity.collectSubscriptions) {
+            computeRequiredAmountFromCache(activity, trainingMeeting, status)
+        } else 0
 
         _sessionPaidByScout.update { it - currentScout.id }
         _liveAmountInput.value = ""
@@ -348,6 +710,7 @@ class AttendanceViewModel(
                 recordedStatuses = updated,
                 selectedStatus = status,
                 canPay = canPay,
+                todaySubRequired = cachedRequired ?: current.todaySubRequired,
                 todaySubPaid = 0,
                 previousDebtPaid = 0,
                 totalPaidToday = 0,
@@ -356,31 +719,32 @@ class AttendanceViewModel(
             )
         }
 
-        if (activity != null && activity.collectSubscriptions) {
-            if (isTrainingMeeting) {
-                if (financeRepository != null) {
-                    viewModelScope.launch {
-                        val subStatus = SubscriptionStatus.fromKey(status.key)
-                        val required = financeRepository.getRequiredAmountFor(activity.id, subStatus)
-                        _entryUiState.update {
-                            it.copy(
-                                todaySubRequired = required,
-                                canPay = canPay
-                            )
-                        }
+        val existingDraft = scoutFinanceCache[currentScout.id]
+        scoutFinanceCache[currentScout.id] = ScoutFinanceDraft(
+            prevDebtRequired = existingDraft?.prevDebtRequired ?: _entryUiState.value.previousDebtRequired,
+            todaySubRequired = cachedRequired ?: _entryUiState.value.todaySubRequired,
+            todaySubPaid = 0,
+            prevDebtPaid = 0,
+            totalPaid = 0,
+            overpaymentCredit = 0
+        )
+
+        if (activity != null && activity.collectSubscriptions && trainingMeeting && cachedRequired == null && financeRepository != null) {
+            viewModelScope.launch {
+                val subStatus = SubscriptionStatus.fromKey(status.key)
+                val required = financeRepository.getRequiredAmountFor(activity.id, subStatus)
+                cachedRequiredAmounts[subStatus] = required
+                val curDraft = scoutFinanceCache[currentScout.id]
+                if (curDraft != null) {
+                    scoutFinanceCache[currentScout.id] = curDraft.copy(todaySubRequired = required)
+                }
+                if (_entryUiState.value.currentScout?.id == currentScout.id) {
+                    _entryUiState.update {
+                        it.copy(
+                            todaySubRequired = required,
+                            canPay = canPay
+                        )
                     }
-                }
-            } else {
-                val required = if (status == AttendanceStatus.PRESENT) {
-                    activity.customSubscriptionAmount ?: 0
-                } else {
-                    0
-                }
-                _entryUiState.update {
-                    it.copy(
-                        todaySubRequired = required,
-                        canPay = canPay
-                    )
                 }
             }
         }
@@ -445,26 +809,19 @@ class AttendanceViewModel(
 
         if (activity != null && currentStatus != null) {
             val updatedState = _entryUiState.value
-            val todayPaid = updatedState.todaySubPaid
-            val prevPaid = updatedState.previousDebtPaid
-            val todayReq = updatedState.todaySubRequired
-            val credit = updatedState.overpaymentCredit
-            val singleAttendance = buildAttendanceRecord(
-                scout = scout,
-                activity = activity,
-                status = currentStatus,
-                pointsSettings = updatedState.pointsSettings
+            enqueueScoutSave(
+                SaveQueueItem.PersistScout(
+                    scout = scout,
+                    activity = activity,
+                    status = currentStatus,
+                    pointsSettings = updatedState.pointsSettings,
+                    syncFinance = updatedState.isFinanceSectionVisible && financeRepository != null,
+                    todayPaid = updatedState.todaySubPaid,
+                    prevPaid = updatedState.previousDebtPaid,
+                    todayReq = updatedState.todaySubRequired,
+                    credit = updatedState.overpaymentCredit
+                )
             )
-            val previousJob = activeSaveJob
-            activeSaveJob = viewModelScope.launch {
-                previousJob?.join()
-                try {
-                    attendanceRepository.saveAttendance(singleAttendance)
-                } catch (e: Exception) {
-                    Log.e("AttendanceVM", "Error saving attendance on quick apply for ${scout.fullName}: ${e.message}", e)
-                }
-                saveFinancePayment(scout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
-            }
         }
     }
 
@@ -480,7 +837,7 @@ class AttendanceViewModel(
     }
 
     /**
-     * تعديل الإجمالي المدفوع يدوياً (للحقل القابل للتعديل) وحفظه فوراً بعد عكس أي معاملات سابقة
+     * تعديل الإجمالي المدفوع يدوياً (للحقل القابل للتعديل) وحفظه عبر طابور الخلفية
      */
     fun onTotalPaidChanged(newTotal: String) {
         val state = _entryUiState.value
@@ -499,26 +856,19 @@ class AttendanceViewModel(
         val activity = updatedState.activity
         val currentStatus = updatedState.recordedStatuses[scout.id]
         if (activity != null && currentStatus != null) {
-            val todayPaid = updatedState.todaySubPaid
-            val prevPaid = updatedState.previousDebtPaid
-            val todayReq = updatedState.todaySubRequired
-            val credit = updatedState.overpaymentCredit
-            val singleAttendance = buildAttendanceRecord(
-                scout = scout,
-                activity = activity,
-                status = currentStatus,
-                pointsSettings = updatedState.pointsSettings
+            enqueueScoutSave(
+                SaveQueueItem.PersistScout(
+                    scout = scout,
+                    activity = activity,
+                    status = currentStatus,
+                    pointsSettings = updatedState.pointsSettings,
+                    syncFinance = updatedState.isFinanceSectionVisible && financeRepository != null,
+                    todayPaid = updatedState.todaySubPaid,
+                    prevPaid = updatedState.previousDebtPaid,
+                    todayReq = updatedState.todaySubRequired,
+                    credit = updatedState.overpaymentCredit
+                )
             )
-            val previousJob = activeSaveJob
-            activeSaveJob = viewModelScope.launch {
-                previousJob?.join()
-                try {
-                    attendanceRepository.saveAttendance(singleAttendance)
-                } catch (e: Exception) {
-                    Log.e("AttendanceVM", "Error saving attendance on total edit for ${scout.fullName}: ${e.message}", e)
-                }
-                saveFinancePayment(scout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
-            }
         }
     }
 
@@ -542,6 +892,17 @@ class AttendanceViewModel(
                 totalPaidToday = sanitizedAmount,
                 todaySubPaid = todayPaid,
                 previousDebtPaid = prevPaid,
+                overpaymentCredit = credit
+            )
+        }
+
+        state.currentScout?.let { scout ->
+            scoutFinanceCache[scout.id] = ScoutFinanceDraft(
+                prevDebtRequired = state.previousDebtRequired,
+                todaySubRequired = state.todaySubRequired,
+                todaySubPaid = todayPaid,
+                prevDebtPaid = prevPaid,
+                totalPaid = sanitizedAmount,
                 overpaymentCredit = credit
             )
         }
@@ -592,6 +953,9 @@ class AttendanceViewModel(
      */
     private suspend fun reverseOldPayments(activityId: String, scoutId: String): Result<Unit> {
         if (financeRepository == null) return Result.success(Unit)
+        if (transactionsPreloaded && scoutId !in scoutsWithReversibleTxs) {
+            return Result.success(Unit)
+        }
         return try {
             val existingTxs = financeRepository.observeAllTransactions().first()
                 .filter {
@@ -638,7 +1002,10 @@ class AttendanceViewModel(
                     )
                 }
             }
+            scoutsWithReversibleTxs.remove(scoutId)
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("AttendanceVM", "Error reversing old payments for $scoutId in $activityId: ${e.message}", e)
             Result.failure(Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.", e))
@@ -655,9 +1022,10 @@ class AttendanceViewModel(
         todayPaid: Int = _entryUiState.value.todaySubPaid,
         prevPaid: Int = _entryUiState.value.previousDebtPaid,
         todayReq: Int = _entryUiState.value.todaySubRequired,
-        overpaymentCredit: Int = _entryUiState.value.overpaymentCredit
+        overpaymentCredit: Int = _entryUiState.value.overpaymentCredit,
+        isFinanceEnabled: Boolean = _entryUiState.value.isFinanceSectionVisible
     ): Result<Unit> {
-        if (financeRepository == null || !_entryUiState.value.isFinanceSectionVisible) {
+        if (financeRepository == null || !isFinanceEnabled) {
             return Result.success(Unit)
         }
         val snapshot = FinanceSnapshot(
@@ -703,6 +1071,7 @@ class AttendanceViewModel(
 
             // 3. تطبيق سداد الديون السابقة من جديد إن وجد
             if (prevPaid > 0) {
+                scoutsWithReversibleTxs.add(scout.id)
                 val payDebtResult = financeRepository.payScoutDebts(scout.id, prevPaid)
                 if (payDebtResult.isFailure) {
                     val err = payDebtResult.exceptionOrNull() ?: Exception("فشل تسجيل سداد الديون السابقة")
@@ -730,6 +1099,7 @@ class AttendanceViewModel(
 
             // 4. تطبيق الدفعة المقدمة (الرصيد المقدم) من جديد إن وجدت
             if (overpaymentCredit > 0) {
+                scoutsWithReversibleTxs.add(scout.id)
                 val addCreditResult = scoutRepository.addCreditToScout(scout.id, overpaymentCredit)
                 if (addCreditResult.isFailure) {
                     val err = addCreditResult.exceptionOrNull() ?: Exception("فشل تحديث الرصيد المقدم")
@@ -757,6 +1127,8 @@ class AttendanceViewModel(
 
             persistedFinanceSignature[scout.id] = snapshot
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("AttendanceVM", "Error saving finance payment for ${scout.fullName}: ${e.message}", e)
             val msg = e.message ?: "حدث خطأ أثناء حفظ البيانات المالية"
@@ -766,11 +1138,11 @@ class AttendanceViewModel(
     }
 
     /**
-     * الانتقال للشبل التالي وحفظ سجل الشبل الحالي فوراً
+     * الانتقال الفوري للشبل التالي مع جدولة الحفظ المتسلسل في الخلفية
      */
     fun onNext(onSkipped: () -> Unit) {
-        if (isTransitioning) return
         val state = _entryUiState.value
+        if (state.isFinishing) return
         val scout = state.currentScout ?: return
         val activity = state.activity ?: return
         val currentStatus = state.recordedStatuses[scout.id]
@@ -779,317 +1151,167 @@ class AttendanceViewModel(
             val updatedQueue = state.scoutsQueue.toMutableList()
             updatedQueue.removeAt(state.currentIndex)
             updatedQueue.add(scout)
-
-            val nextScout = updatedQueue.getOrNull(state.currentIndex)
-            _liveAmountInput.value = ""
-            _entryUiState.update {
-                it.copy(
-                    scoutsQueue = updatedQueue,
-                    selectedStatus = nextScout?.let { s -> it.recordedStatuses[s.id] },
-                    canPay = false,
-                    todaySubRequired = 0,
-                    todaySubPaid = 0,
-                    previousDebtPaid = 0,
-                    totalPaidToday = 0,
-                    overpaymentCredit = 0,
-                    quickInputAmount = ""
-                )
-            }
+            transitionToScout(state.currentIndex, updatedQueue = updatedQueue)
             onSkipped()
-            if (nextScout != null && activity.collectSubscriptions) {
-                viewModelScope.launch {
-                    isTransitioning = true
-                    try {
-                        loadScoutFinanceData(nextScout, activity)
-                    } finally {
-                        isTransitioning = false
-                    }
-                }
-            }
             return
         }
 
         // تطبيق أي مبلغ مكتوب في حقل الإدخال السريع قبل الحفظ والانتقال
         applyPendingQuickInputIfNeeded()
         val updatedState = _entryUiState.value
-        val todayPaid = updatedState.todaySubPaid
-        val prevPaid = updatedState.previousDebtPaid
-        val todayReq = updatedState.todaySubRequired
-        val credit = updatedState.overpaymentCredit
-        val singleAttendance = buildAttendanceRecord(scout, activity, currentStatus, updatedState.pointsSettings)
+        val saveSnapshot = SaveQueueItem.PersistScout(
+            scout = scout,
+            activity = activity,
+            status = currentStatus,
+            pointsSettings = updatedState.pointsSettings,
+            syncFinance = updatedState.isFinanceSectionVisible && financeRepository != null,
+            todayPaid = updatedState.todaySubPaid,
+            prevPaid = updatedState.previousDebtPaid,
+            todayReq = updatedState.todaySubRequired,
+            credit = updatedState.overpaymentCredit
+        )
 
-        viewModelScope.launch {
-            isTransitioning = true
-            try {
-                activeSaveJob?.join()
-                // 1. حفظ الحضور فوراً
-                try {
-                    attendanceRepository.saveAttendance(singleAttendance)
-                } catch (e: Exception) {
-                    Log.e("AttendanceVM", "Error saving attendance for ${scout.fullName}: ${e.message}", e)
-                }
-
-                // 2. حفظ المدفوعات المالية
-                val financeResult = saveFinancePayment(scout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
-                if (financeResult.isFailure) {
-                    return@launch
-                }
-
-                // 3. الانتقال للشبل التالي وتحميل بياناته المالية
-                _liveAmountInput.value = ""
-                if (updatedState.currentIndex < updatedState.scoutsQueue.size - 1) {
-                    val nextIndex = updatedState.currentIndex + 1
-                    val nextScout = updatedState.scoutsQueue[nextIndex]
-                    _entryUiState.update {
-                        it.copy(
-                            currentIndex = nextIndex,
-                            selectedStatus = it.recordedStatuses[nextScout.id],
-                            canPay = false,
-                            todaySubRequired = 0,
-                            todaySubPaid = 0,
-                            previousDebtPaid = 0,
-                            totalPaidToday = 0,
-                            overpaymentCredit = 0,
-                            quickInputAmount = ""
-                        )
-                    }
-                    if (activity.collectSubscriptions) {
-                        loadScoutFinanceData(nextScout, activity)
-                    }
-                } else {
-                    _entryUiState.update {
-                        it.copy(
-                            selectedStatus = null,
-                            canPay = false,
-                            todaySubRequired = 0,
-                            todaySubPaid = 0,
-                            previousDebtPaid = 0,
-                            totalPaidToday = 0,
-                            overpaymentCredit = 0,
-                            quickInputAmount = ""
-                        )
-                    }
-                }
-            } finally {
-                isTransitioning = false
+        // تحديث الواجهة فوراً دون انتظار الشبكة
+        if (updatedState.currentIndex < updatedState.scoutsQueue.size - 1) {
+            transitionToScout(updatedState.currentIndex + 1)
+        } else {
+            _liveAmountInput.value = ""
+            _entryUiState.update {
+                it.copy(
+                    selectedStatus = null,
+                    canPay = false,
+                    todaySubRequired = 0,
+                    todaySubPaid = 0,
+                    previousDebtPaid = 0,
+                    totalPaidToday = 0,
+                    overpaymentCredit = 0,
+                    quickInputAmount = ""
+                )
             }
         }
+
+        enqueueScoutSave(saveSnapshot)
     }
 
     /**
-     * العودة للشبل السابق مع حفظ حالة الشبل الحالي وأي مبلغ مدخل
+     * العودة الفورية للشبل السابق مع جدولة حفظ حالة الشبل الحالي في الخلفية
      */
     fun onPrevious() {
-        if (isTransitioning) return
         val state = _entryUiState.value
+        if (state.isFinishing) return
         if (state.currentIndex <= 0) return
 
         val prevIndex = state.currentIndex - 1
-        val prevScout = state.scoutsQueue.getOrNull(prevIndex)
         val currentScout = state.currentScout
         val activity = state.activity
         val currentStatus = currentScout?.let { state.recordedStatuses[it.id] }
 
-        if (currentScout != null && activity != null && currentStatus != null) {
+        val saveSnapshot = if (currentScout != null && activity != null && currentStatus != null) {
             applyPendingQuickInputIfNeeded()
             val updatedState = _entryUiState.value
-            val todayPaid = updatedState.todaySubPaid
-            val prevPaid = updatedState.previousDebtPaid
-            val todayReq = updatedState.todaySubRequired
-            val credit = updatedState.overpaymentCredit
-            val singleAttendance = buildAttendanceRecord(currentScout, activity, currentStatus, updatedState.pointsSettings)
+            SaveQueueItem.PersistScout(
+                scout = currentScout,
+                activity = activity,
+                status = currentStatus,
+                pointsSettings = updatedState.pointsSettings,
+                syncFinance = updatedState.isFinanceSectionVisible && financeRepository != null,
+                todayPaid = updatedState.todaySubPaid,
+                prevPaid = updatedState.previousDebtPaid,
+                todayReq = updatedState.todaySubRequired,
+                credit = updatedState.overpaymentCredit
+            )
+        } else null
 
-            viewModelScope.launch {
-                isTransitioning = true
-                try {
-                    activeSaveJob?.join()
-                    try {
-                        attendanceRepository.saveAttendance(singleAttendance)
-                    } catch (e: Exception) {
-                        Log.e("AttendanceVM", "Error saving attendance before going previous for ${currentScout.fullName}: ${e.message}", e)
-                    }
+        transitionToScout(prevIndex)
 
-                    val financeResult = saveFinancePayment(currentScout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
-                    if (financeResult.isFailure) {
-                        return@launch
-                    }
-
-                    _liveAmountInput.value = ""
-                    _entryUiState.update {
-                        it.copy(
-                            currentIndex = prevIndex,
-                            selectedStatus = prevScout?.let { s -> it.recordedStatuses[s.id] },
-                            canPay = false,
-                            todaySubRequired = 0,
-                            todaySubPaid = 0,
-                            previousDebtPaid = 0,
-                            totalPaidToday = 0,
-                            overpaymentCredit = 0,
-                            quickInputAmount = ""
-                        )
-                    }
-                    if (prevScout != null && activity.collectSubscriptions) {
-                        loadScoutFinanceData(prevScout, activity)
-                    }
-                } finally {
-                    isTransitioning = false
-                }
-            }
-        } else {
-            _liveAmountInput.value = ""
-            _entryUiState.update {
-                it.copy(
-                    currentIndex = prevIndex,
-                    selectedStatus = prevScout?.let { s -> it.recordedStatuses[s.id] },
-                    canPay = false,
-                    todaySubRequired = 0,
-                    todaySubPaid = 0,
-                    previousDebtPaid = 0,
-                    totalPaidToday = 0,
-                    overpaymentCredit = 0,
-                    quickInputAmount = ""
-                )
-            }
-            if (prevScout != null && activity != null && activity.collectSubscriptions) {
-                viewModelScope.launch {
-                    isTransitioning = true
-                    try {
-                        loadScoutFinanceData(prevScout, activity)
-                    } finally {
-                        isTransitioning = false
-                    }
-                }
-            }
+        if (saveSnapshot != null) {
+            enqueueScoutSave(saveSnapshot)
         }
     }
 
     /**
-     * القفز مباشرة إلى شبل محدد عبر البحث (مع حفظ الشبل الحالي إن أمكن)
+     * القفز الفوري إلى شبل محدد عبر البحث مع جدولة حفظ الشبل الحالي في الخلفية
      */
     fun jumpToScout(scoutId: String, saveCurrent: Boolean = true) {
-        if (isTransitioning) return
         val state = _entryUiState.value
+        if (state.isFinishing) return
         val targetIndex = state.scoutsQueue.indexOfFirst { it.id == scoutId }
         if (targetIndex < 0 || targetIndex == state.currentIndex) return
 
-        val targetScout = state.scoutsQueue[targetIndex]
         val currentScout = state.currentScout
         val activity = state.activity
         val currentStatus = currentScout?.let { state.recordedStatuses[it.id] }
 
-        if (saveCurrent && currentScout != null && activity != null && currentStatus != null) {
+        val saveSnapshot = if (saveCurrent && currentScout != null && activity != null && currentStatus != null) {
             applyPendingQuickInputIfNeeded()
             val updatedState = _entryUiState.value
-            val todayPaid = updatedState.todaySubPaid
-            val prevPaid = updatedState.previousDebtPaid
-            val todayReq = updatedState.todaySubRequired
-            val credit = updatedState.overpaymentCredit
-            val singleAttendance = buildAttendanceRecord(currentScout, activity, currentStatus, updatedState.pointsSettings)
+            SaveQueueItem.PersistScout(
+                scout = currentScout,
+                activity = activity,
+                status = currentStatus,
+                pointsSettings = updatedState.pointsSettings,
+                syncFinance = updatedState.isFinanceSectionVisible && financeRepository != null,
+                todayPaid = updatedState.todaySubPaid,
+                prevPaid = updatedState.previousDebtPaid,
+                todayReq = updatedState.todaySubRequired,
+                credit = updatedState.overpaymentCredit
+            )
+        } else null
 
-            viewModelScope.launch {
-                isTransitioning = true
-                try {
-                    activeSaveJob?.join()
-                    try {
-                        attendanceRepository.saveAttendance(singleAttendance)
-                    } catch (e: Exception) {
-                        Log.e("AttendanceVM", "Error saving attendance before jump for ${currentScout.fullName}: ${e.message}", e)
-                    }
+        transitionToScout(targetIndex)
 
-                    val financeResult = saveFinancePayment(currentScout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
-                    if (financeResult.isFailure) {
-                        return@launch
-                    }
-
-                    _liveAmountInput.value = ""
-                    _entryUiState.update {
-                        it.copy(
-                            currentIndex = targetIndex,
-                            selectedStatus = it.recordedStatuses[targetScout.id],
-                            canPay = false,
-                            todaySubRequired = 0,
-                            todaySubPaid = 0,
-                            previousDebtPaid = 0,
-                            totalPaidToday = 0,
-                            overpaymentCredit = 0,
-                            quickInputAmount = ""
-                        )
-                    }
-                    if (activity.collectSubscriptions) {
-                        loadScoutFinanceData(targetScout, activity)
-                    }
-                } finally {
-                    isTransitioning = false
-                }
-            }
-        } else {
-            _liveAmountInput.value = ""
-            _entryUiState.update {
-                it.copy(
-                    currentIndex = targetIndex,
-                    selectedStatus = it.recordedStatuses[targetScout.id],
-                    canPay = false,
-                    todaySubRequired = 0,
-                    todaySubPaid = 0,
-                    previousDebtPaid = 0,
-                    totalPaidToday = 0,
-                    overpaymentCredit = 0,
-                    quickInputAmount = ""
-                )
-            }
-            if (activity != null && activity.collectSubscriptions) {
-                viewModelScope.launch {
-                    isTransitioning = true
-                    try {
-                        loadScoutFinanceData(targetScout, activity)
-                    } finally {
-                        isTransitioning = false
-                    }
-                }
-            }
+        if (saveSnapshot != null) {
+            enqueueScoutSave(saveSnapshot)
         }
     }
 
     /**
-     * إنهاء تسجيل الحضور وحفظ الشبل الأخير
+     * إنهاء تسجيل الحضور: يجدول الشبل الأخير وينتظر اكتمال جميع مهام المزامنة المعلقة قبل المغادرة
      */
     fun saveAttendance(onSuccess: () -> Unit) {
         val state = _entryUiState.value
+        if (state.isFinishing) return
         val activity = state.activity ?: return
         val currentScout = state.currentScout
         val currentStatus = currentScout?.let { state.recordedStatuses[it.id] }
 
         if (currentScout != null && currentStatus != null) {
             applyPendingQuickInputIfNeeded()
+            val updatedState = _entryUiState.value
+            enqueueScoutSave(
+                SaveQueueItem.PersistScout(
+                    scout = currentScout,
+                    activity = activity,
+                    status = currentStatus,
+                    pointsSettings = updatedState.pointsSettings,
+                    syncFinance = updatedState.isFinanceSectionVisible && financeRepository != null,
+                    todayPaid = updatedState.todaySubPaid,
+                    prevPaid = updatedState.previousDebtPaid,
+                    todayReq = updatedState.todaySubRequired,
+                    credit = updatedState.overpaymentCredit
+                )
+            )
         }
-        val updatedState = _entryUiState.value
-        val todayPaid = updatedState.todaySubPaid
-        val prevPaid = updatedState.previousDebtPaid
-        val todayReq = updatedState.todaySubRequired
-        val credit = updatedState.overpaymentCredit
 
-        _entryUiState.update { it.copy(isSaving = true) }
+        _entryUiState.update { it.copy(isSaving = true, isFinishing = true) }
 
         viewModelScope.launch {
-            activeSaveJob?.join()
-            if (currentScout != null && currentStatus != null) {
-                val singleAttendance = buildAttendanceRecord(
-                    currentScout,
-                    activity,
-                    currentStatus,
-                    updatedState.pointsSettings
-                )
-                try {
-                    attendanceRepository.saveAttendance(singleAttendance)
-                } catch (e: Exception) {
-                    Log.e("AttendanceVM", "Error saving last scout attendance: ${e.message}", e)
-                }
+            val completion = CompletableDeferred<Result<Unit>>()
+            saveQueue.send(SaveQueueItem.FlushBarrier(completion))
+            val flushResult = completion.await()
 
-                val financeResult = saveFinancePayment(currentScout, activity, currentStatus, todayPaid, prevPaid, todayReq, credit)
-                if (financeResult.isFailure) {
-                    _entryUiState.update { it.copy(isSaving = false) }
-                    return@launch
+            if (flushResult.isFailure) {
+                val remaining = pendingSavesCounter.get().coerceAtLeast(0)
+                val fallbackMsg = flushResult.exceptionOrNull()?.message ?: "فشل حفظ بعض البيانات، يرجى المحاولة مرة أخرى."
+                _entryUiState.update {
+                    it.copy(
+                        isFinishing = false,
+                        isSaving = remaining > 0,
+                        pendingSyncCount = remaining,
+                        snackbarMessage = it.snackbarMessage ?: fallbackMsg
+                    )
                 }
+                return@launch
             }
 
             _liveAmountInput.value = ""
@@ -1104,6 +1326,8 @@ class AttendanceViewModel(
                     overpaymentCredit = 0,
                     quickInputAmount = "",
                     isSaving = false,
+                    isFinishing = false,
+                    pendingSyncCount = 0,
                     isFinished = true
                 )
             }

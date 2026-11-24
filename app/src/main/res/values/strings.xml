@@ -1126,6 +1126,8 @@
     <string name="attendance_print_form_desc">طباعة استمارة الحضور</string>
     <string name="attendance_print_form_error">تعذر إنشاء استمارة الحضور</string>
     <string name="attendance_pick_activity_to_print_title">اختر النشاط لطباعة الاستمارة</string>
+    <string name="attendance_syncing_background">جارٍ مزامنة الحضور (%1$d)...</string>
+    <string name="attendance_sync_wait_before_exit">جارٍ حفظ ومزامنة البيانات في الخلفية، يرجى الانتظار لحظة...</string>
 
     <!-- التحديث الإجباري للتطبيق (Force Update) -->
     <string name="force_update_title">تحديث مطلوب</string>

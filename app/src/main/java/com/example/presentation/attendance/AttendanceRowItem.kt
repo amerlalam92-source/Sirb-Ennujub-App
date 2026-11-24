@@ -4,11 +4,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -28,6 +31,7 @@ import com.example.domain.attendance.AttendanceStatus
 /**
  * سطر عرض حالة حضور شبل محدد في نشاط كشفي
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AttendanceRowItem(
     row: AttendanceRow,
@@ -77,61 +81,67 @@ fun AttendanceRowItem(
         shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
-        Row(
+        FlowRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // اسم ولقب الشبل
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = row.scout.fullName,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
+            // اسم ولقب الشبل بمساحة كافية دون تضييق
+            Text(
+                text = row.scout.fullName,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .widthIn(min = 120.dp)
+                    .align(Alignment.CenterVertically)
+            )
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // شريحة حالة الحضور
-            Surface(
-                color = statusBgColor,
-                shape = RoundedCornerShape(6.dp)
+            FlowRow(
+                modifier = Modifier.align(Alignment.CenterVertically),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text(
-                    text = statusLabel,
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                    color = statusColor,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
-
-            // قيمة النقاط (إذا كان النشاط يطبق سلم التنقيط)
-            if (usesPointsSystem) {
-                Spacer(modifier = Modifier.width(10.dp))
-                val pointsText = if (attendance != null) {
-                    if (attendance.points > 0) "+${attendance.points}" else "${attendance.points}"
-                } else {
-                    "—"
-                }
+                // شريحة حالة الحضور
                 Surface(
-                    color = if (attendance != null && attendance.points > 0)
-                        MaterialTheme.colorScheme.secondaryContainer
-                    else
-                        MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(6.dp)
+                    color = statusBgColor,
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.align(Alignment.CenterVertically)
                 ) {
                     Text(
-                        text = pointsText,
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                        color = if (attendance != null && attendance.points > 0)
-                            MaterialTheme.colorScheme.secondary
-                        else
-                            MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                        text = statusLabel,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = statusColor,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
+                }
+
+                // قيمة النقاط (إذا كان النشاط يطبق سلم التنقيط)
+                if (usesPointsSystem) {
+                    val pointsText = if (attendance != null) {
+                        if (attendance.points > 0) "+${attendance.points}" else "${attendance.points}"
+                    } else {
+                        "—"
+                    }
+                    Surface(
+                        color = if (attendance != null && attendance.points > 0)
+                            MaterialTheme.colorScheme.secondaryContainer
+                        else
+                            MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.align(Alignment.CenterVertically)
+                    ) {
+                        Text(
+                            text = pointsText,
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = if (attendance != null && attendance.points > 0)
+                                MaterialTheme.colorScheme.secondary
+                            else
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                        )
+                    }
                 }
             }
         }

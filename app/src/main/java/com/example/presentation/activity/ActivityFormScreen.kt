@@ -3,16 +3,20 @@ package com.example.presentation.activity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -54,6 +58,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -69,12 +74,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
@@ -195,7 +202,13 @@ fun ActivityFormScreen(
                         OutlinedTextField(
                             value = formState.title,
                             onValueChange = viewModel::onFormTitleChanged,
-                            label = { Text(stringResource(id = R.string.activity_title_label)) },
+                            label = {
+                                Text(
+                                    text = stringResource(id = R.string.activity_title_label),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.Title,
@@ -203,7 +216,7 @@ fun ActivityFormScreen(
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             },
-                            singleLine = true,
+                            maxLines = 3,
                             isError = formState.titleError != null,
                             supportingText = {
                                 formState.titleError?.let { errRes ->
@@ -220,6 +233,7 @@ fun ActivityFormScreen(
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 56.dp)
                                 .testTag("form_activity_title_input"),
                             shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -239,7 +253,14 @@ fun ActivityFormScreen(
                                 value = ActivityType.fromKey(formState.type).displayLabel(terms),
                                 onValueChange = {},
                                 readOnly = true,
-                                label = { Text(stringResource(id = R.string.activity_type_label)) },
+                                maxLines = 3,
+                                label = {
+                                    Text(
+                                        text = stringResource(id = R.string.activity_type_label),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
                                 leadingIcon = {
                                     Icon(
                                         imageVector = ActivityFormatters.getIconForType(ActivityType.fromKey(formState.type)),
@@ -254,6 +275,7 @@ fun ActivityFormScreen(
                                 modifier = Modifier
                                     .menuAnchor()
                                     .fillMaxWidth()
+                                    .heightIn(min = 56.dp)
                                     .testTag("form_activity_type_dropdown"),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -291,9 +313,12 @@ fun ActivityFormScreen(
                                 .fillMaxWidth()
                                 .testTag("form_collect_subscriptions_row"),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
                                 Text(
                                     text = stringResource(id = R.string.collect_subscriptions_label),
                                     style = MaterialTheme.typography.bodyMedium,
@@ -324,7 +349,13 @@ fun ActivityFormScreen(
                                 OutlinedTextField(
                                     value = formState.customSubscriptionAmountInput,
                                     onValueChange = viewModel::onFormCustomSubscriptionAmountChanged,
-                                    label = { Text(stringResource(id = R.string.custom_subscription_amount_label)) },
+                                    label = {
+                                        Text(
+                                            text = stringResource(id = R.string.custom_subscription_amount_label),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
                                     leadingIcon = {
                                         Icon(
                                             imageVector = Icons.Default.Payments,
@@ -339,6 +370,7 @@ fun ActivityFormScreen(
                                     ),
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .heightIn(min = 56.dp)
                                         .testTag("form_custom_subscription_amount_input"),
                                     shape = RoundedCornerShape(12.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
@@ -370,12 +402,18 @@ fun ActivityFormScreen(
                                         OutlinedTextField(
                                             value = topic,
                                             onValueChange = { viewModel.onUpdateTopic(index, it) },
-                                            label = { Text("${stringResource(id = R.string.label_topic)} ${index + 1}") },
+                                            label = {
+                                                Text(
+                                                    text = "${stringResource(id = R.string.label_topic)} ${index + 1}",
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            },
                                             modifier = Modifier
                                                 .weight(1f)
+                                                .heightIn(min = 56.dp)
                                                 .testTag("form_meeting_topic_$index"),
                                             shape = RoundedCornerShape(12.dp),
-                                            singleLine = true,
                                             trailingIcon = {
                                                 IconButton(
                                                     onClick = { viewModel.onRemoveTopic(index) },
@@ -383,7 +421,7 @@ fun ActivityFormScreen(
                                                 ) {
                                                     Icon(
                                                         imageVector = Icons.Default.Clear,
-                                                        contentDescription = null,
+                                                        contentDescription = stringResource(id = R.string.cancel_action),
                                                         tint = MaterialTheme.colorScheme.error
                                                     )
                                                 }
@@ -416,159 +454,161 @@ fun ActivityFormScreen(
                     }
 
                     // بطاقة 2: التواريخ والمواعيد
+                    val useStackedDatePickers = LocalDensity.current.fontScale >= 1.3f
                     FormCard(title = stringResource(id = R.string.activity_date_label)) {
-                        // تاريخ البداية وتاريخ النهاية جنباً إلى جنب
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            // تاريخ البداية
-                            Box(modifier = Modifier.weight(1f)) {
-                                OutlinedTextField(
-                                    value = dateFormatter.format(Date(formState.startDate)),
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text(stringResource(id = R.string.activity_start_date_label)) },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.CalendarMonth,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
+                        val startDateLabel = stringResource(id = R.string.activity_start_date_label)
+                        val endDateLabel = stringResource(id = R.string.activity_end_date_label)
+                        val startDateText = dateFormatter.format(Date(formState.startDate))
+                        val endDateText = dateFormatter.format(Date(formState.endDate))
+                        val endDateErrorText = formState.endDateError?.let { stringResource(id = it) }
+
+                        // تاريخ البداية وتاريخ النهاية
+                        if (useStackedDatePickers) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                ActivityDateTimePickerCard(
+                                    label = startDateLabel,
+                                    value = startDateText,
+                                    placeholder = "",
+                                    icon = Icons.Default.CalendarMonth,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        showStartDatePicker = true
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp)
+                                    modifier = Modifier.fillMaxWidth()
                                 )
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .clickable {
-                                            focusManager.clearFocus()
-                                            showStartDatePicker = true
-                                        }
+                                ActivityDateTimePickerCard(
+                                    label = endDateLabel,
+                                    value = endDateText,
+                                    placeholder = "",
+                                    icon = Icons.Default.CalendarMonth,
+                                    isError = endDateErrorText != null,
+                                    errorText = endDateErrorText,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        showEndDatePicker = true
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                             }
-
-                            // تاريخ النهاية
-                            Box(modifier = Modifier.weight(1f)) {
-                                OutlinedTextField(
-                                    value = dateFormatter.format(Date(formState.endDate)),
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text(stringResource(id = R.string.activity_end_date_label)) },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.CalendarMonth,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                ActivityDateTimePickerCard(
+                                    label = startDateLabel,
+                                    value = startDateText,
+                                    placeholder = "",
+                                    icon = Icons.Default.CalendarMonth,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        showStartDatePicker = true
                                     },
-                                    isError = formState.endDateError != null,
-                                    supportingText = {
-                                        formState.endDateError?.let { errRes ->
-                                            Text(
-                                                text = stringResource(id = errRes),
-                                                color = MaterialTheme.colorScheme.error,
-                                                style = MaterialTheme.typography.bodySmall
-                                            )
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp)
+                                    modifier = Modifier.weight(1f)
                                 )
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .clickable {
-                                            focusManager.clearFocus()
-                                            showEndDatePicker = true
-                                        }
+                                ActivityDateTimePickerCard(
+                                    label = endDateLabel,
+                                    value = endDateText,
+                                    placeholder = "",
+                                    icon = Icons.Default.CalendarMonth,
+                                    isError = endDateErrorText != null,
+                                    errorText = endDateErrorText,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        showEndDatePicker = true
+                                    },
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         // وقت البداية ووقت النهاية (اختياري)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            // وقت البداية
-                            Box(modifier = Modifier.weight(1f)) {
-                                OutlinedTextField(
-                                    value = if (formState.startTime.isNotBlank()) ActivityFormatters.formatTimeArabic(formState.startTime) else "",
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text(stringResource(id = R.string.activity_start_time_label)) },
-                                    placeholder = { Text("بدون وقت") },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.AccessTime,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
+                        val startTimeLabel = stringResource(id = R.string.activity_start_time_label)
+                        val endTimeLabel = stringResource(id = R.string.activity_end_time_label)
+                        val startTimeValue = if (formState.startTime.isNotBlank()) {
+                            ActivityFormatters.formatTimeArabic(formState.startTime)
+                        } else {
+                            ""
+                        }
+                        val endTimeValue = if (formState.endTime.isNotBlank()) {
+                            ActivityFormatters.formatTimeArabic(formState.endTime)
+                        } else {
+                            ""
+                        }
+
+                        if (useStackedDatePickers) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                ActivityDateTimePickerCard(
+                                    label = startTimeLabel,
+                                    value = startTimeValue,
+                                    placeholder = "بدون وقت",
+                                    icon = Icons.Default.AccessTime,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        showStartTimePicker = true
                                     },
-                                    trailingIcon = {
-                                        if (formState.startTime.isNotBlank()) {
-                                            IconButton(onClick = { viewModel.onFormStartTimeChanged("") }) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Clear,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp)
+                                    onClear = if (formState.startTime.isNotBlank()) {
+                                        { viewModel.onFormStartTimeChanged("") }
+                                    } else null,
+                                    modifier = Modifier.fillMaxWidth()
                                 )
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .clickable {
-                                            focusManager.clearFocus()
-                                            showStartTimePicker = true
-                                        }
+                                ActivityDateTimePickerCard(
+                                    label = endTimeLabel,
+                                    value = endTimeValue,
+                                    placeholder = "بدون وقت",
+                                    icon = Icons.Default.AccessTime,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        showEndTimePicker = true
+                                    },
+                                    onClear = if (formState.endTime.isNotBlank()) {
+                                        { viewModel.onFormEndTimeChanged("") }
+                                    } else null,
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                             }
-
-                            // وقت النهاية
-                            Box(modifier = Modifier.weight(1f)) {
-                                OutlinedTextField(
-                                    value = if (formState.endTime.isNotBlank()) ActivityFormatters.formatTimeArabic(formState.endTime) else "",
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text(stringResource(id = R.string.activity_end_time_label)) },
-                                    placeholder = { Text("بدون وقت") },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.AccessTime,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                ActivityDateTimePickerCard(
+                                    label = startTimeLabel,
+                                    value = startTimeValue,
+                                    placeholder = "بدون وقت",
+                                    icon = Icons.Default.AccessTime,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        showStartTimePicker = true
                                     },
-                                    trailingIcon = {
-                                        if (formState.endTime.isNotBlank()) {
-                                            IconButton(onClick = { viewModel.onFormEndTimeChanged("") }) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Clear,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp)
+                                    onClear = if (formState.startTime.isNotBlank()) {
+                                        { viewModel.onFormStartTimeChanged("") }
+                                    } else null,
+                                    modifier = Modifier.weight(1f)
                                 )
-                                Box(
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .clickable {
-                                            focusManager.clearFocus()
-                                            showEndTimePicker = true
-                                        }
+                                ActivityDateTimePickerCard(
+                                    label = endTimeLabel,
+                                    value = endTimeValue,
+                                    placeholder = "بدون وقت",
+                                    icon = Icons.Default.AccessTime,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        showEndTimePicker = true
+                                    },
+                                    onClear = if (formState.endTime.isNotBlank()) {
+                                        { viewModel.onFormEndTimeChanged("") }
+                                    } else null,
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
                         }
@@ -580,7 +620,13 @@ fun ActivityFormScreen(
                         OutlinedTextField(
                             value = formState.location,
                             onValueChange = viewModel::onFormLocationChanged,
-                            label = { Text(stringResource(id = R.string.activity_location_label)) },
+                            label = {
+                                Text(
+                                    text = stringResource(id = R.string.activity_location_label),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.LocationOn,
@@ -588,13 +634,14 @@ fun ActivityFormScreen(
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             },
-                            singleLine = true,
+                            maxLines = 3,
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Text,
                                 imeAction = ImeAction.Next
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 56.dp)
                                 .testTag("form_activity_location_input"),
                             shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -609,7 +656,13 @@ fun ActivityFormScreen(
                         OutlinedTextField(
                             value = formState.responsibleName,
                             onValueChange = viewModel::onFormResponsibleNameChanged,
-                            label = { Text(stringResource(id = R.string.activity_responsible_label)) },
+                            label = {
+                                Text(
+                                    text = stringResource(id = R.string.activity_responsible_label),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.Person,
@@ -617,13 +670,14 @@ fun ActivityFormScreen(
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             },
-                            singleLine = true,
+                            maxLines = 3,
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Text,
                                 imeAction = ImeAction.Next
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 56.dp)
                                 .testTag("form_activity_responsible_input"),
                             shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -639,7 +693,13 @@ fun ActivityFormScreen(
                         OutlinedTextField(
                             value = formState.objectives,
                             onValueChange = viewModel::onFormObjectivesChanged,
-                            label = { Text(stringResource(id = R.string.activity_objectives_label)) },
+                            label = {
+                                Text(
+                                    text = stringResource(id = R.string.activity_objectives_label),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.FactCheck,
@@ -650,6 +710,7 @@ fun ActivityFormScreen(
                             maxLines = 4,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 56.dp)
                                 .testTag("form_activity_objectives_input"),
                             shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -664,7 +725,13 @@ fun ActivityFormScreen(
                         OutlinedTextField(
                             value = formState.tools,
                             onValueChange = viewModel::onFormToolsChanged,
-                            label = { Text(stringResource(id = R.string.activity_tools_label)) },
+                            label = {
+                                Text(
+                                    text = stringResource(id = R.string.activity_tools_label),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.Handyman,
@@ -675,6 +742,7 @@ fun ActivityFormScreen(
                             maxLines = 4,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 56.dp)
                                 .testTag("form_activity_tools_input"),
                             shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -689,7 +757,13 @@ fun ActivityFormScreen(
                         OutlinedTextField(
                             value = formState.notes,
                             onValueChange = viewModel::onFormNotesChanged,
-                            label = { Text(stringResource(id = R.string.notes_label)) },
+                            label = {
+                                Text(
+                                    text = stringResource(id = R.string.notes_label),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.Notes,
@@ -700,6 +774,7 @@ fun ActivityFormScreen(
                             maxLines = 4,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 56.dp)
                                 .testTag("form_activity_notes_input"),
                             shape = RoundedCornerShape(12.dp),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -720,7 +795,7 @@ fun ActivityFormScreen(
                         enabled = !formState.isSaving,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(54.dp)
+                            .heightIn(min = 54.dp)
                             .testTag("save_activity_submit_button"),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -882,6 +957,105 @@ private fun FormCard(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
             content()
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ActivityDateTimePickerCard(
+    label: String,
+    value: String,
+    placeholder: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    isError: Boolean = false,
+    errorText: String? = null,
+    onClear: (() -> Unit)? = null
+) {
+    val borderColor = if (isError) {
+        MaterialTheme.colorScheme.error
+    } else {
+        MaterialTheme.colorScheme.outline
+    }
+    Column(modifier = modifier) {
+        Surface(
+            onClick = onClick,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, borderColor),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .align(Alignment.CenterVertically)
+                    )
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.align(Alignment.CenterVertically)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val hasValue = value.isNotBlank()
+                    Text(
+                        text = if (hasValue) value else placeholder,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (hasValue) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (onClear != null) {
+                        IconButton(onClick = onClear) {
+                            Icon(
+                                imageVector = Icons.Default.Clear,
+                                contentDescription = stringResource(id = R.string.cancel_action),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (!errorText.isNullOrBlank()) {
+            Text(
+                text = errorText,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = 12.dp, top = 4.dp)
+            )
         }
     }
 }

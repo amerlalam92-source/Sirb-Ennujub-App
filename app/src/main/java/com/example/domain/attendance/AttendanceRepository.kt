@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.Flow
 interface AttendanceRepository {
     fun getAttendanceForActivity(activityId: String): Flow<List<Attendance>>
     fun getAttendanceForScout(scoutId: String): Flow<List<Attendance>>
-    suspend fun saveAttendance(attendance: Attendance): Result<Unit>
+    suspend fun saveAttendance(attendance: Attendance, syncSubscription: Boolean = true): Result<Unit>
     suspend fun saveAttendanceBatch(list: List<Attendance>): Result<Unit>
     suspend fun deleteAttendance(activityId: String, scoutId: String): Result<Unit>
     fun observePointsSettings(): Flow<AttendancePointsSettings>

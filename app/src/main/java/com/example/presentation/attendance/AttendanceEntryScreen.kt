@@ -1,6 +1,8 @@
 package com.example.presentation.attendance
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -12,6 +14,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -128,6 +132,15 @@ fun AttendanceEntryScreen(
 
     val skippedMessage = "تم تخطي ${terms.scoutSingularDefinite} وسيعاد عرضه في نهاية القائمة"
     val selectStatusFirstMessage = stringResource(id = R.string.error_select_status_first)
+    val syncWaitMessage = stringResource(id = R.string.attendance_sync_wait_before_exit)
+
+    BackHandler(enabled = state.isSaving || state.isFinishing) {
+        if (!state.isFinishing) {
+            scope.launch {
+                snackbarHostState.showSnackbar(syncWaitMessage)
+            }
+        }
+    }
 
     LaunchedEffect(state.snackbarMessage) {
         val msgKey = state.snackbarMessage
@@ -155,7 +168,17 @@ fun AttendanceEntryScreen(
                 ),
                 navigationIcon = {
                     IconButton(
-                        onClick = onNavigateBack,
+                        onClick = {
+                            if (state.isFinishing) return@IconButton
+                            if (state.isSaving) {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(syncWaitMessage)
+                                }
+                            } else {
+                                onNavigateBack()
+                            }
+                        },
+                        enabled = !state.isFinishing,
                         modifier = Modifier.testTag("attendance_entry_back_btn")
                     ) {
                         Icon(
@@ -184,20 +207,20 @@ fun AttendanceEntryScreen(
                         }
                     }
                     TextButton(
-                        onClick = { if (isEditable) showFinishDialog = true },
-                        enabled = isEditable,
+                        onClick = { if (isEditable && !state.isFinishing) showFinishDialog = true },
+                        enabled = isEditable && !state.isFinishing,
                         modifier = Modifier.testTag("finish_save_top_btn")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Save,
                             contentDescription = null,
-                            tint = if (isEditable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            tint = if (isEditable && !state.isFinishing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = stringResource(id = R.string.action_finish_and_save),
-                            color = if (isEditable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            color = if (isEditable && !state.isFinishing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -284,59 +307,104 @@ fun AttendanceEntryScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // بطاقة الشبل الحالي بتأثير حركي سلس
-                    AnimatedContent(
-                        targetState = state.currentScout,
-                        transitionSpec = {
-                            (slideInHorizontally { width -> -width } + fadeIn()) togetherWith
-                                    (slideOutHorizontally { width -> width } + fadeOut())
-                        },
-                        label = "scout_card_transition",
-                        modifier = Modifier.weight(1f)
-                    ) { currentScout ->
-                        if (currentScout != null) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .verticalScroll(rememberScrollState()),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                val isTrainingMeeting = state.activity?.let {
-                                    it.activityType == ActivityType.TRAINING_MEETING ||
-                                    it.type == ActivityType.TRAINING_MEETING.key ||
-                                    it.type == "اجتماع تدريبي"
-                                } ?: false
+                    // بطاقة الشبل الحالي بتأثير حركي سلس + مؤشر مزامنة غير معطّل
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    ) {
+                        AnimatedContent(
+                            targetState = state.currentScout,
+                            transitionSpec = {
+                                (slideInHorizontally { width -> -width } + fadeIn()) togetherWith
+                                        (slideOutHorizontally { width -> width } + fadeOut())
+                            },
+                            label = "scout_card_transition",
+                            modifier = Modifier.fillMaxSize()
+                        ) { currentScout ->
+                            if (currentScout != null) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(rememberScrollState()),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    val isTrainingMeeting = state.activity?.let {
+                                        it.activityType == ActivityType.TRAINING_MEETING ||
+                                        it.type == ActivityType.TRAINING_MEETING.key ||
+                                        it.type == "اجتماع تدريبي"
+                                    } ?: false
 
-                                ScoutWizardCard(
-                                    scout = currentScout,
-                                    selectedStatus = state.currentStatus,
-                                    usesPoints = state.activity?.activityType?.usesPointsSystem() == true,
-                                    pointsSettings = state.pointsSettings,
-                                    isTrainingMeeting = isTrainingMeeting,
-                                    onStatusSelected = { newStatus ->
-                                        if (isEditable) {
-                                            val existing = state.currentStatus
-                                            if (existing != null && existing.isAbsent && newStatus.isPresentOrLate) {
-                                                pendingStatusChange = newStatus
-                                                showAbsentToPresentWarning = true
-                                            } else {
-                                                viewModel.onSelectStatus(newStatus)
+                                    ScoutWizardCard(
+                                        scout = currentScout,
+                                        selectedStatus = state.currentStatus,
+                                        usesPoints = state.activity?.activityType?.usesPointsSystem() == true,
+                                        pointsSettings = state.pointsSettings,
+                                        isTrainingMeeting = isTrainingMeeting,
+                                        onStatusSelected = { newStatus ->
+                                            if (isEditable) {
+                                                val existing = state.currentStatus
+                                                if (existing != null && existing.isAbsent && newStatus.isPresentOrLate) {
+                                                    pendingStatusChange = newStatus
+                                                    showAbsentToPresentWarning = true
+                                                } else {
+                                                    viewModel.onSelectStatus(newStatus)
+                                                }
                                             }
                                         }
-                                    }
-                                )
+                                    )
 
-                                if (state.isFinanceSectionVisible) {
-                                    Spacer(modifier = Modifier.height(14.dp))
-                                    AttendanceFinanceCard(
-                                        uiState = state,
-                                        currentScoutTotalPaid = currentScoutTotalPaid,
-                                        onAmountInputChanged = viewModel::onAmountInputChanged,
-                                        onApplyQuickInput = viewModel::onApplyQuickInput,
-                                        onTotalPaidChanged = viewModel::onTotalPaidChanged,
-                                        onPaymentFieldClickedWithoutStatus = viewModel::onPaymentFieldClickedWithoutStatus,
-                                        isEditable = isEditable
+                                    if (state.isFinanceSectionVisible) {
+                                        Spacer(modifier = Modifier.height(14.dp))
+                                        AttendanceFinanceCard(
+                                            uiState = state,
+                                            currentScoutTotalPaid = currentScoutTotalPaid,
+                                            onAmountInputChanged = viewModel::onAmountInputChanged,
+                                            onApplyQuickInput = viewModel::onApplyQuickInput,
+                                            onTotalPaidChanged = viewModel::onTotalPaidChanged,
+                                            onPaymentFieldClickedWithoutStatus = viewModel::onPaymentFieldClickedWithoutStatus,
+                                            isEditable = isEditable
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = state.isSaving && !state.isFinishing,
+                            enter = fadeIn(),
+                            exit = fadeOut(),
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 4.dp)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(20.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.95f),
+                                tonalElevation = 3.dp,
+                                shadowElevation = 2.dp,
+                                modifier = Modifier.testTag("attendance_background_sync_indicator")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Text(
+                                        text = stringResource(
+                                            id = R.string.attendance_syncing_background,
+                                            state.pendingSyncCount.coerceAtLeast(1)
+                                        ),
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
@@ -355,10 +423,10 @@ fun AttendanceEntryScreen(
                     ) {
                         OutlinedButton(
                             onClick = { viewModel.onPrevious() },
-                            enabled = !state.isFirst && !state.isSaving,
+                            enabled = !state.isFirst && !state.isFinishing,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(52.dp)
+                                .heightIn(min = 52.dp)
                                 .testTag("wizard_previous_btn"),
                             shape = RoundedCornerShape(14.dp)
                         ) {
@@ -373,11 +441,11 @@ fun AttendanceEntryScreen(
 
                         if (state.isLast) {
                             Button(
-                                onClick = { if (isEditable && !state.isSaving) showFinishDialog = true },
-                                enabled = isEditable && !state.isSaving,
+                                onClick = { if (isEditable && !state.isFinishing) showFinishDialog = true },
+                                enabled = isEditable && !state.isFinishing,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(52.dp)
+                                    .heightIn(min = 52.dp)
                                     .testTag("wizard_finish_btn"),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primary,
@@ -402,10 +470,10 @@ fun AttendanceEntryScreen(
                                         }
                                     }
                                 },
-                                enabled = isEditable && !state.isSaving,
+                                enabled = isEditable && !state.isFinishing,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(52.dp)
+                                    .heightIn(min = 52.dp)
                                     .testTag("wizard_next_btn"),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primary,
@@ -426,8 +494,8 @@ fun AttendanceEntryScreen(
                 }
             }
 
-            // شاشة التحميل المعتمة أثناء الحفظ لتفادي النقر المزدوج
-            if (state.isSaving) {
+            // شاشة التحميل المعتمة فقط عند الضغط على إنهاء وحفظ في انتظار تفريغ مهام المزامنة
+            if (state.isFinishing) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -533,10 +601,10 @@ fun AttendanceEntryScreen(
                             onNavigateBack()
                         }
                     },
-                    enabled = !state.isSaving,
+                    enabled = !state.isFinishing,
                     modifier = Modifier.testTag("confirm_finish_attendance_btn")
                 ) {
-                    if (state.isSaving) {
+                    if (state.isFinishing) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             color = MaterialTheme.colorScheme.onPrimary,
@@ -1030,7 +1098,7 @@ private fun AttendanceOptionButton(
     Surface(
         onClick = onClick,
         modifier = modifier
-            .height(54.dp)
+            .heightIn(min = 54.dp)
             .testTag(testTag)
             .border(
                 width = if (isSelected) 2.5.dp else 1.dp,
@@ -1042,8 +1110,8 @@ private fun AttendanceOptionButton(
     ) {
         Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp),
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
@@ -1059,7 +1127,9 @@ private fun AttendanceOptionButton(
                 text = customLabel ?: status.arabicLabel,
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                 color = if (isSelected) Color.White else Color.Black.copy(alpha = 0.85f),
-                maxLines = 1,
+                maxLines = 2,
+                softWrap = true,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
 
@@ -1083,6 +1153,7 @@ private fun AttendanceOptionButton(
 /**
  * بطاقة التحصيل المالي المصاحبة لبطاقة الشبل في معالج تسجيل الحضور
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AttendanceFinanceCard(
     uiState: AttendanceEntryUiState,
@@ -1123,13 +1194,14 @@ private fun AttendanceFinanceCard(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // العنوان مع إجمالي المدفوع وقابلية التعديل
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 // Right: Text "التحصيل المالي" + Wallet Icon
                 Row(
+                    modifier = Modifier.align(Alignment.CenterVertically),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -1149,6 +1221,7 @@ private fun AttendanceFinanceCard(
                 // Left: إجمالي المدفوع أو حقل التعديل
                 if (!isEditingTotal) {
                     Row(
+                        modifier = Modifier.align(Alignment.CenterVertically),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
@@ -1182,6 +1255,7 @@ private fun AttendanceFinanceCard(
                     }
                 } else {
                     Row(
+                        modifier = Modifier.align(Alignment.CenterVertically),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
@@ -1233,20 +1307,22 @@ private fun AttendanceFinanceCard(
             )
 
             // Row 1 (الديون السابقة)
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
                     text = stringResource(id = R.string.label_previous_debt),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.CenterVertically)
                 )
                 Text(
                     text = stringResource(id = R.string.label_required_format, uiState.previousDebtRequired),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.align(Alignment.CenterVertically)
                 )
                 val prevPaidColor = if (uiState.previousDebtPaid > 0) {
                     MaterialTheme.colorScheme.primary
@@ -1258,20 +1334,22 @@ private fun AttendanceFinanceCard(
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = if (uiState.previousDebtPaid > 0) FontWeight.Bold else FontWeight.Normal
                     ),
-                    color = prevPaidColor
+                    color = prevPaidColor,
+                    modifier = Modifier.align(Alignment.CenterVertically)
                 )
             }
 
             // Row 2 (اشتراك اليوم)
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
                     text = stringResource(id = R.string.label_today_sub),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.CenterVertically)
                 )
                 Text(
                     text = if (isStatusSelected) {
@@ -1280,7 +1358,8 @@ private fun AttendanceFinanceCard(
                         "- -"
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.align(Alignment.CenterVertically)
                 )
                 val todayPaidColor = if (uiState.todaySubPaid > 0) {
                     MaterialTheme.colorScheme.primary
@@ -1292,21 +1371,23 @@ private fun AttendanceFinanceCard(
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = if (uiState.todaySubPaid > 0) FontWeight.Bold else FontWeight.Normal
                     ),
-                    color = todayPaidColor
+                    color = todayPaidColor,
+                    modifier = Modifier.align(Alignment.CenterVertically)
                 )
             }
 
             // Row 3 (الديون المتبقية)
             val remainingDebt = (uiState.previousDebtRequired - uiState.previousDebtPaid).coerceAtLeast(0)
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
                     text = stringResource(id = R.string.label_remaining_debt),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.CenterVertically)
                 )
                 val remainingDebtColor = if (remainingDebt > 0) {
                     MaterialTheme.colorScheme.error
@@ -1316,25 +1397,28 @@ private fun AttendanceFinanceCard(
                 Text(
                     text = "$remainingDebt دج",
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                    color = remainingDebtColor
+                    color = remainingDebtColor,
+                    modifier = Modifier.align(Alignment.CenterVertically)
                 )
             }
 
             if (uiState.overpaymentCredit > 0) {
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         text = stringResource(id = R.string.label_advance_payment_credit),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.CenterVertically)
                     )
                     Text(
                         text = "+${uiState.overpaymentCredit} دج",
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.align(Alignment.CenterVertically)
                     )
                 }
             }

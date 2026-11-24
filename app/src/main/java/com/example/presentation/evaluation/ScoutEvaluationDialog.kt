@@ -540,22 +540,24 @@ fun ScoutEvaluationDialog(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
+                    FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
                             text = "المجموع الكلي للنقاط:",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.align(Alignment.CenterVertically)
                         )
                         Text(
                             text = if (maxTotalScore > 0) "$totalScorePreview / $maxTotalScore" else stringResource(id = R.string.evaluation_total_preview, totalScorePreview),
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = if (totalScorePreview >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            color = if (totalScorePreview >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            modifier = Modifier.align(Alignment.CenterVertically)
                         )
                     }
                 }
@@ -566,10 +568,10 @@ fun ScoutEvaluationDialog(
                 )
 
                 // أزرار الحذف والحفظ والإلغاء
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (existingEvaluation != null && onDelete != null && !isLocked) {
                         OutlinedButton(
@@ -580,7 +582,9 @@ fun ScoutEvaluationDialog(
                             ),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
                             shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.testTag("dialog_delete_evaluation_button")
+                            modifier = Modifier
+                                .align(Alignment.CenterVertically)
+                                .testTag("dialog_delete_evaluation_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Delete,
@@ -590,56 +594,54 @@ fun ScoutEvaluationDialog(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(stringResource(id = R.string.action_delete_evaluation))
                         }
-                    } else {
-                        Spacer(modifier = Modifier.width(1.dp))
                     }
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            enabled = !isSaving,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.testTag("dialog_cancel_button")
-                        ) {
-                            Text(stringResource(id = R.string.cancel_action))
-                        }
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        enabled = !isSaving,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .align(Alignment.CenterVertically)
+                            .testTag("dialog_cancel_button")
+                    ) {
+                        Text(stringResource(id = R.string.cancel_action))
+                    }
 
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        Button(
-                            onClick = {
-                                val mapToSave = mutableMapOf<String, Int>()
-                                criteriaList.forEach { c ->
-                                    mapToSave[c.id] = scoresState[c.id] ?: c.maxScore
-                                }
-                                onSave(
-                                    mapToSave,
-                                    if (showPenalty) penaltyAmount else 0,
-                                    if (showPenalty) penaltyReason.trim().ifBlank { null } else null,
-                                    testedAmount.trim().ifBlank { null }
-                                )
-                            },
-                            enabled = !isLocked && !hasAnyError && !isSaving,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.testTag("dialog_save_button")
-                        ) {
-                            if (isSaving) {
-                                CircularProgressIndicator(
-                                    strokeWidth = 2.dp,
-                                    modifier = Modifier.size(18.dp),
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                            } else {
-                                Icon(
-                                    imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.Save,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val mapToSave = mutableMapOf<String, Int>()
+                            criteriaList.forEach { c ->
+                                mapToSave[c.id] = scoresState[c.id] ?: c.maxScore
                             }
-                            Text(stringResource(id = R.string.action_save))
+                            onSave(
+                                mapToSave,
+                                if (showPenalty) penaltyAmount else 0,
+                                if (showPenalty) penaltyReason.trim().ifBlank { null } else null,
+                                testedAmount.trim().ifBlank { null }
+                            )
+                        },
+                        enabled = !isLocked && !hasAnyError && !isSaving,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .align(Alignment.CenterVertically)
+                            .testTag("dialog_save_button")
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(18.dp),
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        } else {
+                            Icon(
+                                imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.Save,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
                         }
+                        Text(stringResource(id = R.string.action_save))
                     }
                 }
             }
@@ -690,8 +692,6 @@ private fun CriteriaStepper(
                 text = criteria.name,
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center
             )
             Text(
@@ -793,9 +793,7 @@ private fun CriteriaStepper(
                             Text(
                                 text = stringResource(id = R.string.evaluation_other_leaders_scores_title),
                                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.tertiary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                color = MaterialTheme.colorScheme.tertiary
                             )
                         }
                         otherLeaderScores.forEach { (leaderName, score) ->
@@ -808,8 +806,6 @@ private fun CriteriaStepper(
                                     text = leaderName,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))

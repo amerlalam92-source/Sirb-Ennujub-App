@@ -181,10 +181,7 @@ fun CollectionsScreen(
                                         text = String.format(AppLocale.AR_DZ, "%d دج", uiState.totalRequired),
                                         style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onSurface,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                     Text(
                                         text = "المطلوب",
@@ -204,10 +201,7 @@ fun CollectionsScreen(
                                         text = String.format(AppLocale.AR_DZ, "%d دج", uiState.totalPaid),
                                         style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
                                         color = collectedColor,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                     Text(
                                         text = "المُحصَّل",
@@ -227,10 +221,7 @@ fun CollectionsScreen(
                                         text = String.format(AppLocale.AR_DZ, "%d دج", uiState.totalDebt),
                                         style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
                                         color = if (uiState.totalDebt > 0) MaterialTheme.colorScheme.error else collectedColor,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                     Text(
                                         text = "المتبقي",

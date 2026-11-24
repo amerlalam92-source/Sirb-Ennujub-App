@@ -7,10 +7,13 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -203,7 +206,8 @@ fun ProgressReportScreen(
                                 Row(
                                     modifier = Modifier
                                         .width(TOTAL_TABLE_WIDTH)
-                                        .height(CELL_HEIGHT)
+                                        .height(IntrinsicSize.Min)
+                                        .heightIn(min = CELL_HEIGHT)
                                 ) {
                                     // عمود اسم الشبل (140.dp)
                                     ProgressTableCell(
@@ -258,7 +262,8 @@ fun ProgressReportScreen(
                                         Row(
                                             modifier = Modifier
                                                 .width(TOTAL_TABLE_WIDTH)
-                                                .height(CELL_HEIGHT)
+                                                .height(IntrinsicSize.Min)
+                                                .heightIn(min = CELL_HEIGHT)
                                         ) {
                                             // اسم الشبل (140.dp)
                                             ProgressTableCell(
@@ -336,7 +341,8 @@ private fun ProgressBadgeCell(
     Box(
         modifier = modifier
             .width(width)
-            .height(CELL_HEIGHT)
+            .fillMaxHeight()
+            .heightIn(min = CELL_HEIGHT)
             .background(backgroundColor)
             .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             .padding(4.dp),
@@ -409,19 +415,18 @@ private fun ProgressTableCell(
     Box(
         modifier = modifier
             .width(width)
-            .height(CELL_HEIGHT)
+            .fillMaxHeight()
+            .heightIn(min = CELL_HEIGHT)
             .background(backgroundColor)
             .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .padding(horizontal = 6.dp, vertical = 6.dp),
         contentAlignment = alignment
     ) {
         Text(
             text = text,
             style = textStyle,
             color = finalTextColor,
-            maxLines = 2,
             softWrap = true,
-            overflow = TextOverflow.Ellipsis,
             textAlign = if (alignment == Alignment.CenterStart) TextAlign.Start else TextAlign.Center
         )
     }

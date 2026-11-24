@@ -699,14 +699,14 @@ private fun SubscriptionStatItem(
             text = value,
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             color = valueColor,
-            maxLines = 1
+            textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1
+            textAlign = TextAlign.Center
         )
     }
 }

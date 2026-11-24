@@ -7,12 +7,16 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -566,6 +570,8 @@ fun MatrixTableCell(
     Box(
         modifier = modifier
             .width(width)
+            .fillMaxHeight()
+            .heightIn(min = 48.dp)
             .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
             .background(bgColor)
             .padding(horizontal = 6.dp, vertical = 8.dp),
@@ -581,9 +587,8 @@ fun MatrixTableCell(
                 } else {
                     MaterialTheme.typography.bodySmall
                 },
-                maxLines = 2,
-                textAlign = if (alignment == Alignment.CenterEnd) TextAlign.End else TextAlign.Center,
-                overflow = TextOverflow.Ellipsis
+                softWrap = true,
+                textAlign = if (alignment == Alignment.CenterEnd) TextAlign.End else TextAlign.Center
             )
         } else if (content != null) {
             content()
@@ -634,6 +639,7 @@ fun MatrixScoreCell(
 /**
  * شريط دليل الألوان التوضيحي للنسب
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MatrixLegendRow(modifier: Modifier = Modifier) {
     Surface(
@@ -641,12 +647,12 @@ fun MatrixLegendRow(modifier: Modifier = Modifier) {
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
         shape = RoundedCornerShape(8.dp)
     ) {
-        Row(
+        FlowRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
+            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             LegendItem(color = Color(0xFF2E7D32), label = stringResource(id = R.string.eval_matrix_legend_green))
             LegendItem(color = Color(0xFFF57C00), label = stringResource(id = R.string.eval_matrix_legend_amber))

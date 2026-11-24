@@ -6,8 +6,10 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -222,8 +224,6 @@ fun FinanceHomeScreen(
                                 style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold),
                                 color = balanceColor,
                                 textAlign = TextAlign.Center,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.fillMaxWidth()
                             )
 
@@ -233,6 +233,7 @@ fun FinanceHomeScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .height(IntrinsicSize.Min)
                                     .padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.SpaceEvenly,
                                 verticalAlignment = Alignment.CenterVertically
@@ -247,9 +248,7 @@ fun FinanceHomeScreen(
                                         text = stringResource(id = R.string.finance_total_income_label),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
@@ -261,14 +260,14 @@ fun FinanceHomeScreen(
                                         ),
                                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                 }
 
                                 VerticalDivider(
-                                    modifier = Modifier.height(44.dp),
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .padding(vertical = 4.dp),
                                     thickness = 1.dp,
                                     color = MaterialTheme.colorScheme.outlineVariant
                                 )
@@ -283,9 +282,7 @@ fun FinanceHomeScreen(
                                         text = stringResource(id = R.string.finance_total_expenses_label),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
@@ -297,9 +294,7 @@ fun FinanceHomeScreen(
                                         ),
                                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                 }
                             }
@@ -342,6 +337,7 @@ fun FinanceHomeScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .height(IntrinsicSize.Min)
                                     .padding(top = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -356,9 +352,7 @@ fun FinanceHomeScreen(
                                         text = stringResource(id = R.string.finance_monthly_income_label),
                                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                                         color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f),
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
@@ -373,14 +367,14 @@ fun FinanceHomeScreen(
                                             fontWeight = FontWeight.Bold
                                         ),
                                         color = positiveBalanceColor,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                 }
 
                                 VerticalDivider(
-                                    modifier = Modifier.height(36.dp),
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .padding(vertical = 4.dp),
                                     thickness = 1.dp,
                                     color = MaterialTheme.colorScheme.outlineVariant
                                 )
@@ -396,9 +390,7 @@ fun FinanceHomeScreen(
                                         text = stringResource(id = R.string.finance_monthly_expenses_label),
                                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                                         color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.75f),
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
@@ -413,9 +405,7 @@ fun FinanceHomeScreen(
                                             fontWeight = FontWeight.Bold
                                         ),
                                         color = negativeBalanceColor,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                 }
                             }

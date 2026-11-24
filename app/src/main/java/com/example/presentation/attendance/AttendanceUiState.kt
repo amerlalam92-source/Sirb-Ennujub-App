@@ -28,6 +28,8 @@ data class AttendanceEntryUiState(
     val pointsSettings: AttendancePointsSettings = AttendancePointsSettings(),
     val isLoading: Boolean = false,
     val isSaving: Boolean = false,
+    val isFinishing: Boolean = false,
+    val pendingSyncCount: Int = 0,
     val isFinished: Boolean = false,
     val errorMessage: String? = null,
     val isFinanceSectionVisible: Boolean = false,
