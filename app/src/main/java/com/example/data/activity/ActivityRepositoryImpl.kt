@@ -9,6 +9,7 @@ import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.FinanceTransactionType
 import com.example.domain.scout.ScoutRepository
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.tasks.await
 
@@ -258,54 +259,76 @@ class ActivityRepositoryImpl(
         try {
             val firestore = FirebaseFirestore.getInstance()
 
-            // 1) Rollback debts & advance credits linked via relatedActivityId BEFORE any deletions
+            // 1) Rollback debts & advance credits linked via relatedActivityId BEFORE any deletions,
+            // marking isRolledBack = true transactionally so retries never roll back the same debt/credit twice.
             val txByRelatedActivityId = firestore.collection("finance_transactions")
                 .whereEqualTo("relatedActivityId", id)
                 .get()
                 .await()
 
             for (doc in txByRelatedActivityId.documents) {
-                if (doc.getBoolean("isRolledBack") == true) continue
-                val txType = FinanceTransactionType.fromKey(doc.getString("type"))
-                val scoutId = doc.getString("scoutId")?.takeIf { it.isNotBlank() }
-                val amount = (doc.get("amount") as? Number)?.toInt()
-                    ?: doc.getLong("amount")?.toInt()
-                    ?: 0
-                if (scoutId != null && amount > 0) {
-                    val rollbackResult = when (txType) {
-                        FinanceTransactionType.DEBT_PAYMENT -> {
-                            financeRepository.rollbackScoutDebts(scoutId, amount, excludeActivityId = id)
-                        }
-                        FinanceTransactionType.ADVANCE_PAYMENT -> {
-                            scoutRepository.deductCreditFromScout(scoutId, amount)
-                        }
-                        else -> Result.success(Unit)
+                val txState = firestore.runTransaction { tx ->
+                    val freshSnap = tx.get(doc.reference)
+                    if (!freshSnap.exists() || freshSnap.getBoolean("isRolledBack") == true) {
+                        return@runTransaction null
                     }
+                    val freshType = FinanceTransactionType.fromKey(freshSnap.getString("type"))
+                    val freshScoutId = freshSnap.getString("scoutId")?.takeIf { it.isNotBlank() }
+                    val freshAmount = (freshSnap.get("amount") as? Number)?.toInt()
+                        ?: freshSnap.getLong("amount")?.toInt()
+                        ?: 0
+
+                    if (freshType == FinanceTransactionType.ADVANCE_PAYMENT && freshScoutId != null && freshAmount > 0) {
+                        val scoutRef = firestore.collection("scouts").document(freshScoutId)
+                        val scoutSnap = tx.get(scoutRef)
+                        if (!scoutSnap.exists()) {
+                            throw IllegalStateException("الشبل غير موجود")
+                        }
+                        val currentBalance = (scoutSnap.get("creditBalance") as? Number)?.toInt()
+                            ?: scoutSnap.getLong("creditBalance")?.toInt()
+                            ?: 0
+                        val newBalance = (currentBalance - freshAmount).coerceAtLeast(0)
+                        if (newBalance != currentBalance) {
+                            val scoutUpdates = mutableMapOf<String, Any>(
+                                "creditBalance" to newBalance,
+                                "updatedAt" to System.currentTimeMillis()
+                            )
+                            val uid = currentUser?.uid.orEmpty()
+                            if (uid.isNotBlank()) {
+                                scoutUpdates["updatedBy"] = uid
+                            }
+                            tx.update(scoutRef, scoutUpdates)
+                        }
+                        tx.update(doc.reference, "isRolledBack", true)
+                        return@runTransaction null
+                    }
+
+                    Triple(freshType, freshScoutId, freshAmount)
+                }.await() ?: continue
+
+                val (txType, scoutId, amount) = txState
+                if (txType == FinanceTransactionType.DEBT_PAYMENT && scoutId != null && amount > 0) {
+                    val rollbackResult = financeRepository.rollbackScoutDebts(
+                        scoutId = scoutId,
+                        amountToRollback = amount,
+                        excludeActivityId = id
+                    )
                     if (rollbackResult.isFailure) {
                         return Result.failure(
                             Exception("فشل التراجع عن العمليات المالية. لم يتم حذف النشاط لحماية البيانات.")
                         )
                     }
+                    firestore.runTransaction { tx ->
+                        val freshSnap = tx.get(doc.reference)
+                        if (freshSnap.exists() && freshSnap.getBoolean("isRolledBack") != true) {
+                            tx.update(doc.reference, "isRolledBack", true)
+                        }
+                    }.await()
                 }
             }
 
-            // 2) Delete attendance subcollection
-            val attendanceCollection = firestore.collection("activities")
-                .document(id)
-                .collection("attendance")
-            val attendanceSnapshot = attendanceCollection.get().await()
-            cascadedAttendanceCount = attendanceSnapshot.size()
-            if (cascadedAttendanceCount > 0) {
-                attendanceSnapshot.documents.chunked(500).forEach { chunk ->
-                    val batch = firestore.batch()
-                    chunk.forEach { doc ->
-                        batch.delete(doc.reference)
-                    }
-                    batch.commit().await()
-                }
-            }
-
-            // 3) Delete finance_subscriptions for this activity
+            // 2) Delete financial records first (subscriptions, then transactions) so interruptions never leave
+            // orphaned active financial entries, while keeping the activity document until the end for safe retries.
             val subsSnapshot = firestore.collection("finance_subscriptions")
                 .whereEqualTo("activityId", id)
                 .get()
@@ -321,7 +344,7 @@ class ActivityRepositoryImpl(
                 }
             }
 
-            // 4) Delete finance_transactions for this activity (activityId == id OR targetId == id OR relatedActivityId == id)
+            // 3) Delete finance_transactions for this activity (activityId == id OR targetId == id OR relatedActivityId == id)
             val txByActivityId = firestore.collection("finance_transactions")
                 .whereEqualTo("activityId", id)
                 .get()
@@ -342,12 +365,31 @@ class ActivityRepositoryImpl(
                     batch.commit().await()
                 }
             }
+
+            // 4) Delete attendance subcollection
+            val attendanceCollection = firestore.collection("activities")
+                .document(id)
+                .collection("attendance")
+            val attendanceSnapshot = attendanceCollection.get().await()
+            cascadedAttendanceCount = attendanceSnapshot.size()
+            if (cascadedAttendanceCount > 0) {
+                attendanceSnapshot.documents.chunked(500).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { doc ->
+                        batch.delete(doc.reference)
+                    }
+                    batch.commit().await()
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             return Result.failure(
                 Exception("فشل التراجع عن العمليات المالية. لم يتم حذف النشاط لحماية البيانات.", e)
             )
         }
 
+        // 5) Delete activity document last so any earlier interruption can be safely retried
         val result = dataSource.deleteActivity(id)
         if (!result.isSuccess) {
             return result

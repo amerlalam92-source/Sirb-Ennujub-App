@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isApprovedLeader() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/leaders/$(request.auth.uid))
+        && get(/databases/$(database)/documents/leaders/$(request.auth.uid)).data.status == 'approved';
+    }
+    function isApprovedMainLeader() {
+      return isApprovedLeader()
+        && get(/databases/$(database)/documents/leaders/$(request.auth.uid)).data.isMainLeader == true;
+    }
+    match /leaders/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isApprovedLeader());
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.role == 'leader'
+        && request.resource.data.status == 'pending'
+        && request.resource.data.isMainLeader == false;
+      allow update: if (isSignedIn() && request.auth.uid == uid && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status', 'isMainLeader', 'uid'])) || (isApprovedMainLeader() && request.auth.uid != uid);
+      allow delete: if (isSignedIn() && request.auth.uid == uid) || (isApprovedMainLeader() && request.auth.uid != uid);
+    }
+    
+    match /settings/app_update {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+    
+    match /settings/{docId} {
+      allow read: if isApprovedLeader();
+      allow write: if isApprovedLeader() && docId != 'app_update';
+    }
+    
+    match /activity_log/{docId} {
+      allow read: if isApprovedLeader();
+      allow create: if isApprovedLeader() && request.resource.data.userId == request.auth.uid;
+      allow update: if false;
+      allow delete: if isApprovedLeader() && (resource.data.userId == request.auth.uid || isApprovedMainLeader());
+    }
+
+    match /scouts/{scoutId} { allow read, write: if isApprovedLeader(); }
+    match /activities/{activityId} { 
+      allow read, write: if isApprovedLeader();
+      match /attendance/{attendanceId} { allow read, write: if isApprovedLeader(); }
+    }
+    match /{path=**}/attendance/{attendanceId} { allow read: if isApprovedLeader(); }
+    match /progress_requirements/{docId} { allow read, write: if isApprovedLeader(); }
+    match /scout_progress/{docId} { allow read, write: if isApprovedLeader(); }
+    match /scout_badges/{docId} { allow read, write: if isApprovedLeader(); }
+    match /hobby_badges/{docId} { allow read, write: if isApprovedLeader(); }
+    match /hobby_badge_requirements/{docId} { allow read, write: if isApprovedLeader(); }
+    match /scout_hobby_progress/{docId} { allow read, write: if isApprovedLeader(); }
+    match /scout_hobby_badges/{docId} { allow read, write: if isApprovedLeader(); }
+    match /quran_schools/{docId} { allow read, write: if isApprovedLeader(); }
+    match /scout_quran_enrollment/{docId} { allow read, write: if isApprovedLeader(); }
+    match /finance_transactions/{docId} { allow read, write: if isApprovedLeader(); }
+    match /finance_subscriptions/{docId} { allow read, write: if isApprovedLeader(); }
+    match /finance_settings/{docId} { allow read, write: if isApprovedLeader(); }
+    match /evaluation_criteria/{docId} { allow read, write: if isApprovedLeader(); }
+    match /evaluations/{docId} { allow read, write: if isApprovedLeader(); }
+    
+    match /{document=**} { allow read, write: if false; }
+  }
+}

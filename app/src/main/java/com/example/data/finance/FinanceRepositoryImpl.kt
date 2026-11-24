@@ -111,33 +111,87 @@ class FinanceRepositoryImpl(
     }
 
     override suspend fun upsertTransaction(transaction: FinanceTransaction): Result<Unit> {
-        val currentUser = authRepository.currentUser
-        val currentUnitId = transaction.unitId ?: authRepository.getCurrentLeader()?.unitId
-        val exists = if (transaction.id.isNotBlank()) {
-            try {
-                firestore.collection(FinanceFirestoreDataSource.COLLECTION_TRANSACTIONS)
-                    .document(transaction.id)
-                    .get()
-                    .await()
-                    .exists()
-            } catch (_: Exception) {
-                false
+        return try {
+            val currentUser = authRepository.currentUser
+            val currentUnitId = transaction.unitId ?: authRepository.getCurrentLeader()?.unitId
+            val txCollection = firestore.collection(FinanceFirestoreDataSource.COLLECTION_TRANSACTIONS)
+            val docRef = if (transaction.id.isNotBlank()) {
+                txCollection.document(transaction.id)
+            } else {
+                txCollection.document()
             }
-        } else {
-            false
-        }
+            val now = System.currentTimeMillis()
 
-        val prepared = transaction.copy(
-            unitId = currentUnitId,
-            createdBy = if (transaction.createdBy.isNotBlank()) transaction.createdBy else (currentUser?.uid ?: ""),
-            createdByName = if (transaction.createdByName.isNotBlank()) transaction.createdByName else (currentUser?.displayName ?: "قائد كشفي"),
-            createdAt = if (transaction.createdAt > 0) transaction.createdAt else System.currentTimeMillis()
-        )
+            val (exists, prepared) = firestore.runTransaction { tx ->
+                val snapshot = tx.get(docRef)
+                val docExists = snapshot.exists()
+                val existingCreatedBy = if (docExists) snapshot.getString("createdBy").orEmpty() else ""
+                val existingCreatedByName = if (docExists) snapshot.getString("createdByName").orEmpty() else ""
+                val existingCreatedAt = if (docExists) (snapshot.getLong("createdAt") ?: 0L) else 0L
 
-        return if (exists) {
-            updateTransaction(prepared)
-        } else {
-            addTransaction(prepared).map { }
+                val preparedTx = transaction.copy(
+                    id = docRef.id,
+                    unitId = currentUnitId,
+                    createdBy = when {
+                        transaction.createdBy.isNotBlank() -> transaction.createdBy
+                        existingCreatedBy.isNotBlank() -> existingCreatedBy
+                        else -> currentUser?.uid ?: ""
+                    },
+                    createdByName = when {
+                        transaction.createdByName.isNotBlank() -> transaction.createdByName
+                        existingCreatedByName.isNotBlank() -> existingCreatedByName
+                        else -> currentUser?.displayName ?: "قائد كشفي"
+                    },
+                    createdAt = when {
+                        transaction.createdAt > 0 -> transaction.createdAt
+                        existingCreatedAt > 0 -> existingCreatedAt
+                        else -> now
+                    }
+                )
+
+                val txMap = mutableMapOf<String, Any?>(
+                    "id" to preparedTx.id,
+                    "type" to preparedTx.type.key,
+                    "amount" to preparedTx.amount,
+                    "date" to preparedTx.date,
+                    "description" to preparedTx.description.trim(),
+                    "scoutId" to preparedTx.scoutId,
+                    "relatedActivityId" to preparedTx.relatedActivityId,
+                    "unitId" to preparedTx.unitId,
+                    "createdAt" to preparedTx.createdAt,
+                    "createdBy" to preparedTx.createdBy,
+                    "createdByName" to preparedTx.createdByName,
+                    "isRolledBack" to preparedTx.isRolledBack,
+                    "category" to if (preparedTx.type == FinanceTransactionType.EXPENSE && preparedTx.category != null) {
+                        preparedTx.category.key
+                    } else {
+                        null
+                    },
+                    "source" to preparedTx.source?.trim()
+                )
+                tx.set(docRef, txMap)
+                docExists to preparedTx
+            }.await()
+
+            activityLogDataSource.logActivity(
+                userId = currentUser?.uid ?: "",
+                userName = currentUser?.displayName ?: "قائد كشفي",
+                action = if (exists) "update" else "add",
+                targetType = "finance_transaction",
+                targetId = prepared.id,
+                targetName = "${prepared.type.arabicLabel}: ${prepared.amount} دج",
+                details = if (exists) {
+                    "المبلغ المحدث: ${prepared.amount} دج | البيان: ${prepared.description.ifBlank { prepared.type.arabicLabel }}"
+                } else {
+                    "المبلغ: ${prepared.amount} دج | البيان: ${prepared.description.ifBlank { prepared.type.arabicLabel }}"
+                },
+                unitId = currentUnitId
+            )
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
@@ -214,70 +268,110 @@ class FinanceRepositoryImpl(
         }
     }
 
+    private data class SubscriptionUpsertOutcome(
+        val changed: Boolean,
+        val isNew: Boolean,
+        val prepared: FinanceSubscription,
+        val changes: List<String>,
+        val unitId: String?
+    )
+
     override suspend fun upsertSubscription(sub: FinanceSubscription): Result<Unit> {
-        val currentUser = authRepository.currentUser
-        val existing = dataSource.getSubscription(sub.activityId, sub.scoutId)
-        val currentUnitId = sub.unitId ?: existing?.unitId ?: authRepository.getCurrentLeader()?.unitId
-        val prepared = sub.copy(
-            unitId = currentUnitId,
-            debtAmount = (sub.requiredAmount - sub.paidAmount).coerceAtLeast(0),
-            recordedBy = if (sub.recordedBy.isNotBlank()) sub.recordedBy else (currentUser?.uid ?: ""),
-            recordedByName = if (sub.recordedByName.isNotBlank()) sub.recordedByName else (currentUser?.displayName ?: "قائد كشفي"),
-            updatedAt = System.currentTimeMillis()
-        )
+        return try {
+            val currentUser = authRepository.currentUser
+            val fallbackLeaderUnitId = if (sub.unitId == null) authRepository.getCurrentLeader()?.unitId else null
+            val docId = if (sub.id.isNotBlank()) sub.id else "${sub.activityId}_${sub.scoutId}"
+            val docRef = firestore.collection(FinanceFirestoreDataSource.COLLECTION_SUBSCRIPTIONS).document(docId)
+            val now = System.currentTimeMillis()
 
-        val changes = mutableListOf<String>()
+            val outcome = firestore.runTransaction { tx ->
+                val snapshot = tx.get(docRef)
+                val existing = if (snapshot.exists()) dataSource.mapDocumentToSubscription(snapshot) else null
+                val currentUnitId = sub.unitId ?: existing?.unitId ?: fallbackLeaderUnitId
+                val prepared = sub.copy(
+                    id = docId,
+                    unitId = currentUnitId,
+                    debtAmount = (sub.requiredAmount - sub.paidAmount).coerceAtLeast(0),
+                    recordedBy = if (sub.recordedBy.isNotBlank()) sub.recordedBy else (currentUser?.uid ?: ""),
+                    recordedByName = if (sub.recordedByName.isNotBlank()) sub.recordedByName else (currentUser?.displayName ?: "قائد كشفي"),
+                    updatedAt = now
+                )
 
-        fun isChanged(oldVal: String?, newVal: String?): Boolean {
-            return oldVal?.trim().orEmpty() != newVal?.trim().orEmpty()
-        }
+                val changes = mutableListOf<String>()
 
-        if (existing != null) {
-            if (existing.paidAmount != prepared.paidAmount) {
-                changes.add("المدفوع: من ${existing.paidAmount} دج إلى ${prepared.paidAmount} دج")
-            }
-            if (existing.requiredAmount != prepared.requiredAmount) {
-                changes.add("المطلوب: من ${existing.requiredAmount} دج إلى ${prepared.requiredAmount} دج")
-            }
-            if (existing.debtAmount != prepared.debtAmount) {
-                changes.add("المتبقي: من ${existing.debtAmount} دج إلى ${prepared.debtAmount} دج")
-            }
-            if (existing.attendanceStatus != prepared.attendanceStatus) {
-                changes.add("حالة الحضور: من '${existing.attendanceStatus.arabicLabel}' إلى '${prepared.attendanceStatus.arabicLabel}'")
-            }
-            if (isChanged(existing.notes, prepared.notes)) {
-                changes.add("الملاحظات: من '${existing.notes.orEmpty()}' إلى '${prepared.notes.orEmpty()}'")
-            }
-            // إذا لم يتم تغيير أي حقل، لا يتم حفظ أي شيء في Firestore ولا يسجل أي عملية في سجل الأنشطة
-            if (changes.isEmpty()) {
+                fun isChanged(oldVal: String?, newVal: String?): Boolean {
+                    return oldVal?.trim().orEmpty() != newVal?.trim().orEmpty()
+                }
+
+                if (existing != null) {
+                    if (existing.paidAmount != prepared.paidAmount) {
+                        changes.add("المدفوع: من ${existing.paidAmount} دج إلى ${prepared.paidAmount} دج")
+                    }
+                    if (existing.requiredAmount != prepared.requiredAmount) {
+                        changes.add("المطلوب: من ${existing.requiredAmount} دج إلى ${prepared.requiredAmount} دج")
+                    }
+                    if (existing.debtAmount != prepared.debtAmount) {
+                        changes.add("المتبقي: من ${existing.debtAmount} دج إلى ${prepared.debtAmount} دج")
+                    }
+                    if (existing.attendanceStatus != prepared.attendanceStatus) {
+                        changes.add("حالة الحضور: من '${existing.attendanceStatus.arabicLabel}' إلى '${prepared.attendanceStatus.arabicLabel}'")
+                    }
+                    if (isChanged(existing.notes, prepared.notes)) {
+                        changes.add("الملاحظات: من '${existing.notes.orEmpty()}' إلى '${prepared.notes.orEmpty()}'")
+                    }
+                    // إذا لم يتم تغيير أي حقل، لا يتم حفظ أي شيء في Firestore ولا يسجل أي عملية في سجل الأنشطة
+                    if (changes.isEmpty()) {
+                        return@runTransaction SubscriptionUpsertOutcome(
+                            changed = false,
+                            isNew = false,
+                            prepared = prepared,
+                            changes = emptyList(),
+                            unitId = currentUnitId
+                        )
+                    }
+                }
+
+                tx.set(docRef, dataSource.mapSubscriptionToMap(prepared))
+                SubscriptionUpsertOutcome(
+                    changed = true,
+                    isNew = existing == null,
+                    prepared = prepared,
+                    changes = changes,
+                    unitId = currentUnitId
+                )
+            }.await()
+
+            if (!outcome.changed) {
                 return Result.success(Unit)
             }
-        }
 
-        val result = dataSource.upsertSubscription(prepared)
-        if (result.isSuccess) {
+            val prepared = outcome.prepared
             val statusLabel = when {
                 prepared.paidAmount >= prepared.requiredAmount -> "مسدد"
                 prepared.paidAmount > 0 -> "مدفوع جزئياً"
                 else -> "غير مدفوع"
             }
-            val detailsText = if (existing != null) {
-                changes.joinToString(" | ")
+            val detailsText = if (!outcome.isNew) {
+                outcome.changes.joinToString(" | ")
             } else {
                 "تسجيل اشتراك جديد: المطلوب: ${prepared.requiredAmount} دج | المدفوع: ${prepared.paidAmount} دج | الحالة: $statusLabel"
             }
             activityLogDataSource.logActivity(
                 userId = currentUser?.uid ?: "",
                 userName = currentUser?.displayName ?: "قائد كشفي",
-                action = if (existing == null) "add" else "update",
+                action = if (outcome.isNew) "add" else "update",
                 targetType = "finance_subscription",
                 targetId = prepared.id,
                 targetName = "اشتراك: ${prepared.scoutFullName}",
                 details = detailsText,
-                unitId = currentUnitId
+                unitId = outcome.unitId
             )
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
         }
-        return result
     }
 
     override suspend fun deleteSubscription(activityId: String, scoutId: String): Result<Unit> {
@@ -573,40 +667,63 @@ class FinanceRepositoryImpl(
         }
     }
 
+    private data class ManualDebtAdjustmentOutcome(
+        val existing: FinanceSubscription,
+        val sanitizedDebt: Int,
+        val oldDebt: Int,
+        val unitId: String?
+    )
+
     override suspend fun updateSubscriptionDebtManually(subscriptionId: String, newDebtAmount: Int): Result<Unit> {
         if (subscriptionId.isBlank()) {
             return Result.failure(IllegalArgumentException("معرف الاشتراك مفقود"))
         }
         return try {
-            val existing = dataSource.getSubscriptionById(subscriptionId)
-                ?: return Result.failure(Exception("الاشتراك غير موجود"))
-
             val currentUser = authRepository.currentUser
-            val currentUnitId = existing.unitId ?: authRepository.getCurrentLeader()?.unitId
+            val fallbackLeaderUnitId = authRepository.getCurrentLeader()?.unitId
+            val docRef = firestore.collection(FinanceFirestoreDataSource.COLLECTION_SUBSCRIPTIONS).document(subscriptionId)
             val sanitizedDebt = newDebtAmount.coerceAtLeast(0)
-            val newPaidAmount = (existing.requiredAmount - sanitizedDebt).coerceAtLeast(0)
-            val oldDebt = existing.debtAmount
+            val now = System.currentTimeMillis()
 
-            val updatedSub = existing.copy(
-                paidAmount = newPaidAmount,
-                debtAmount = sanitizedDebt,
-                unitId = currentUnitId,
-                updatedAt = System.currentTimeMillis()
-            )
-            val result = dataSource.upsertSubscription(updatedSub)
-            if (result.isSuccess) {
-                activityLogDataSource.logActivity(
-                    userId = currentUser?.uid ?: "",
-                    userName = currentUser?.displayName ?: "قائد كشفي",
-                    action = "manual_finance_adjustment",
-                    targetType = "finance_subscription",
-                    targetId = subscriptionId,
-                    targetName = "${existing.scoutFullName} - ${existing.activityTitle.ifBlank { "نشاط" }}",
-                    details = "تعديل يدوي: من $oldDebt إلى $sanitizedDebt",
+            val outcome = firestore.runTransaction { tx ->
+                val snapshot = tx.get(docRef)
+                val existing = if (snapshot.exists()) dataSource.mapDocumentToSubscription(snapshot) else null
+                if (existing == null) {
+                    throw IllegalStateException("الاشتراك غير موجود")
+                }
+
+                val currentUnitId = existing.unitId ?: fallbackLeaderUnitId
+                val newPaidAmount = (existing.requiredAmount - sanitizedDebt).coerceAtLeast(0)
+                val oldDebt = existing.debtAmount
+
+                val updatedSub = existing.copy(
+                    paidAmount = newPaidAmount,
+                    debtAmount = sanitizedDebt,
+                    unitId = currentUnitId,
+                    updatedAt = now
+                )
+                tx.set(docRef, dataSource.mapSubscriptionToMap(updatedSub))
+                ManualDebtAdjustmentOutcome(
+                    existing = existing,
+                    sanitizedDebt = sanitizedDebt,
+                    oldDebt = oldDebt,
                     unitId = currentUnitId
                 )
-            }
-            result
+            }.await()
+
+            activityLogDataSource.logActivity(
+                userId = currentUser?.uid ?: "",
+                userName = currentUser?.displayName ?: "قائد كشفي",
+                action = "manual_finance_adjustment",
+                targetType = "finance_subscription",
+                targetId = subscriptionId,
+                targetName = "${outcome.existing.scoutFullName} - ${outcome.existing.activityTitle.ifBlank { "نشاط" }}",
+                details = "تعديل يدوي: من ${outcome.oldDebt} إلى ${outcome.sanitizedDebt}",
+                unitId = outcome.unitId
+            )
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e("FinanceRepo", "Error updating subscription debt manually: ${e.message}", e)
             Result.failure(e)
