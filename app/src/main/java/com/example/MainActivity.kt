@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -61,6 +62,7 @@ import com.example.presentation.common.ForceUpdateScreen
 import com.example.presentation.common.LocalAppDensity
 import com.example.presentation.common.LocalOnZoomClick
 import com.example.presentation.common.UiScaleDialog
+import com.example.presentation.update.AppUpdater
 import com.example.presentation.update.UpdateViewModel
 import com.example.ui.theme.ScoutTheme
 import kotlinx.coroutines.flow.map
@@ -74,11 +76,30 @@ import kotlinx.coroutines.launch
  */
 class MainActivity : ComponentActivity() {
 
+    private val appContainer by lazy { (application as ScoutApplication).container }
+
+    private val updateViewModel: UpdateViewModel by viewModels {
+        UpdateViewModel.Factory(
+            updateRepository = appContainer.updateRepository,
+            authRepository = appContainer.authRepository
+        )
+    }
+
     override fun attachBaseContext(newBase: Context) {
         val config = Configuration(newBase.resources.configuration)
         config.fontScale = 1.0f // Force ignore system font size
         val context = newBase.createConfigurationContext(config)
         super.attachBaseContext(context)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateViewModel.onAppResumed(applicationContext)
+    }
+
+    override fun onPause() {
+        AppUpdater.onAppPaused()
+        super.onPause()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,7 +109,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val appContainer = (application as ScoutApplication).container
+        val appContainer = this.appContainer
 
         setContent {
             val uiScaleFlow = remember(appContainer) { appContainer.uiScalePreferences.getUiScale() }
@@ -186,12 +207,6 @@ class MainActivity : ComponentActivity() {
                         )
                     )
 
-                    val updateViewModel: UpdateViewModel = viewModel(
-                        factory = UpdateViewModel.Factory(
-                            updateRepository = appContainer.updateRepository,
-                            authRepository = appContainer.authRepository
-                        )
-                    )
                     val isForceUpdateRequired by updateViewModel.isForceUpdateRequired.collectAsStateWithLifecycle()
                     val appUpdateInfo by updateViewModel.appUpdateInfo.collectAsStateWithLifecycle()
                     val isDownloadingUpdate by updateViewModel.isDownloading.collectAsStateWithLifecycle()
@@ -254,8 +269,7 @@ class MainActivity : ComponentActivity() {
                                 isDownloading = isDownloadingUpdate,
                                 downloadError = updateDownloadError,
                                 onUpdateClick = { updateViewModel.startUpdateDownload(appContext) },
-                                apkUrl = appUpdateInfo?.apkUrl.orEmpty(),
-                                onManualDownloadClick = { updateViewModel.openManualDownload(appContext) }
+                                apkUrl = appUpdateInfo?.apkUrl.orEmpty()
                             )
                         }
                     }

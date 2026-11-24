@@ -47,6 +47,15 @@ object AppUpdater {
 
     @Volatile
     private var activeDownloadId: Long = -1L
+    @Volatile
+    private var isAppInForeground: Boolean = true
+    @Volatile
+    private var pendingInstallApkFile: File? = null
+    private var activeApkFile: File? = null
+    private var activeExpectedSha256: String = ""
+    private var activeCompletionHandled: AtomicBoolean? = null
+    private var activeOnDownloadSuccess: (() -> Unit)? = null
+    private var activeOnDownloadFailed: ((String) -> Unit)? = null
     private var downloadReceiver: BroadcastReceiver? = null
     private var pollingJob: Job? = null
 
@@ -66,26 +75,70 @@ object AppUpdater {
         return scheme == "https" && !host.isNullOrBlank() && host in ALLOWED_HOSTS
     }
 
+    fun onAppPaused() {
+        isAppInForeground = false
+    }
+
     /**
-     * فتح رابط التحديث في المتصفح (تحميل يدوي) بعد التحقق من قائمة النطاقات المسموحة
+     * التحقق عند عودة التطبيق للواجهة مما إذا كان هناك تحميل نشط قد اكتمل أو فشل في الخلفية
      */
-    fun openManualDownload(context: Context, apkUrl: String): Boolean {
-        val trimmedUrl = apkUrl.trim()
-        if (!isTrustedDownloadUrl(trimmedUrl)) {
-            Log.e(TAG, "Blocked untrusted manual OTA URL: $trimmedUrl")
-            Toast.makeText(context, R.string.update_invalid_url, Toast.LENGTH_LONG).show()
-            return false
+    fun checkActiveDownloadAndInstall(context: Context) {
+        isAppInForeground = true
+        val appContext = context.applicationContext
+
+        val deferredInstallFile = synchronized(stateLock) {
+            val file = pendingInstallApkFile
+            pendingInstallApkFile = null
+            file
         }
-        return try {
-            val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(trimmedUrl)).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (deferredInstallFile != null) {
+            installApk(appContext, deferredInstallFile)
+            return
+        }
+
+        val downloadId: Long
+        val apkFile: File?
+        val expectedSha256: String
+        val completionHandled: AtomicBoolean?
+        val onSuccess: (() -> Unit)?
+        val onFailed: ((String) -> Unit)?
+
+        synchronized(stateLock) {
+            downloadId = activeDownloadId
+            apkFile = activeApkFile
+            expectedSha256 = activeExpectedSha256
+            completionHandled = activeCompletionHandled
+            onSuccess = activeOnDownloadSuccess
+            onFailed = activeOnDownloadFailed
+        }
+
+        if (downloadId == -1L || apkFile == null || completionHandled == null || completionHandled.get()) {
+            return
+        }
+
+        val downloadManager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return
+        when (queryDownloadStatus(downloadManager, downloadId)) {
+            DownloadManager.STATUS_RUNNING,
+            DownloadManager.STATUS_PENDING,
+            DownloadManager.STATUS_PAUSED -> {
+                // التحميل ما زال قيد التنفيذ
+                return
             }
-            context.startActivity(viewIntent)
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to open manual download URL", e)
-            Toast.makeText(context, R.string.force_update_open_error, Toast.LENGTH_LONG).show()
-            false
+
+            DownloadManager.STATUS_SUCCESSFUL,
+            DownloadManager.STATUS_FAILED,
+            null -> {
+                handleDownloadStatusCheck(
+                    appContext = appContext,
+                    downloadManager = downloadManager,
+                    downloadId = downloadId,
+                    apkFile = apkFile,
+                    expectedSha256 = expectedSha256,
+                    completionHandled = completionHandled,
+                    onDownloadSuccess = onSuccess ?: {},
+                    onDownloadFailed = onFailed ?: {}
+                )
+            }
         }
     }
 
@@ -151,8 +204,16 @@ object AppUpdater {
             }
 
             val newDownloadId = downloadManager.enqueue(request)
-            activeDownloadId = newDownloadId
             val completionHandled = AtomicBoolean(false)
+            synchronized(stateLock) {
+                activeDownloadId = newDownloadId
+                pendingInstallApkFile = null
+                activeApkFile = apkFile
+                activeExpectedSha256 = expectedSha256
+                activeCompletionHandled = completionHandled
+                activeOnDownloadSuccess = onDownloadSuccess
+                activeOnDownloadFailed = onDownloadFailed
+            }
             onDownloadStarted()
 
             // تسجيل BroadcastReceiver بـ RECEIVER_EXPORTED لأن DownloadManager خدمة نظام خارجية،
@@ -321,7 +382,13 @@ object AppUpdater {
                             withContext(Dispatchers.Main) {
                                 Toast.makeText(appContext, R.string.update_download_success, Toast.LENGTH_SHORT).show()
                                 onDownloadSuccess()
-                                installApk(appContext, apkFile)
+                                if (isAppInForeground) {
+                                    installApk(appContext, apkFile)
+                                } else {
+                                    synchronized(stateLock) {
+                                        pendingInstallApkFile = apkFile
+                                    }
+                                }
                             }
                         }
                     } finally {
@@ -447,6 +514,12 @@ object AppUpdater {
             previousId = activeDownloadId
             if (downloadManagerToRemove != null) {
                 activeDownloadId = -1L
+                pendingInstallApkFile = null
+                activeApkFile = null
+                activeExpectedSha256 = ""
+                activeCompletionHandled = null
+                activeOnDownloadSuccess = null
+                activeOnDownloadFailed = null
             }
         }
         unregisterReceiver(context)

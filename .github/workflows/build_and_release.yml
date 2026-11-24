@@ -4,6 +4,12 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and verify APK without creating a GitHub Release'
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: "release-${{ github.ref }}"
@@ -12,6 +18,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -52,6 +59,7 @@ jobs:
 
       - name: Check Existing Release
         id: check_release
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -89,6 +97,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Decode Keystore
+        id: decode_keystore
         if: success() && steps.check_release.outputs.ALREADY_RELEASED != 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -108,6 +117,10 @@ jobs:
           fi
           chmod +x gradlew
           ./gradlew assembleRelease
+
+      - name: Delete Keystore After Build
+        if: always() && steps.decode_keystore.outcome == 'success'
+        run: rm -f "${{ github.workspace }}/release-keystore.jks"
 
       - name: Verify and Hash Release APK
         id: hash_apk
@@ -131,20 +144,29 @@ jobs:
           fi
           echo "$VERIFY_OUTPUT"
 
-          SIGNER_SHA256=$(echo "$VERIFY_OUTPUT" | sed -n 's/.*SHA-256 digest:[[:space:]]*//Ip' | head -1 | tr -d '[:space:]')
+          ACTUAL_SIGNER_SHA256=$(printf '%s' "$VERIFY_OUTPUT" | sed -n 's/.*SHA-256 digest:[[:space:]]*//Ip' | head -1 | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')
+          if [[ ! "$ACTUAL_SIGNER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Failed to extract a valid 64-character signing certificate SHA-256 digest."
+            exit 1
+          fi
+
+          EXPECTED_SIGNER_SHA256=$(printf '%s' "${{ vars.EXPECTED_SIGNER_SHA256 }}" | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')
           APK_SHA256=$(sha256sum "$APK_PATH" | awk '{print tolower($1)}')
           if [[ ! "$APK_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
             echo "::error::Computed SHA-256 '$APK_SHA256' is not a valid 64-character lowercase hex digest."
             exit 1
           fi
 
-          printf '%s\n' "$APK_SHA256" > "${APK_PATH}.sha256"
-          echo "sha256=${APK_SHA256}" >> "$GITHUB_OUTPUT"
-
+          IS_DRY_RUN="${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}"
           {
             echo "### Release v${VERSION_NAME} (versionCode ${VERSION_CODE})"
             echo ""
-            echo "**Signing Certificate SHA-256 Digest:** \`${SIGNER_SHA256}\`"
+            if [ "$IS_DRY_RUN" = "true" ]; then
+              echo "**DRY RUN - nothing published**"
+              echo ""
+            fi
+            echo "**Expected Signing Certificate SHA-256 Digest:** \`${EXPECTED_SIGNER_SHA256:-not set}\`"
+            echo "**Actual Signing Certificate SHA-256 Digest:** \`${ACTUAL_SIGNER_SHA256}\`"
             echo ""
             echo "#### Firestore \`settings/app_update\`"
             echo '```text'
@@ -155,24 +177,50 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Create Release
-        id: create_release
-        if: success() && steps.check_release.outputs.ALREADY_RELEASED != 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ env.VERSION_NAME }}
-          name: Release v${{ env.VERSION_NAME }}
-          body: |
-            Release v${{ env.VERSION_NAME }} (versionCode ${{ env.VERSION_CODE }})
+          if [ -z "$EXPECTED_SIGNER_SHA256" ]; then
+            echo "::warning::Repository variable EXPECTED_SIGNER_SHA256 is empty; skipping signer fingerprint match check."
+          elif [ "$ACTUAL_SIGNER_SHA256" != "$EXPECTED_SIGNER_SHA256" ]; then
+            echo "::error::Signing certificate SHA-256 mismatch! Expected '${EXPECTED_SIGNER_SHA256}', got '${ACTUAL_SIGNER_SHA256}'."
+            exit 1
+          fi
 
-            SHA-256: `${{ steps.hash_apk.outputs.sha256 }}`
-          files: |
+          printf '%s\n' "$APK_SHA256" > "${APK_PATH}.sha256"
+          echo "sha256=${APK_SHA256}" >> "$GITHUB_OUTPUT"
+
+          printf '%s\n' \
+            "Release v${VERSION_NAME} (versionCode ${VERSION_CODE})" \
+            "" \
+            "- **Version Name:** \`${VERSION_NAME}\`" \
+            "- **Version Code:** \`${VERSION_CODE}\`" \
+            "- **APK SHA-256:** \`${APK_SHA256}\`" \
+            "- **Signing Certificate SHA-256:** \`${ACTUAL_SIGNER_SHA256}\`" \
+            > release_notes.md
+
+      - name: Upload Dry-Run Artifacts
+        if: success() && github.event_name == 'workflow_dispatch' && inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-apk
+          path: |
             app/build/outputs/apk/release/app-release.apk
             app/build/outputs/apk/release/app-release.apk.sha256
-          overwrite_files: false
-          fail_on_unmatched_files: true
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Create Release
+        id: create_release
+        if: success() && steps.check_release.outputs.ALREADY_RELEASED != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          gh release create "v${VERSION_NAME}" "$APK_PATH" "${APK_PATH}.sha256" --title "Release v${VERSION_NAME}" --notes-file release_notes.md --target "$GITHUB_SHA"
+
+          ASSETS=$(gh release view "v${VERSION_NAME}" --json assets --jq '.assets[].name')
+          if ! printf '%s\n' "$ASSETS" | grep -qx "app-release.apk" || ! printf '%s\n' "$ASSETS" | grep -qx "app-release.apk.sha256"; then
+            echo "::error::Release v${VERSION_NAME} verification failed: expected both app-release.apk and app-release.apk.sha256 assets."
+            exit 1
+          fi
 
       - name: Clean up Keystore
         if: always()

@@ -1,6 +1,7 @@
 package com.example.presentation.auth
 
 import android.util.Patterns
+import androidx.credentials.exceptions.NoCredentialException
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -202,8 +203,10 @@ class SignUpViewModel(
         return when (e) {
             is androidx.credentials.exceptions.GetCredentialCancellationException ->
                 R.string.error_google_signin_cancelled
-            is androidx.credentials.exceptions.GetCredentialException ->
+            is NoCredentialException ->
                 R.string.error_google_no_credential
+            is androidx.credentials.exceptions.GetCredentialException ->
+                R.string.error_google_signin_failed
             is com.google.firebase.FirebaseNetworkException ->
                 R.string.error_google_network
             else ->

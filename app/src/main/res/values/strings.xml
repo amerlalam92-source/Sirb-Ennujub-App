@@ -1135,7 +1135,6 @@
     <string name="force_update_skip">تخطي مؤقت</string>
     <string name="force_update_retry">إعادة المحاولة</string>
     <string name="force_update_downloading">جاري تحميل التحديث...</string>
-    <string name="force_update_manual_download">تحميل يدوي</string>
 
     <!-- تنبيه أخطاء تحميل بيانات Firestore -->
     <string name="data_error_no_permission">لا تملك صلاحية قراءة بعض البيانات؛ قد تكون القوائم ناقصة. تواصل مع القائد الرئيسي.</string>

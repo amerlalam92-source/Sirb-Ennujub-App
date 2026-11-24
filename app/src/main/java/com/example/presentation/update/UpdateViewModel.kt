@@ -96,9 +96,8 @@ class UpdateViewModel(
         )
     }
 
-    fun openManualDownload(context: Context) {
-        val url = appUpdateInfo.value?.apkUrl.orEmpty()
-        AppUpdater.openManualDownload(context.applicationContext, url)
+    fun onAppResumed(context: Context) {
+        AppUpdater.checkActiveDownloadAndInstall(context)
     }
 
     override fun onCleared() {

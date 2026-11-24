@@ -2,12 +2,13 @@ package com.example.data.auth
 
 import android.app.Activity
 import android.content.Context
+import android.util.Log
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialException
 import com.example.R
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 
 /**
@@ -16,17 +17,14 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 class GoogleSignInHelper(private val context: Context) {
 
     suspend fun getGoogleIdToken(activity: Activity): Result<String> {
-        val credentialManager = CredentialManager.create(context)
+        val credentialManager = CredentialManager.create(activity)
         val webClientId = context.getString(R.string.default_web_client_id)
 
-        val googleIdOption = GetGoogleIdOption.Builder()
-            .setFilterByAuthorizedAccounts(false)
-            .setServerClientId(webClientId)
-            .setAutoSelectEnabled(false)
+        val signInWithGoogleOption = GetSignInWithGoogleOption.Builder(webClientId)
             .build()
 
         val request = GetCredentialRequest.Builder()
-            .addCredentialOption(googleIdOption)
+            .addCredentialOption(signInWithGoogleOption)
             .build()
 
         return try {
@@ -44,6 +42,7 @@ class GoogleSignInHelper(private val context: Context) {
                 Result.failure(Exception("نوع بيانات الاعتماد غير مدعوم"))
             }
         } catch (e: GetCredentialException) {
+            Log.e("GoogleSignIn", "Error type: ${e.type}, message: ${e.message}", e)
             Result.failure(e)
         }
     }
