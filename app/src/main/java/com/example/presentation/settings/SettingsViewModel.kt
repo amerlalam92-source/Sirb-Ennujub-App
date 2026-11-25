@@ -545,17 +545,13 @@ class SettingsViewModel(
             _uiState.update { it.copy(isRecalculatingAttendance = true) }
             val result = activityRepository.recalculateAllAttendanceFlags()
             _uiState.update { it.copy(isRecalculatingAttendance = false) }
-            result.onSuccess { updatedCount ->
-                val message = if (updatedCount > 0) {
-                    "تم تحديث حالة الحضور بنجاح ($updatedCount نشاط)"
-                } else {
-                    "جميع حالات الحضور للأنشطة محدثة بالفعل"
-                }
+            result.onSuccess { report ->
+                val message = "تم فحص ${report.activitiesChecked} نشاط، تصحيح ${report.flagsFixed} علم حضور، وتصحيح ${report.attendanceDatesFixed} تاريخ حضور"
                 _events.emit(SettingsEvent.ShowMessage(message))
             }.onFailure { e ->
                 _events.emit(
                     SettingsEvent.ShowMessage(
-                        "فشل إصلاح حالة الحضور: ${e.message ?: "خطأ غير معروف"}"
+                        e.message ?: "فشل صيانة بيانات الحضور: تتطلب العملية اتصالاً مستقراً بالإنترنت، ويمكنك إعادة المحاولة بأمان."
                     )
                 )
             }

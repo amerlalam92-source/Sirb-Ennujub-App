@@ -19,6 +19,7 @@ import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.SubscriptionStatus
 import java.text.Collator
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -283,12 +284,22 @@ class AttendanceRepositoryImpl(
         val result = dataSource.deleteAttendance(activityId, scoutId)
         if (result.isSuccess) {
             if (activityId.isNotBlank()) {
-                val hasRemaining = dataSource.hasAnyAttendanceForActivity(activityId)
-                activityDataSource.updateHasAttendanceRecorded(
-                    activityId = activityId,
-                    hasRecorded = hasRemaining,
-                    awaitServer = true
-                )
+                try {
+                    val hasRemaining = dataSource.hasAnyAttendanceForActivity(activityId)
+                    activityDataSource.updateHasAttendanceRecorded(
+                        activityId = activityId,
+                        hasRecorded = hasRemaining,
+                        awaitServer = true
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(
+                        "AttendanceRepo",
+                        "تعذر التحقق من بقاء سجلات الحضور للنشاط $activityId من الخادم؛ تم الإبقاء على علم الحضور دون تعديل",
+                        e
+                    )
+                }
             }
             activityLogDataSource.logActivity(
                 userId = currentUser?.uid ?: "",

@@ -13,6 +13,7 @@ import com.example.domain.attendance.AttendancePointsSettings
 import com.example.domain.attendance.AttendanceStatus
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -178,17 +179,52 @@ class AttendanceFirestoreDataSource(
     }
 
     /**
-     * التحقق من بقاء أي سجل حضور في النشاط بعد الحذف (قراءة مستند واحد فقط)
+     * التحقق من بقاء أي سجل حضور في النشاط مباشرة من الخادم (قراءة مستند واحد فقط).
+     * يعيد تمرير جميع الاستثناءات للمستدعي دون تحويل الخطأ إلى true أبداً.
      */
     suspend fun hasAnyAttendanceForActivity(activityId: String): Boolean {
         if (activityId.isBlank()) return false
-        return try {
-            !getAttendanceSubcollection(activityId).limit(1).get().await().isEmpty
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            true
+        return !getAttendanceSubcollection(activityId)
+            .limit(1)
+            .get(Source.SERVER)
+            .await()
+            .isEmpty
+    }
+
+    /**
+     * جلب جميع مستندات الحضور لنشاط محدد مباشرة من الخادم لأغراض الصيانة والمزامنة.
+     */
+    suspend fun getAttendanceDocumentsForActivityFromServer(activityId: String): List<DocumentSnapshot> {
+        if (activityId.isBlank()) return emptyList()
+        return getAttendanceSubcollection(activityId)
+            .get(Source.SERVER)
+            .await()
+            .documents
+    }
+
+    /**
+     * تحديث حقل activityDate و updatedAt لمجموعة من مستندات الحضور باستخدام batch.update() (بحد أقصى 500 لكل دفعة).
+     */
+    suspend fun updateAttendanceActivityDateBatch(
+        documents: List<DocumentSnapshot>,
+        newActivityDate: Long,
+        updatedAt: Long = System.currentTimeMillis()
+    ): Int {
+        if (documents.isEmpty()) return 0
+        documents.chunked(500).forEach { chunk ->
+            val batch = firestore.batch()
+            chunk.forEach { doc ->
+                batch.update(
+                    doc.reference,
+                    mapOf(
+                        "activityDate" to newActivityDate,
+                        "updatedAt" to updatedAt
+                    )
+                )
+            }
+            batch.commit().await()
         }
+        return documents.size
     }
 
     /**

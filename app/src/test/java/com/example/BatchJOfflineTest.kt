@@ -60,7 +60,8 @@ class BatchJOfflineTest {
 
     @Test
     fun `defaultScoutingYearStart returns September 1st 00-00-00-000 of current season`() {
-        val now = Calendar.getInstance()
+        val algiersTz = java.util.TimeZone.getTimeZone("Africa/Algiers")
+        val now = Calendar.getInstance(algiersTz)
         val expectedYear = if (now.get(Calendar.MONTH) >= Calendar.SEPTEMBER) {
             now.get(Calendar.YEAR)
         } else {
@@ -68,7 +69,7 @@ class BatchJOfflineTest {
         }
 
         val startMillis = AttendanceRepository.defaultScoutingYearStart()
-        val startCal = Calendar.getInstance().apply { timeInMillis = startMillis }
+        val startCal = Calendar.getInstance(algiersTz).apply { timeInMillis = startMillis }
 
         assertEquals(expectedYear, startCal.get(Calendar.YEAR))
         assertEquals(Calendar.SEPTEMBER, startCal.get(Calendar.MONTH))

@@ -1,6 +1,8 @@
 package com.example.domain.attendance
 
-import java.util.Calendar
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -26,19 +28,17 @@ interface AttendanceRepository {
     fun observeAllAttendance(sinceTimestamp: Long = defaultScoutingYearStart()): Flow<List<Attendance>>
 
     companion object {
-        fun defaultScoutingYearStart(): Long {
-            val calendar = Calendar.getInstance()
-            val currentMonth = calendar.get(Calendar.MONTH)
-            val currentYear = calendar.get(Calendar.YEAR)
-            val seasonStartYear = if (currentMonth >= Calendar.SEPTEMBER) currentYear else currentYear - 1
-            calendar.set(Calendar.YEAR, seasonStartYear)
-            calendar.set(Calendar.MONTH, Calendar.SEPTEMBER)
-            calendar.set(Calendar.DAY_OF_MONTH, 1)
-            calendar.set(Calendar.HOUR_OF_DAY, 0)
-            calendar.set(Calendar.MINUTE, 0)
-            calendar.set(Calendar.SECOND, 0)
-            calendar.set(Calendar.MILLISECOND, 0)
-            return calendar.timeInMillis
+        val ALGIERS_ZONE: ZoneId = ZoneId.of("Africa/Algiers")
+
+        fun defaultScoutingYearStart(
+            nowMillis: Long = System.currentTimeMillis(),
+            zoneId: ZoneId = ALGIERS_ZONE
+        ): Long {
+            val zonedNow = Instant.ofEpochMilli(nowMillis).atZone(zoneId)
+            val seasonStartYear = if (zonedNow.monthValue >= 9) zonedNow.year else zonedNow.year - 1
+            return ZonedDateTime.of(seasonStartYear, 9, 1, 0, 0, 0, 0, zoneId)
+                .toInstant()
+                .toEpochMilli()
         }
     }
 }

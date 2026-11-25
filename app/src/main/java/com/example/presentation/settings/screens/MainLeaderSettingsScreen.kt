@@ -89,6 +89,7 @@ fun MainLeaderSettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val isMainLeader by viewModel.isMainLeader.collectAsStateWithLifecycle()
     val currentTerms by viewModel.currentTerms.collectAsStateWithLifecycle()
     val terms = LocalAppTerms.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -497,56 +498,58 @@ fun MainLeaderSettingsScreen(
                 }
             }
 
-            // قسم صيانة بيانات الحضور للأنشطة القديمة
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("attendance_flags_maintenance_card"),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(
+            // قسم صيانة بيانات وتواريخ الحضور للأنشطة القديمة (للقائد الرئيسي فقط)
+            if (isMainLeader) {
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                        .testTag("attendance_flags_maintenance_card"),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
-                    Text(
-                        text = "صيانة بيانات الحضور",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "فحص كافة الأنشطة السابقة وتحديث شارة تسجيل الحضور بناءً على السجلات الفعلية",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedButton(
-                        onClick = { viewModel.recalculateAllAttendanceFlags() },
-                        enabled = !uiState.isRecalculatingAttendance,
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("recalculate_attendance_flags_button"),
-                        shape = RoundedCornerShape(12.dp)
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        if (uiState.isRecalculatingAttendance) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Sync,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "صيانة بيانات الحضور",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "فحص كافة الأنشطة من الخادم لتصحيح شارة تسجيل الحضور ومزامنة تواريخ سجلات الحضور المفقودة أو غير المتطابقة",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedButton(
+                            onClick = { viewModel.recalculateAllAttendanceFlags() },
+                            enabled = isMainLeader && !uiState.isRecalculatingAttendance,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("recalculate_attendance_flags_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (uiState.isRecalculatingAttendance) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Sync,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+                            Text("إصلاح حالة الحضور للأنشطة")
                         }
-                        Text("إصلاح حالة الحضور للأنشطة")
                     }
                 }
             }

@@ -1,17 +1,25 @@
 package com.example.data.activity
 
+import android.util.Log
 import com.example.data.attendance.AttendanceFirestoreDataSource
 import com.example.data.log.ActivityLogDataSource
 import com.example.domain.activity.Activity
 import com.example.domain.activity.ActivityRepository
 import com.example.domain.activity.ActivityStatus
+import com.example.domain.activity.AttendanceFlagDecision
+import com.example.domain.activity.AttendanceMaintenancePolicy
+import com.example.domain.activity.MaintenanceReport
 import com.example.domain.auth.AuthRepository
 import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.FinanceTransactionType
 import com.example.domain.scout.ScoutRepository
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -27,6 +35,13 @@ class ActivityRepositoryImpl(
     private val scoutRepository: ScoutRepository,
     private val firestore: FirebaseFirestore
 ) : ActivityRepository {
+
+    private val _dateSyncWarnings = MutableStateFlow<String?>(null)
+    override val dateSyncWarnings: StateFlow<String?> = _dateSyncWarnings.asStateFlow()
+
+    override fun clearDateSyncWarning() {
+        _dateSyncWarnings.value = null
+    }
 
     override fun observeActivities(): Flow<List<Activity>> {
         return dataSource.observeActivities()
@@ -139,7 +154,7 @@ class ActivityRepositoryImpl(
                     val attendanceSnapshot = firestore.collection(ActivityFirestoreDataSource.COLLECTION_ACTIVITIES)
                         .document(activity.id)
                         .collection(AttendanceFirestoreDataSource.SUBCOLLECTION_ATTENDANCE)
-                        .get()
+                        .get(Source.SERVER)
                         .await()
                     if (!attendanceSnapshot.isEmpty) {
                         val now = System.currentTimeMillis()
@@ -159,8 +174,10 @@ class ActivityRepositoryImpl(
                     }
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
-                    // تجاهل تعذر المزامنة عند عدم توفر الاتصال مع إبقاء تعديل النشاط محفوظاً
+                } catch (e: Exception) {
+                    Log.w("ActivityRepository", "تعذر مزامنة تواريخ الحضور للنشاط ${activity.id}", e)
+                    _dateSyncWarnings.value =
+                        "تم حفظ تعديل النشاط، لكن تعذر مزامنة تواريخ سجلات الحضور مع التاريخ الجديد. يمكن للقائد الرئيسي إصلاحها من الإعدادات عبر «إصلاح حالة الحضور للأنشطة»."
                 }
             }
 
@@ -463,31 +480,74 @@ class ActivityRepositoryImpl(
         return result
     }
 
-    override suspend fun recalculateAllAttendanceFlags(): Result<Int> {
+    override suspend fun recalculateAllAttendanceFlags(): Result<MaintenanceReport> {
         return try {
-            val activities = dataSource.getAllActivities()
-            var updatedCount = 0
+            val activities = dataSource.getAllActivities(fromServer = true)
+            var flagsFixed = 0
+            var attendanceDatesFixed = 0
+
+            // الخطوة 1: فحص وتصحيح علم وجود الحضور (hasAttendanceRecorded) من الخادم
             for (activity in activities) {
                 val hasAttendance = attendanceFirestoreDataSource.hasAnyAttendanceForActivity(activity.id)
-                if (activity.hasAttendanceRecorded != hasAttendance) {
-                    val updateResult = dataSource.updateHasAttendanceRecorded(
-                        activityId = activity.id,
-                        hasRecorded = hasAttendance,
-                        awaitServer = true
-                    )
-                    if (updateResult.isFailure) {
-                        return Result.failure(
-                            updateResult.exceptionOrNull() ?: Exception("فشل تحديث حالة الحضور للنشاط ${activity.title}")
+                when (val decision = AttendanceMaintenancePolicy.decideAttendanceFlagUpdate(
+                    currentFlag = activity.hasAttendanceRecorded,
+                    hasAttendanceOnServer = hasAttendance
+                )) {
+                    is AttendanceFlagDecision.Update -> {
+                        val updateResult = dataSource.updateHasAttendanceRecorded(
+                            activityId = activity.id,
+                            hasRecorded = decision.hasAttendanceRecorded,
+                            awaitServer = true
                         )
+                        if (updateResult.isFailure) {
+                            throw updateResult.exceptionOrNull()
+                                ?: IllegalStateException("فشل تحديث حالة الحضور للنشاط ${activity.title}")
+                        }
+                        flagsFixed++
                     }
-                    updatedCount++
+                    AttendanceFlagDecision.NoChange,
+                    AttendanceFlagDecision.UnknownSkip -> Unit
                 }
             }
-            Result.success(updatedCount)
+
+            // الخطوة 2: مزامنة وإصلاح حقل activityDate المفقود أو غير المتطابق في سجلات الحضور
+            val now = System.currentTimeMillis()
+            for (activity in activities) {
+                if (activity.startDate <= 0L) continue
+                val attendanceDocs = attendanceFirestoreDataSource
+                    .getAttendanceDocumentsForActivityFromServer(activity.id)
+                val docsToUpdate = attendanceDocs.filter { doc ->
+                    val currentActivityDate = (doc.get("activityDate") as? Number)?.toLong()
+                    AttendanceMaintenancePolicy.shouldUpdateAttendanceActivityDate(
+                        currentActivityDate = currentActivityDate,
+                        activityStartDate = activity.startDate
+                    )
+                }
+                if (docsToUpdate.isNotEmpty()) {
+                    attendanceDatesFixed += attendanceFirestoreDataSource.updateAttendanceActivityDateBatch(
+                        documents = docsToUpdate,
+                        newActivityDate = activity.startDate,
+                        updatedAt = now
+                    )
+                }
+            }
+
+            Result.success(
+                MaintenanceReport(
+                    activitiesChecked = activities.size,
+                    flagsFixed = flagsFixed,
+                    attendanceDatesFixed = attendanceDatesFixed
+                )
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(
+                Exception(
+                    "تتطلب هذه العملية اتصالاً مستقراً بالإنترنت. تم إيقاف الصيانة لحماية البيانات، وأي تغييرات تم تطبيقها مسبقاً آمنة ويمكنك إعادة تشغيل العملية بأمان.",
+                    e
+                )
+            )
         }
     }
 }

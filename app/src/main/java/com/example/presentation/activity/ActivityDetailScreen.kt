@@ -58,6 +58,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -123,6 +126,8 @@ fun ActivityDetailScreen(
     val hasRecordedAttendance = remember(attendanceRows) { attendanceRows.any { it.attendance != null } }
     val meetingNumbers by viewModel.meetingNumbers.collectAsStateWithLifecycle()
     val isExportingReportPdf by viewModel.isExportingReportPdf.collectAsStateWithLifecycle()
+    val dateSyncWarning by viewModel.dateSyncWarning.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -138,6 +143,16 @@ fun ActivityDetailScreen(
         viewModel.loadTrainingMeetingNumber(activityId)
     }
 
+    LaunchedEffect(dateSyncWarning) {
+        dateSyncWarning?.let { warning ->
+            snackbarHostState.showSnackbar(
+                message = warning,
+                duration = SnackbarDuration.Long
+            )
+            viewModel.dismissDateSyncWarning()
+        }
+    }
+
     LaunchedEffect(detailState) {
         if (detailState is ActivityDetailUiState.Deleted) {
             onNavigateBack()
@@ -148,6 +163,7 @@ fun ActivityDetailScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             CustomTopAppBar(
                 title = stringResource(id = R.string.activity_detail_title),

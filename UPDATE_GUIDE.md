@@ -78,3 +78,27 @@ defaultConfig {
    - يجب أن يبقى المستودع عاماً لتتمكن الهواتف من تنزيل الـ APK بدون قيود مصادقة.
 2. **السر `GOOGLE_SERVICES_JSON`**:
    - مُخزن في **Settings** > **Secrets and variables** > **Actions** في GitHub ليتمكن سير العمل من بناء التطبيق بنجاح.
+
+---
+
+## Deploying Firestore indexes (نشر فهارس Firestore)
+
+عند تعديل استعلامات Firestore أو تحديث ملف `firestore.indexes.json`، يجب نشر الفهارس (Indexes) **قبل نشر التحديث للمستخدمين** باتباع الخطوات الثلاث التالية بدقة:
+
+1. **قبل النشر — سحب الفهارس الحالية ودمجها**:
+   قم بتشغيل الأمر التالي لحفظ الفهارس الموجودة حالياً في المشروع:
+   ```bash
+   firebase firestore:indexes > current-indexes.json
+   ```
+   راجع ملف `current-indexes.json` وادمج أي فهرس أُنشئ يدوياً عبر Firebase Console داخل `firestore.indexes.json` (لا تحذف أبداً أي فهرس قيد الاستخدام).
+
+2. **تنفيذ النشر بأمان**:
+   شغّل أمر النشر التالي:
+   ```bash
+   firebase deploy --only firestore:indexes
+   ```
+   > ⚠️ **تنبيه هام**: إذا سألك Firebase CLI عمّا إذا كنت تريد حذف فهارس موجودة في الخادم وغير موجودة في الملف، أجب بـ **لا (`N` / NO)** ما لم تتأكد تماماً أنها غير مستخدمة.
+
+3. **الانتظار حتى اكتمال التفعيل قبل إطلاق الإصدار**:
+   افتح **Firebase Console > Firestore Database > Indexes** وانتظر حتى تظهر حالة كل فهرس جديد أو محدّث كـ **`Enabled`** قبل نشر نسخة التطبيق الجديدة على GitHub Releases أو تفعيل التحديث في Firestore.
+

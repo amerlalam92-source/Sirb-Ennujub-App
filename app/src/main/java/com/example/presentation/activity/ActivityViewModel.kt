@@ -76,6 +76,13 @@ class ActivityViewModel(
         }
     }
 
+    // تحذيرات فشل مزامنة تواريخ الحضور بعد حفظ تعديل النشاط
+    val dateSyncWarning: StateFlow<String?> = repository.dateSyncWarnings
+
+    fun dismissDateSyncWarning() {
+        repository.clearDateSyncWarning()
+    }
+
     // معرفات الأنشطة التي تم تسجيل حضور لها مسبقاً من حقل hasAttendanceRecorded في مستند النشاط
     val recordedAttendanceActivityIds: StateFlow<Set<String>> = observeActivitiesUseCase()
         .map { activities ->

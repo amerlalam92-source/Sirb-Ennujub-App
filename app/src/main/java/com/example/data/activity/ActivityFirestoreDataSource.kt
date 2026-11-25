@@ -16,6 +16,7 @@ import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -100,8 +101,12 @@ class ActivityFirestoreDataSource(
     /**
      * جلب جميع الأنشطة لعمليات الترحيل والصيانة
      */
-    suspend fun getAllActivities(): List<Activity> {
-        val snapshot = collection.get().await()
+    suspend fun getAllActivities(fromServer: Boolean = false): List<Activity> {
+        val snapshot = if (fromServer) {
+            collection.get(Source.SERVER).await()
+        } else {
+            collection.get().await()
+        }
         return snapshot.documents.mapNotNull { doc ->
             mapDocumentToActivity(doc)
         }
