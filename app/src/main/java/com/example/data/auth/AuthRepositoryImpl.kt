@@ -38,11 +38,16 @@ class AuthRepositoryImpl(
         private const val TAG = "AuthRepository"
     }
 
+    @Volatile
+    private var cachedLeader: Leader? = null
+
     override val currentUser: FirebaseUser?
         get() = dataSource.currentUser
 
     override val isEmailVerified: Boolean
         get() = dataSource.currentUser?.isEmailVerified == true
+
+    override fun observeAuthState(): Flow<FirebaseUser?> = dataSource.observeAuthState()
 
     override suspend fun login(email: String, password: String): Result<FirebaseUser> {
         val result = dataSource.signInWithEmail(email, password)
@@ -182,6 +187,7 @@ class AuthRepositoryImpl(
     }
 
     override fun logout() {
+        cachedLeader = null
         dataSource.signOut()
     }
 
@@ -248,7 +254,9 @@ class AuthRepositoryImpl(
                                 return@addSnapshotListener
                             }
                             if (snapshot != null && snapshot.exists()) {
-                                trySend(mapSnapshotToLeader(snapshot))
+                                val leader = mapSnapshotToLeader(snapshot)
+                                cachedLeader = leader
+                                trySend(leader)
                             } else {
                                 trySend(null)
                             }
@@ -274,10 +282,21 @@ class AuthRepositoryImpl(
 
     override suspend fun getCurrentLeader(): Leader? {
         val user = currentUser ?: return null
+        cachedLeader?.takeIf { it.uid == user.uid }?.let { return it }
         return try {
-            val doc = firestore.collection("leaders").document(user.uid).get().await()
+            val docRef = firestore.collection("leaders").document(user.uid)
+            val cachedDoc = try {
+                docRef.get(com.google.firebase.firestore.Source.CACHE).await()
+            } catch (_: Exception) {
+                null
+            }
+            val doc = if (cachedDoc != null && cachedDoc.exists()) {
+                cachedDoc
+            } else {
+                docRef.get().await()
+            }
             if (doc.exists()) {
-                mapSnapshotToLeader(doc)
+                mapSnapshotToLeader(doc)?.also { cachedLeader = it }
             } else {
                 Leader(
                     uid = user.uid,

@@ -13,6 +13,7 @@ import com.example.domain.attendance.AttendancePointsSettings
 import com.example.domain.attendance.AttendanceStatus
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -66,24 +67,6 @@ class AttendanceFirestoreDataSource(
     }
 
     /**
-     * الاستماع لجميع معرفات الأنشطة التي تم تسجيل حضور لها عبر استعلام المجموعة الكلي
-     */
-    fun observeAllRecordedActivityIds(): Flow<Set<String>> = callbackFlow {
-        val listenerRegistration = firestore.collectionGroup(SUBCOLLECTION_ATTENDANCE)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    trySend(emptySet())
-                    return@addSnapshotListener
-                }
-                val set = snapshot?.documents?.mapNotNull { doc ->
-                    doc.safeNullableString("activityId") ?: doc.reference.parent.parent?.id
-                }?.toSet() ?: emptySet()
-                trySend(set)
-            }
-        awaitClose { listenerRegistration.remove() }
-    }
-
-    /**
      * الاستماع لسجلات الحضور لشبل محدد عبر جميع الأنشطة باستخدام Collection Group
      */
     fun getAttendanceForScout(scoutId: String): Flow<List<Attendance>> = callbackFlow {
@@ -108,14 +91,15 @@ class AttendanceFirestoreDataSource(
     }
 
     /**
-     * الاستماع لجميع سجلات الحضور عبر التطبيق باستخدام Collection Group
+     * الاستماع لسجلات الحضور عبر التطبيق منذ تاريخ محدد (لتقليل استهلاك القراءات في Firestore)
      */
-    fun observeAllAttendance(): Flow<List<Attendance>> = callbackFlow {
-        val fallbackState = ListenerFallbackState<Attendance>("attendance:all", errorReporter)
+    fun observeAllAttendance(sinceTimestamp: Long): Flow<List<Attendance>> = callbackFlow {
+        val fallbackState = ListenerFallbackState<Attendance>("attendance:all:$sinceTimestamp", errorReporter)
         val listenerRegistration = firestore.collectionGroup(SUBCOLLECTION_ATTENDANCE)
+            .whereGreaterThanOrEqualTo("activityDate", sinceTimestamp)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
-                    Log.w("AttendanceFirestoreDS", "Error observing all attendance", error)
+                    Log.w("AttendanceFirestoreDS", "Error observing attendance since $sinceTimestamp", error)
                     trySend(fallbackState.onError(error))
                     return@addSnapshotListener
                 }
@@ -134,11 +118,28 @@ class AttendanceFirestoreDataSource(
      * حفظ سجل حضور فردي في المسار الفرعي:
      * activities/{activityId}/attendance/{scoutId}
      */
-    suspend fun saveAttendance(attendance: Attendance): Result<Unit> {
+    suspend fun saveAttendance(
+        attendance: Attendance,
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
+    ): Result<Unit> {
         return try {
             val docRef = getAttendanceSubcollection(attendance.activityId).document(attendance.scoutId)
-            docRef.set(mapAttendanceToMap(attendance)).await()
+            val data = mapAttendanceToMap(attendance)
+            if (awaitServer) {
+                docRef.set(data).await()
+            } else {
+                val task = docRef.set(data)
+                if (onAsyncFailure != null) {
+                    task.addOnFailureListener { e ->
+                        Log.e("AttendanceFirestoreDS", "Async failure saving attendance ${attendance.id}: ${e.message}", e)
+                        onAsyncFailure(e)
+                    }
+                }
+            }
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -173,6 +174,20 @@ class AttendanceFirestoreDataSource(
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    /**
+     * التحقق من بقاء أي سجل حضور في النشاط بعد الحذف (قراءة مستند واحد فقط)
+     */
+    suspend fun hasAnyAttendanceForActivity(activityId: String): Boolean {
+        if (activityId.isBlank()) return false
+        return try {
+            !getAttendanceSubcollection(activityId).limit(1).get().await().isEmpty
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            true
         }
     }
 

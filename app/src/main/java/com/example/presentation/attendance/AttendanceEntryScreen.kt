@@ -94,6 +94,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.widget.Toast
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.domain.attendance.AttendanceStatus
@@ -101,6 +108,13 @@ import com.example.domain.scout.Scout
 import com.example.presentation.activity.ActivityFormatters
 import com.example.presentation.activity.AttendanceEditWindow
 import kotlinx.coroutines.launch
+
+private fun isDeviceOnline(context: Context): Boolean {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+    val network = cm.activeNetwork ?: return false
+    val capabilities = cm.getNetworkCapabilities(network) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+}
 
 /**
  * شاشة معالج تسجيل الحضور الكشفي (Attendance Wizard Entry Screen)
@@ -130,16 +144,58 @@ fun AttendanceEntryScreen(
         viewModel.initAttendanceEntry(activityId)
     }
 
+    val context = LocalContext.current
+    var isOnline by remember { mutableStateOf(isDeviceOnline(context)) }
+
+    DisposableEffect(context) {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                isOnline = true
+            }
+
+            override fun onLost(network: Network) {
+                isOnline = isDeviceOnline(context)
+            }
+        }
+        if (cm != null) {
+            try {
+                cm.registerDefaultNetworkCallback(callback)
+            } catch (_: Exception) {
+            }
+        }
+        onDispose {
+            if (cm != null) {
+                try {
+                    cm.unregisterNetworkCallback(callback)
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
     val skippedMessage = "تم تخطي ${terms.scoutSingularDefinite} وسيعاد عرضه في نهاية القائمة"
     val selectStatusFirstMessage = stringResource(id = R.string.error_select_status_first)
     val syncWaitMessage = stringResource(id = R.string.attendance_sync_wait_before_exit)
+    val offlineSaveToastMessage = stringResource(id = R.string.attendance_offline_save_toast)
 
-    BackHandler(enabled = state.isSaving || state.isFinishing) {
+    val handleExitRequest: () -> Unit = {
         if (!state.isFinishing) {
-            scope.launch {
-                snackbarHostState.showSnackbar(syncWaitMessage)
+            if (!isDeviceOnline(context)) {
+                Toast.makeText(context, offlineSaveToastMessage, Toast.LENGTH_LONG).show()
+                onNavigateBack()
+            } else if (state.isSaving) {
+                scope.launch {
+                    snackbarHostState.showSnackbar(syncWaitMessage)
+                }
+            } else {
+                onNavigateBack()
             }
         }
+    }
+
+    BackHandler(enabled = state.isSaving || state.isFinishing || !isOnline) {
+        handleExitRequest()
     }
 
     LaunchedEffect(state.snackbarMessage) {
@@ -168,16 +224,7 @@ fun AttendanceEntryScreen(
                 ),
                 navigationIcon = {
                     IconButton(
-                        onClick = {
-                            if (state.isFinishing) return@IconButton
-                            if (state.isSaving) {
-                                scope.launch {
-                                    snackbarHostState.showSnackbar(syncWaitMessage)
-                                }
-                            } else {
-                                onNavigateBack()
-                            }
-                        },
+                        onClick = handleExitRequest,
                         enabled = !state.isFinishing,
                         modifier = Modifier.testTag("attendance_entry_back_btn")
                     ) {
@@ -303,6 +350,70 @@ fun AttendanceEntryScreen(
                             color = MaterialTheme.colorScheme.secondary,
                             trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
+                    }
+
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = state.failedSaveCount > 0 || state.failedSaveError != null
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(12.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .testTag("attendance_failed_save_banner")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = state.failedSaveError ?: stringResource(
+                                        id = R.string.attendance_failed_saves_banner_format,
+                                        state.failedSaveCount.coerceAtLeast(1)
+                                    ),
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (state.failedSaveCount > 0) {
+                                    TextButton(
+                                        onClick = { viewModel.retryFailedSaves() },
+                                        modifier = Modifier.testTag("attendance_retry_save_btn")
+                                    ) {
+                                        Text(
+                                            text = stringResource(id = R.string.attendance_retry_save_action),
+                                            color = MaterialTheme.colorScheme.error,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { viewModel.dismissFailedSaveBanner() },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = stringResource(id = R.string.data_error_dismiss),
+                                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -598,6 +709,9 @@ fun AttendanceEntryScreen(
                     onClick = {
                         showFinishDialog = false
                         viewModel.onFinishClicked {
+                            if (!isDeviceOnline(context)) {
+                                Toast.makeText(context, offlineSaveToastMessage, Toast.LENGTH_LONG).show()
+                            }
                             onNavigateBack()
                         }
                     },

@@ -22,7 +22,8 @@ class ActivityRepositoryImpl(
     private val activityLogDataSource: ActivityLogDataSource,
     private val authRepository: AuthRepository,
     private val financeRepository: FinanceRepository,
-    private val scoutRepository: ScoutRepository
+    private val scoutRepository: ScoutRepository,
+    private val firestore: FirebaseFirestore
 ) : ActivityRepository {
 
     override fun observeActivities(): Flow<List<Activity>> {
@@ -257,7 +258,6 @@ class ActivityRepositoryImpl(
         var cascadedTransactionsCount = 0
 
         try {
-            val firestore = FirebaseFirestore.getInstance()
 
             // 1) Rollback debts & advance credits linked via relatedActivityId BEFORE any deletions,
             // marking isRolledBack = true transactionally so retries never roll back the same debt/credit twice.

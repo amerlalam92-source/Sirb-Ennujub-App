@@ -1128,6 +1128,10 @@
     <string name="attendance_pick_activity_to_print_title">اختر النشاط لطباعة الاستمارة</string>
     <string name="attendance_syncing_background">جارٍ مزامنة الحضور (%1$d)...</string>
     <string name="attendance_sync_wait_before_exit">جارٍ حفظ ومزامنة البيانات في الخلفية، يرجى الانتظار لحظة...</string>
+    <string name="attendance_offline_save_toast">سيتم الحفظ عند عودة الاتصال</string>
+    <string name="attendance_failed_saves_banner_format">تعذر حفظ بيانات %1$d شبل في السحابة.</string>
+    <string name="attendance_retry_save_action">إعادة المحاولة</string>
+    <string name="attendance_permission_denied_save">لا تملك صلاحية حفظ البيانات في السحابة.</string>
 
     <!-- التحديث الإجباري للتطبيق (Force Update) -->
     <string name="force_update_title">تحديث مطلوب</string>

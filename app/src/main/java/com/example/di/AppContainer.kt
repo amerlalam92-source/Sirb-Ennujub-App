@@ -287,7 +287,8 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
             activityLogDataSource = activityLogDataSource,
             authRepository = authRepository,
             financeRepository = financeRepository,
-            scoutRepository = scoutRepository
+            scoutRepository = scoutRepository,
+            firestore = firestore
         )
     }
 
@@ -771,7 +772,8 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
             scoutRepository = scoutRepository,
             attendanceRepository = attendanceRepository,
             evaluationRepository = evaluationRepository,
-            settingsRepository = settingsRepository
+            settingsRepository = settingsRepository,
+            firestore = firestore
         )
     }
 

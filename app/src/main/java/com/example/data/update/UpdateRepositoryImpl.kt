@@ -15,7 +15,7 @@ import kotlinx.coroutines.tasks.await
  * تنفيذ مستودع تحديثات التطبيق عبر مجموعة settings ومستند app_update في Firestore
  */
 class UpdateRepositoryImpl(
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+    private val firestore: FirebaseFirestore
 ) : UpdateRepository {
 
     private val updateDocRef = firestore.collection("settings").document("app_update")

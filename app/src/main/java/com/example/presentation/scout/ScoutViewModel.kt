@@ -17,7 +17,6 @@ import com.example.domain.scout.usecases.ArchiveScoutUseCase
 import com.example.domain.scout.usecases.DeleteScoutUseCase
 import com.example.domain.scout.usecases.UpdateScoutUseCase
 import com.example.domain.progress.BadgeLevel
-import com.google.firebase.firestore.FirebaseFirestore
 import java.text.Collator
 import java.util.Calendar
 import java.util.Locale
@@ -49,7 +48,8 @@ class ScoutViewModel(
     private val revokeBadgeUseCase: com.example.domain.progress.usecases.RevokeBadgeUseCase? = null,
     private val authRepository: com.example.domain.auth.AuthRepository? = null,
     private val observeHobbyBadgeProgressForScoutUseCase: com.example.domain.hobby.usecases.ObserveHobbyBadgeProgressForScoutUseCase? = null,
-    private val financeRepository: com.example.domain.finance.FinanceRepository? = null
+    private val financeRepository: com.example.domain.finance.FinanceRepository? = null,
+    private val progressRepository: com.example.domain.progress.ProgressRepository? = null
 ) : ViewModel() {
 
     private val _scoutStats = MutableStateFlow<ScoutStatistics?>(null)
@@ -102,76 +102,52 @@ class ScoutViewModel(
             }
         }
 
-        // تحميل ومراقبة الشارات الممنوحة وقيد الإنجاز
-        try {
-            val db = FirebaseFirestore.getInstance()
-            var reqsMap = emptyMap<String, BadgeLevel>()
-            var scoutCompletedMap = emptyMap<String, Set<String>>()
-
-            fun recomputeInProgressBadges() {
-                val granted = _grantedBadgesByScout.value
-                val inProgress = mutableMapOf<String, MutableSet<BadgeLevel>>()
-                scoutCompletedMap.forEach { (scoutId, completedReqIds) ->
-                    val scoutGranted = granted[scoutId].orEmpty()
-                    for (reqId in completedReqIds) {
-                        val level = reqsMap[reqId] ?: continue
-                        if (!scoutGranted.contains(level)) {
-                            inProgress.getOrPut(scoutId) { mutableSetOf() }.add(level)
+        // تحميل ومراقبة الشارات الممنوحة وقيد الإنجاز عبر مستودع التقدم
+        if (progressRepository != null) {
+            viewModelScope.launch {
+                combine(
+                    progressRepository.observeAllScoutBadges(),
+                    progressRepository.observeAllRequirements(),
+                    progressRepository.observeAllScoutProgress()
+                ) { allBadges, allRequirements, allProgress ->
+                    val grantedMap = mutableMapOf<String, MutableSet<BadgeLevel>>()
+                    for (badge in allBadges) {
+                        if (badge.isActive()) {
+                            val level = BadgeLevel.fromKey(badge.badgeLevel) ?: continue
+                            if (badge.scoutId.isNotBlank()) {
+                                grantedMap.getOrPut(badge.scoutId) { mutableSetOf() }.add(level)
+                            }
                         }
                     }
-                }
-                _inProgressBadgesByScout.value = inProgress
-            }
 
-            // مراقبة الشارات الممنوحة النشطة فقط (revokedAt == null)
-            db.collection("scout_badges").addSnapshotListener { snapshot, error ->
-                if (error != null || snapshot == null) return@addSnapshotListener
-                val map = mutableMapOf<String, MutableSet<BadgeLevel>>()
-                for (doc in snapshot.documents) {
-                    val revokedAt = doc.getLong("revokedAt")
-                    if (revokedAt == null) {
-                        val scoutId = doc.getString("scoutId") ?: continue
-                        val levelKey = doc.getString("badgeLevel") ?: continue
-                        val level = BadgeLevel.fromKey(levelKey) ?: continue
-                        map.getOrPut(scoutId) { mutableSetOf() }.add(level)
+                    val reqsMap = mutableMapOf<String, BadgeLevel>()
+                    for (req in allRequirements) {
+                        if (req.isActive() && req.id.isNotBlank()) {
+                            val level = BadgeLevel.fromKey(req.badgeLevel) ?: continue
+                            reqsMap[req.id] = level
+                        }
                     }
-                }
-                _grantedBadgesByScout.value = map
-                recomputeInProgressBadges()
-            }
 
-            // مراقبة كتالوج المتطلبات لربط معرف المتطلب بمستوى الشارة
-            db.collection("progress_requirements").addSnapshotListener { snapshot, error ->
-                if (error != null || snapshot == null) return@addSnapshotListener
-                val newReqs = mutableMapOf<String, BadgeLevel>()
-                for (doc in snapshot.documents) {
-                    val archived = doc.getBoolean("archived") ?: false
-                    if (!archived) {
-                        val levelKey = doc.getString("badgeLevel") ?: continue
-                        val level = BadgeLevel.fromKey(levelKey) ?: continue
-                        newReqs[doc.id] = level
+                    val inProgressMap = mutableMapOf<String, MutableSet<BadgeLevel>>()
+                    for (entry in allProgress) {
+                        if (entry.completed && entry.scoutId.isNotBlank()) {
+                            val level = reqsMap[entry.requirementId] ?: continue
+                            val scoutGranted = grantedMap[entry.scoutId].orEmpty()
+                            if (!scoutGranted.contains(level)) {
+                                inProgressMap.getOrPut(entry.scoutId) { mutableSetOf() }.add(level)
+                            }
+                        }
                     }
-                }
-                reqsMap = newReqs
-                recomputeInProgressBadges()
-            }
 
-            // مراقبة سجل إنجاز المتطلبات للأشبال (completed == true)
-            db.collection("scout_progress").addSnapshotListener { snapshot, error ->
-                if (error != null || snapshot == null) return@addSnapshotListener
-                val map = mutableMapOf<String, MutableSet<String>>()
-                for (doc in snapshot.documents) {
-                    val completed = doc.getBoolean("completed") ?: false
-                    if (completed) {
-                        val scoutId = doc.getString("scoutId") ?: continue
-                        val reqId = doc.getString("requirementId") ?: continue
-                        map.getOrPut(scoutId) { mutableSetOf() }.add(reqId)
-                    }
+                    grantedMap to inProgressMap
                 }
-                scoutCompletedMap = map
-                recomputeInProgressBadges()
+                    .catch { /* الاحتفاظ بالقيم الحالية عند حدوث خطأ */ }
+                    .collect { (grantedMap, inProgressMap) ->
+                        _grantedBadgesByScout.value = grantedMap
+                        _inProgressBadgesByScout.value = inProgressMap
+                    }
             }
-        } catch (_: Exception) {}
+        }
     }
 
     private val _searchQuery = MutableStateFlow("")
@@ -795,7 +771,8 @@ class ScoutViewModel(
         private val revokeBadgeUseCase: com.example.domain.progress.usecases.RevokeBadgeUseCase? = null,
         private val authRepository: com.example.domain.auth.AuthRepository? = null,
         private val observeHobbyBadgeProgressForScoutUseCase: com.example.domain.hobby.usecases.ObserveHobbyBadgeProgressForScoutUseCase? = null,
-        private val financeRepository: com.example.domain.finance.FinanceRepository? = null
+        private val financeRepository: com.example.domain.finance.FinanceRepository? = null,
+        private val progressRepository: com.example.domain.progress.ProgressRepository? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -813,7 +790,8 @@ class ScoutViewModel(
                 revokeBadgeUseCase,
                 authRepository,
                 observeHobbyBadgeProgressForScoutUseCase,
-                financeRepository
+                financeRepository,
+                progressRepository
             ) as T
         }
     }

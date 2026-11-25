@@ -28,6 +28,7 @@ data class Activity(
     val contributionDefaultAmount: Int? = null, // المبلغ الافتراضي لمساهمة الشبل في هذا النشاط
     val collectSubscriptions: Boolean = true, // تفعيل تحصيل الاشتراكات المالية لهذا النشاط
     val customSubscriptionAmount: Int? = null, // قيمة الاشتراك المخصصة للأنشطة غير التدريبية (رحلات، مخيمات...)
+    val hasAttendanceRecorded: Boolean = false, // هل تم تسجيل حضور لهذا النشاط؟
     val unitId: String? = null, // معرف الوحدة الكشفية
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),

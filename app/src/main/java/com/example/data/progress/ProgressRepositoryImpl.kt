@@ -188,6 +188,9 @@ class ProgressRepositoryImpl(
     override fun observeScoutProgress(scoutId: String): Flow<List<ScoutProgressEntry>> =
         dataSource.observeScoutProgress(scoutId)
 
+    override fun observeAllScoutProgress(): Flow<List<ScoutProgressEntry>> =
+        dataSource.observeAllScoutProgress()
+
     override suspend fun setRequirementCompleted(
         scoutId: String,
         requirementId: String,

@@ -7,7 +7,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.example.ScoutApplication
-import com.example.data.scout.ScoutFirestoreDataSource
 import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.FinanceSubscription
 import com.example.domain.finance.FinanceSummary
@@ -16,7 +15,6 @@ import com.example.domain.finance.ScoutDebt
 import com.example.domain.scout.Scout
 import com.example.domain.scout.ScoutRepository
 import com.example.presentation.reports.PdfExporter
-import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -58,7 +56,7 @@ sealed interface FinanceReportsEvent {
 
 class FinanceReportsViewModel(
     private val financeRepository: FinanceRepository,
-    private val scoutRepository: ScoutRepository? = null,
+    private val scoutRepository: ScoutRepository,
     private val termsRepository: com.example.domain.settings.TermsRepository? = null
 ) : ViewModel() {
 
@@ -88,8 +86,7 @@ class FinanceReportsViewModel(
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            val scoutsFlow: Flow<List<Scout>> = scoutRepository?.observeScouts()
-                ?: ScoutFirestoreDataSource(FirebaseFirestore.getInstance()).observeScouts()
+            val scoutsFlow: Flow<List<Scout>> = scoutRepository.observeScouts()
 
             combine(
                 financeRepository.observeAllTransactions(),
@@ -449,7 +446,7 @@ class FinanceReportsViewModel(
 
     class Factory(
         private val financeRepository: FinanceRepository,
-        private val scoutRepository: ScoutRepository? = null,
+        private val scoutRepository: ScoutRepository,
         private val termsRepository: com.example.domain.settings.TermsRepository? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
@@ -460,9 +457,8 @@ class FinanceReportsViewModel(
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
             val app = extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as? ScoutApplication
-            val repo = scoutRepository ?: app?.container?.scoutRepository
             val termsRepo = termsRepository ?: app?.container?.termsRepository
-            return FinanceReportsViewModel(financeRepository, repo, termsRepo) as T
+            return FinanceReportsViewModel(financeRepository, scoutRepository, termsRepo) as T
         }
     }
 }

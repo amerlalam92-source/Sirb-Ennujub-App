@@ -22,7 +22,7 @@ service cloud.firestore {
         && request.resource.data.status == 'pending'
         && request.resource.data.isMainLeader == false;
       allow update: if (isSignedIn() && request.auth.uid == uid && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status', 'isMainLeader', 'uid'])) || (isApprovedMainLeader() && request.auth.uid != uid);
-      allow delete: if (isSignedIn() && request.auth.uid == uid) || (isApprovedMainLeader() && request.auth.uid != uid);
+      allow delete: if (isSignedIn() && request.auth.uid == uid && !isApprovedMainLeader()) || (isApprovedMainLeader() && request.auth.uid != uid);
     }
     
     match /settings/app_update {
@@ -39,7 +39,7 @@ service cloud.firestore {
       allow read: if isApprovedLeader();
       allow create: if isApprovedLeader() && request.resource.data.userId == request.auth.uid;
       allow update: if false;
-      allow delete: if isApprovedLeader() && (resource.data.userId == request.auth.uid || isApprovedMainLeader());
+      allow delete: if isApprovedMainLeader();
     }
 
     match /scouts/{scoutId} { allow read, write: if isApprovedLeader(); }

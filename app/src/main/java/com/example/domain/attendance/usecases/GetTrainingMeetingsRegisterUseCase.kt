@@ -10,7 +10,9 @@ import kotlinx.coroutines.flow.Flow
 class GetTrainingMeetingsRegisterUseCase(
     private val repository: AttendanceRepository
 ) {
-    operator fun invoke(): Flow<List<MeetingWithAttendance>> {
-        return repository.getTrainingMeetingsRegister()
+    operator fun invoke(
+        sinceTimestamp: Long = AttendanceRepository.defaultScoutingYearStart()
+    ): Flow<List<MeetingWithAttendance>> {
+        return repository.getTrainingMeetingsRegister(sinceTimestamp)
     }
 }

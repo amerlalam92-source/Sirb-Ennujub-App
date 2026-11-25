@@ -25,6 +25,7 @@ import com.example.domain.scout.ScoutRepository
 import com.example.domain.settings.CustomTerms
 import com.example.domain.settings.SettingsRepository
 import com.example.presentation.reports.PdfExporter
+import com.google.firebase.firestore.FirebaseFirestoreException
 import java.text.Collator
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
@@ -159,12 +160,17 @@ class AttendanceViewModel(
     private val saveQueue = Channel<SaveQueueItem>(Channel.UNLIMITED)
     private val pendingSavesCounter = AtomicInteger(0)
 
+    private fun scoutSessionKey(activityId: String, scoutId: String): String = "${activityId}_${scoutId}"
+
     private val persistedAttendanceStatus = mutableMapOf<String, AttendanceStatus>()
     private val persistedFinanceSignature = mutableMapOf<String, FinanceSnapshot>()
     private val scoutFinanceCache = mutableMapOf<String, ScoutFinanceDraft>()
     private val cachedRequiredAmounts = mutableMapOf<SubscriptionStatus, Int>()
     private val scoutsWithReversibleTxs = mutableSetOf<String>()
     private val failedSaveTasks = mutableMapOf<String, SaveQueueItem.PersistScout>()
+    private val completedReverseStep = mutableMapOf<String, FinanceSnapshot>()
+    private val completedPayDebtStep = mutableMapOf<String, FinanceSnapshot>()
+    private val completedAddCreditStep = mutableMapOf<String, FinanceSnapshot>()
     private var transactionsPreloaded = false
     private var currentSessionActivityId: String? = null
 
@@ -172,23 +178,79 @@ class AttendanceViewModel(
         startSaveWorker()
     }
 
+    private fun formatSaveFailureMessage(scout: Scout, error: Throwable?): String {
+        val fsCode = (error as? FirebaseFirestoreException)?.code
+        return when {
+            fsCode == FirebaseFirestoreException.Code.PERMISSION_DENIED ->
+                "لا تملك صلاحية حفظ بيانات ${scout.fullName} في السحابة."
+            !error?.message.isNullOrBlank() ->
+                "فشل حفظ بيانات ${scout.fullName}: ${error!!.message}"
+            else ->
+                "فشل حفظ بيانات ${scout.fullName}. يرجى إعادة المحاولة."
+        }
+    }
+
+    private fun recordSaveFailure(item: SaveQueueItem.PersistScout, error: Throwable?) {
+        val key = scoutSessionKey(item.activity.id, item.scout.id)
+        failedSaveTasks[key] = item
+        persistedAttendanceStatus.remove(key)
+        persistedFinanceSignature.remove(key)
+        val msg = formatSaveFailureMessage(item.scout, error)
+        _entryUiState.update {
+            it.copy(
+                failedSaveCount = failedSaveTasks.size,
+                failedSaveError = msg,
+                snackbarMessage = msg
+            )
+        }
+    }
+
+    private fun onBackgroundWriteFailed(item: SaveQueueItem.PersistScout, error: Throwable) {
+        viewModelScope.launch {
+            Log.e("AttendanceVM", "Async write failure for ${item.scout.fullName}: ${error.message}", error)
+            recordSaveFailure(item, error)
+        }
+    }
+
+    fun retryFailedSaves() {
+        val itemsToRetry = failedSaveTasks.values.toList()
+        if (itemsToRetry.isEmpty()) {
+            _entryUiState.update { it.copy(failedSaveCount = 0, failedSaveError = null) }
+            return
+        }
+        failedSaveTasks.clear()
+        _entryUiState.update { it.copy(failedSaveCount = 0, failedSaveError = null) }
+        itemsToRetry.forEach { enqueueScoutSave(it) }
+    }
+
+    fun dismissFailedSaveBanner() {
+        _entryUiState.update { it.copy(failedSaveError = null) }
+    }
+
     private fun startSaveWorker() {
         viewModelScope.launch {
             for (item in saveQueue) {
                 when (item) {
                     is SaveQueueItem.PersistScout -> {
+                        val key = scoutSessionKey(item.activity.id, item.scout.id)
                         try {
                             val result = executePersistScout(item)
                             if (result.isSuccess) {
-                                failedSaveTasks.remove(item.scout.id)
+                                failedSaveTasks.remove(key)
+                                _entryUiState.update { state ->
+                                    state.copy(
+                                        failedSaveCount = failedSaveTasks.size,
+                                        failedSaveError = if (failedSaveTasks.isEmpty()) null else state.failedSaveError
+                                    )
+                                }
                             } else {
-                                failedSaveTasks[item.scout.id] = item
+                                recordSaveFailure(item, result.exceptionOrNull())
                             }
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
-                            failedSaveTasks[item.scout.id] = item
                             Log.e("AttendanceVM", "Unexpected error saving ${item.scout.fullName}: ${e.message}", e)
+                            recordSaveFailure(item, e)
                         } finally {
                             val remaining = pendingSavesCounter.decrementAndGet().coerceAtLeast(0)
                             _entryUiState.update { state ->
@@ -202,20 +264,26 @@ class AttendanceViewModel(
                     is SaveQueueItem.FlushBarrier -> {
                         var flushError: Throwable? = null
                         if (failedSaveTasks.isNotEmpty()) {
-                            for (failedItem in failedSaveTasks.values.toList()) {
+                            for ((key, failedItem) in failedSaveTasks.entries.toList()) {
                                 try {
                                     val retryResult = executePersistScout(failedItem)
                                     if (retryResult.isSuccess) {
-                                        failedSaveTasks.remove(failedItem.scout.id)
+                                        failedSaveTasks.remove(key)
+                                        _entryUiState.update { state ->
+                                            state.copy(
+                                                failedSaveCount = failedSaveTasks.size,
+                                                failedSaveError = if (failedSaveTasks.isEmpty()) null else state.failedSaveError
+                                            )
+                                        }
                                     } else {
-                                        failedSaveTasks[failedItem.scout.id] = failedItem
                                         flushError = retryResult.exceptionOrNull()
+                                        recordSaveFailure(failedItem, flushError)
                                     }
                                 } catch (e: CancellationException) {
                                     throw e
                                 } catch (e: Exception) {
-                                    failedSaveTasks[failedItem.scout.id] = failedItem
                                     flushError = e
+                                    recordSaveFailure(failedItem, e)
                                 }
                             }
                         }
@@ -246,13 +314,10 @@ class AttendanceViewModel(
     }
 
     private suspend fun executePersistScout(item: SaveQueueItem.PersistScout): Result<Unit> {
-        if (currentSessionActivityId != null && item.activity.id != currentSessionActivityId) {
-            return Result.success(Unit)
-        }
-
+        val key = scoutSessionKey(item.activity.id, item.scout.id)
         var attendanceFailed = false
         var attendanceError: Throwable? = null
-        if (persistedAttendanceStatus[item.scout.id] != item.status) {
+        if (persistedAttendanceStatus[key] != item.status) {
             val singleAttendance = buildAttendanceRecord(
                 scout = item.scout,
                 activity = item.activity,
@@ -263,10 +328,12 @@ class AttendanceViewModel(
                 // عند تفعيل التحصيل المالي يتكفل saveFinancePayment بحفظ الاشتراك مرة واحدة لتفادي التكرار
                 val attResult = attendanceRepository.saveAttendance(
                     attendance = singleAttendance,
-                    syncSubscription = !item.syncFinance
+                    syncSubscription = !item.syncFinance,
+                    awaitServer = false,
+                    onAsyncFailure = { err -> onBackgroundWriteFailed(item, err) }
                 )
                 if (attResult.isSuccess) {
-                    persistedAttendanceStatus[item.scout.id] = item.status
+                    persistedAttendanceStatus[key] = item.status
                 } else {
                     attendanceFailed = true
                     attendanceError = attResult.exceptionOrNull()
@@ -294,7 +361,8 @@ class AttendanceViewModel(
                 prevPaid = item.prevPaid,
                 todayReq = item.todayReq,
                 overpaymentCredit = item.credit,
-                isFinanceEnabled = true
+                isFinanceEnabled = true,
+                queueItem = item
             )
             if (financeResult.isFailure) {
                 return financeResult
@@ -303,7 +371,6 @@ class AttendanceViewModel(
 
         if (attendanceFailed) {
             val err = attendanceError ?: Exception("فشل حفظ سجل الحضور")
-            _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل حفظ سجل الحضور") }
             return Result.failure(err)
         }
 
@@ -415,15 +482,16 @@ class AttendanceViewModel(
             .filter { it.type == FinanceTransactionType.ADVANCE_PAYMENT }
             .sumOf { it.amount }
 
+        val key = scoutSessionKey(activity.id, scout.id)
         if (debtPaid > 0 || advancePaid > 0) {
-            scoutsWithReversibleTxs.add(scout.id)
+            scoutsWithReversibleTxs.add(key)
         }
 
         val totalPaid = subPaid + debtPaid + advancePaid
         val prevDebt = rawPrevDebt + debtPaid
 
         if (existingSub != null && existingStatus != null) {
-            persistedFinanceSignature[scout.id] = FinanceSnapshot(
+            persistedFinanceSignature[key] = FinanceSnapshot(
                 status = existingStatus,
                 todayPaid = subPaid,
                 prevPaid = debtPaid,
@@ -431,7 +499,7 @@ class AttendanceViewModel(
                 credit = advancePaid
             )
         } else {
-            persistedFinanceSignature.remove(scout.id)
+            persistedFinanceSignature.remove(key)
         }
 
         val effectivePaid = if (existingStatus != null && canPay && totalPaid > 0) totalPaid else 0
@@ -528,18 +596,31 @@ class AttendanceViewModel(
         currentSessionActivityId = activityId
         _sessionPaidByScout.value = emptyMap()
         _liveAmountInput.value = ""
-        persistedAttendanceStatus.clear()
-        persistedFinanceSignature.clear()
+        val prefix = "${activityId}_"
+        persistedAttendanceStatus.keys.removeAll { it.startsWith(prefix) }
+        persistedFinanceSignature.keys.removeAll { it.startsWith(prefix) }
         scoutFinanceCache.clear()
         cachedRequiredAmounts.clear()
-        scoutsWithReversibleTxs.clear()
-        failedSaveTasks.clear()
+        scoutsWithReversibleTxs.removeAll { it.startsWith(prefix) }
+        failedSaveTasks.keys.removeAll { it.startsWith(prefix) }
+        completedReverseStep.keys.removeAll { it.startsWith(prefix) }
+        completedPayDebtStep.keys.removeAll { it.startsWith(prefix) }
+        completedAddCreditStep.keys.removeAll { it.startsWith(prefix) }
         transactionsPreloaded = false
-        _entryUiState.update { it.copy(isLoading = true, isFinishing = false, errorMessage = null) }
+        _entryUiState.update {
+            it.copy(
+                isLoading = true,
+                isFinishing = false,
+                errorMessage = null,
+                failedSaveCount = failedSaveTasks.size,
+                failedSaveError = if (failedSaveTasks.isEmpty()) null else it.failedSaveError
+            )
+        }
 
         viewModelScope.launch {
             try {
-                val activity = activityRepository.getActivityById(activityId)
+                val activity = activityRepository.observeActivities().first().find { it.id == activityId }
+                    ?: activityRepository.getActivityById(activityId)
                 if (activity == null) {
                     _entryUiState.update { it.copy(isLoading = false, errorMessage = "النشاط غير موجود") }
                     return@launch
@@ -557,7 +638,9 @@ class AttendanceViewModel(
                 val existingMap = existingRecords.associate {
                     it.scoutId to it.attendanceStatus
                 }
-                persistedAttendanceStatus.putAll(existingMap)
+                existingMap.forEach { (scoutId, status) ->
+                    persistedAttendanceStatus[scoutSessionKey(activityId, scoutId)] = status
+                }
 
                 val pointsSettings = observePointsSettingsUseCase().first()
                 val trainingMeeting = isTrainingMeeting(activity)
@@ -566,9 +649,17 @@ class AttendanceViewModel(
                 val initialSessionPaid = mutableMapOf<String, Int>()
                 if (collectSubs && financeRepository != null) {
                     if (trainingMeeting) {
+                        val settings = try {
+                            financeRepository.observeSettings().first()
+                        } catch (_: Exception) {
+                            null
+                        }
                         for (subStatus in SubscriptionStatus.entries) {
                             try {
-                                cachedRequiredAmounts[subStatus] = financeRepository.getRequiredAmountFor(activity.id, subStatus)
+                                val overrideAmount = activity.subscriptionOverride?.get(subStatus.key)
+                                cachedRequiredAmounts[subStatus] = overrideAmount
+                                    ?: settings?.requiredAmountFor(subStatus)
+                                    ?: financeRepository.getRequiredAmountFor(activity.id, subStatus)
                             } catch (_: Exception) {
                             }
                         }
@@ -620,15 +711,16 @@ class AttendanceViewModel(
                             .filter { it.type == FinanceTransactionType.ADVANCE_PAYMENT }
                             .sumOf { it.amount }
 
+                        val key = scoutSessionKey(activity.id, scout.id)
                         if (debtPaid > 0 || advancePaid > 0) {
-                            scoutsWithReversibleTxs.add(scout.id)
+                            scoutsWithReversibleTxs.add(key)
                         }
 
                         val totalPaid = subPaid + debtPaid + advancePaid
                         val prevDebt = rawPrevDebt + debtPaid
 
                         if (existingSub != null && existingStatus != null) {
-                            persistedFinanceSignature[scout.id] = FinanceSnapshot(
+                            persistedFinanceSignature[key] = FinanceSnapshot(
                                 status = existingStatus,
                                 todayPaid = subPaid,
                                 prevPaid = debtPaid,
@@ -944,17 +1036,26 @@ class AttendanceViewModel(
             scoutFullName = scout.fullName,
             status = status.key,
             points = points,
-            activityDate = activity.startDate
+            activityDate = activity.startDate,
+            unitId = activity.unitId
         )
     }
 
     /**
      * عكس معاملات سداد الديون والدفعات المقدمة المسجلة مسبقاً لهذا الشبل في هذا النشاط قبل حفظ التحديثات
      */
-    private suspend fun reverseOldPayments(activityId: String, scoutId: String): Result<Unit> {
+    private suspend fun reverseOldPayments(
+        activityId: String,
+        scoutId: String,
+        queueItem: SaveQueueItem.PersistScout? = null
+    ): Result<Unit> {
         if (financeRepository == null) return Result.success(Unit)
-        if (transactionsPreloaded && scoutId !in scoutsWithReversibleTxs) {
+        val key = scoutSessionKey(activityId, scoutId)
+        if (transactionsPreloaded && key !in scoutsWithReversibleTxs) {
             return Result.success(Unit)
+        }
+        val onFailure: ((Throwable) -> Unit)? = queueItem?.let { item ->
+            { err -> onBackgroundWriteFailed(item, err) }
         }
         return try {
             val existingTxs = financeRepository.observeAllTransactions().first()
@@ -974,7 +1075,9 @@ class AttendanceViewModel(
                             val rollbackResult = financeRepository.rollbackScoutDebts(
                                 scoutId = scoutId,
                                 amountToRollback = tx.amount,
-                                excludeActivityId = activityId
+                                excludeActivityId = activityId,
+                                awaitServer = false,
+                                onAsyncFailure = onFailure
                             )
                             if (rollbackResult.isFailure) {
                                 return Result.failure(
@@ -985,7 +1088,12 @@ class AttendanceViewModel(
                     }
                     FinanceTransactionType.ADVANCE_PAYMENT -> {
                         if (tx.amount > 0) {
-                            val deductResult = scoutRepository.deductCreditFromScout(scoutId, tx.amount)
+                            val deductResult = scoutRepository.deductCreditFromScout(
+                                scoutId = scoutId,
+                                amount = tx.amount,
+                                awaitServer = false,
+                                onAsyncFailure = onFailure
+                            )
                             if (deductResult.isFailure) {
                                 return Result.failure(
                                     Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.")
@@ -995,14 +1103,18 @@ class AttendanceViewModel(
                     }
                     else -> Unit
                 }
-                val auditResult = financeRepository.updateTransaction(tx.copy(isRolledBack = true))
+                val auditResult = financeRepository.updateTransaction(
+                    tx = tx.copy(isRolledBack = true),
+                    awaitServer = false,
+                    onAsyncFailure = onFailure
+                )
                 if (auditResult.isFailure) {
                     return Result.failure(
                         Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.")
                     )
                 }
             }
-            scoutsWithReversibleTxs.remove(scoutId)
+            scoutsWithReversibleTxs.remove(key)
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -1013,7 +1125,7 @@ class AttendanceViewModel(
     }
 
     /**
-     * حفظ المعاملات والمدفوعات المالية للشبل في النشاط وقاعدة البيانات
+     * حفظ المعاملات والمدفوعات المالية للشبل في النشاط وقاعدة البيانات بطريقة خالية من التكرار (Idempotent)
      */
     private suspend fun saveFinancePayment(
         scout: Scout,
@@ -1023,11 +1135,13 @@ class AttendanceViewModel(
         prevPaid: Int = _entryUiState.value.previousDebtPaid,
         todayReq: Int = _entryUiState.value.todaySubRequired,
         overpaymentCredit: Int = _entryUiState.value.overpaymentCredit,
-        isFinanceEnabled: Boolean = _entryUiState.value.isFinanceSectionVisible
+        isFinanceEnabled: Boolean = _entryUiState.value.isFinanceSectionVisible,
+        queueItem: SaveQueueItem.PersistScout? = null
     ): Result<Unit> {
         if (financeRepository == null || !isFinanceEnabled) {
             return Result.success(Unit)
         }
+        val key = scoutSessionKey(activity.id, scout.id)
         val snapshot = FinanceSnapshot(
             status = currentStatus,
             todayPaid = todayPaid,
@@ -1035,16 +1149,24 @@ class AttendanceViewModel(
             todayReq = todayReq,
             credit = overpaymentCredit
         )
-        if (persistedFinanceSignature[scout.id] == snapshot) return Result.success(Unit)
+        if (persistedFinanceSignature[key] == snapshot) return Result.success(Unit)
+
+        val onFailure: ((Throwable) -> Unit)? = queueItem?.let { item ->
+            { err -> onBackgroundWriteFailed(item, err) }
+        }
 
         return try {
             // 1. عكس معاملات سداد الديون والرصيد المقدم السابقة لتفادي الازدواجية عند التعديل أو الحذف
-            val reverseResult = reverseOldPayments(activity.id, scout.id)
-            if (reverseResult.isFailure) {
-                val msg = reverseResult.exceptionOrNull()?.message
-                    ?: "فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى."
-                _entryUiState.update { it.copy(snackbarMessage = msg) }
-                return Result.failure(reverseResult.exceptionOrNull() ?: Exception(msg))
+            if (completedReverseStep[key] != snapshot) {
+                val reverseResult = reverseOldPayments(activity.id, scout.id, queueItem)
+                if (reverseResult.isFailure) {
+                    val msg = reverseResult.exceptionOrNull()?.message
+                        ?: "فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى."
+                    return Result.failure(reverseResult.exceptionOrNull() ?: Exception(msg))
+                }
+                completedReverseStep[key] = snapshot
+                completedPayDebtStep.remove(key)
+                completedAddCreditStep.remove(key)
             }
 
             // 2. تحديث اشتراك النشاط الحالي أولاً حتى لا يتأثر سداد الديون السابقة به
@@ -1060,26 +1182,41 @@ class AttendanceViewModel(
                 requiredAmount = todayReq,
                 paidAmount = todayPaid,
                 debtAmount = (todayReq - todayPaid).coerceAtLeast(0),
+                unitId = activity.unitId,
                 updatedAt = System.currentTimeMillis()
             )
-            val subResult = financeRepository.upsertSubscription(todaySub)
+            val subResult = financeRepository.upsertSubscription(
+                sub = todaySub,
+                awaitServer = false,
+                onAsyncFailure = onFailure
+            )
             if (subResult.isFailure) {
                 val err = subResult.exceptionOrNull() ?: Exception("فشل حفظ اشتراك النشاط")
-                _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل حفظ اشتراك النشاط") }
                 return Result.failure(err)
             }
 
-            // 3. تطبيق سداد الديون السابقة من جديد إن وجد
+            // 3. تطبيق سداد الديون السابقة بمعرّف حتمي لمنع التكرار عند إعادة المحاولة
             if (prevPaid > 0) {
-                scoutsWithReversibleTxs.add(scout.id)
-                val payDebtResult = financeRepository.payScoutDebts(scout.id, prevPaid)
-                if (payDebtResult.isFailure) {
-                    val err = payDebtResult.exceptionOrNull() ?: Exception("فشل تسجيل سداد الديون السابقة")
-                    _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل تسجيل سداد الديون السابقة") }
-                    return Result.failure(err)
+                scoutsWithReversibleTxs.add(key)
+                if (completedPayDebtStep[key] != snapshot) {
+                    val payDebtResult = financeRepository.payScoutDebts(
+                        scoutId = scout.id,
+                        amountToPay = prevPaid,
+                        awaitServer = false,
+                        onAsyncFailure = { err ->
+                            viewModelScope.launch { completedPayDebtStep.remove(key) }
+                            onFailure?.invoke(err)
+                        }
+                    )
+                    if (payDebtResult.isFailure) {
+                        val err = payDebtResult.exceptionOrNull() ?: Exception("فشل تسجيل سداد الديون السابقة")
+                        return Result.failure(err)
+                    }
+                    completedPayDebtStep[key] = snapshot
                 }
+                val debtTxId = "${activity.id}_${scout.id}_${FinanceTransactionType.DEBT_PAYMENT.key}"
                 val debtTx = FinanceTransaction(
-                    id = "",
+                    id = debtTxId,
                     type = FinanceTransactionType.DEBT_PAYMENT,
                     amount = prevPaid,
                     date = activity.startDate,
@@ -1087,27 +1224,42 @@ class AttendanceViewModel(
                     source = scout.fullName,
                     scoutId = scout.id,
                     relatedActivityId = activity.id,
+                    unitId = activity.unitId,
                     isRolledBack = false
                 )
-                val debtTxResult = financeRepository.addTransaction(debtTx)
+                val debtTxResult = financeRepository.upsertTransaction(
+                    transaction = debtTx,
+                    awaitServer = false,
+                    onAsyncFailure = onFailure
+                )
                 if (debtTxResult.isFailure) {
                     val err = debtTxResult.exceptionOrNull() ?: Exception("فشل حفظ معاملة سداد الديون")
-                    _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل حفظ معاملة سداد الديون") }
                     return Result.failure(err)
                 }
             }
 
-            // 4. تطبيق الدفعة المقدمة (الرصيد المقدم) من جديد إن وجدت
+            // 4. تطبيق الدفعة المقدمة (الرصيد المقدم) بمعرّف حتمي لمنع التكرار عند إعادة المحاولة
             if (overpaymentCredit > 0) {
-                scoutsWithReversibleTxs.add(scout.id)
-                val addCreditResult = scoutRepository.addCreditToScout(scout.id, overpaymentCredit)
-                if (addCreditResult.isFailure) {
-                    val err = addCreditResult.exceptionOrNull() ?: Exception("فشل تحديث الرصيد المقدم")
-                    _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل تحديث الرصيد المقدم") }
-                    return Result.failure(err)
+                scoutsWithReversibleTxs.add(key)
+                if (completedAddCreditStep[key] != snapshot) {
+                    val addCreditResult = scoutRepository.addCreditToScout(
+                        scoutId = scout.id,
+                        amount = overpaymentCredit,
+                        awaitServer = false,
+                        onAsyncFailure = { err ->
+                            viewModelScope.launch { completedAddCreditStep.remove(key) }
+                            onFailure?.invoke(err)
+                        }
+                    )
+                    if (addCreditResult.isFailure) {
+                        val err = addCreditResult.exceptionOrNull() ?: Exception("فشل تحديث الرصيد المقدم")
+                        return Result.failure(err)
+                    }
+                    completedAddCreditStep[key] = snapshot
                 }
+                val advanceTxId = "${activity.id}_${scout.id}_${FinanceTransactionType.ADVANCE_PAYMENT.key}"
                 val advanceTx = FinanceTransaction(
-                    id = "",
+                    id = advanceTxId,
                     type = FinanceTransactionType.ADVANCE_PAYMENT,
                     amount = overpaymentCredit,
                     date = activity.startDate,
@@ -1115,24 +1267,26 @@ class AttendanceViewModel(
                     source = scout.fullName,
                     scoutId = scout.id,
                     relatedActivityId = activity.id,
+                    unitId = activity.unitId,
                     isRolledBack = false
                 )
-                val advanceTxResult = financeRepository.addTransaction(advanceTx)
+                val advanceTxResult = financeRepository.upsertTransaction(
+                    transaction = advanceTx,
+                    awaitServer = false,
+                    onAsyncFailure = onFailure
+                )
                 if (advanceTxResult.isFailure) {
                     val err = advanceTxResult.exceptionOrNull() ?: Exception("فشل حفظ معاملة الدفعة المقدمة")
-                    _entryUiState.update { it.copy(snackbarMessage = err.message ?: "فشل حفظ معاملة الدفعة المقدمة") }
                     return Result.failure(err)
                 }
             }
 
-            persistedFinanceSignature[scout.id] = snapshot
+            persistedFinanceSignature[key] = snapshot
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e("AttendanceVM", "Error saving finance payment for ${scout.fullName}: ${e.message}", e)
-            val msg = e.message ?: "حدث خطأ أثناء حفظ البيانات المالية"
-            _entryUiState.update { it.copy(snackbarMessage = msg) }
             Result.failure(e)
         }
     }

@@ -48,19 +48,18 @@ class AttendanceRepositoryImpl(
     override fun getAttendanceForScout(scoutId: String): Flow<List<Attendance>> {
         return combine(
             dataSource.getAttendanceForScout(scoutId),
-            dataSource.observeAllAttendance(),
             dataSource.observePointsSettings()
-        ) { directList, allList, settings ->
-            val records = if (directList.isNotEmpty()) {
-                directList
-            } else {
-                allList.filter { it.scoutId == scoutId }
-            }
+        ) { records, settings ->
             records.map { it.withDynamicPoints(settings) }
         }
     }
 
-    override suspend fun saveAttendance(attendance: Attendance, syncSubscription: Boolean): Result<Unit> {
+    override suspend fun saveAttendance(
+        attendance: Attendance,
+        syncSubscription: Boolean,
+        awaitServer: Boolean,
+        onAsyncFailure: ((Throwable) -> Unit)?
+    ): Result<Unit> {
         val currentUser = authRepository.currentUser
         val existingRecords = if (attendance.activityId.isNotBlank()) {
             try {
@@ -77,22 +76,45 @@ class AttendanceRepositoryImpl(
             return Result.success(Unit)
         }
 
+        val activity = if (attendance.activityId.isNotBlank()) {
+            try {
+                if (awaitServer) {
+                    activityDataSource.getActivityById(attendance.activityId)
+                } else {
+                    activityDataSource.observeActivities().first().find { it.id == attendance.activityId }
+                }
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+
         val currentUnitId = attendance.unitId ?: authRepository.getCurrentLeader()?.unitId
+        val resolvedActivityDate = if (attendance.activityDate > 0L) {
+            attendance.activityDate
+        } else {
+            activity?.startDate?.takeIf { it > 0L } ?: System.currentTimeMillis()
+        }
         val prepared = attendance.copy(
+            activityDate = resolvedActivityDate,
             unitId = currentUnitId,
             recordedBy = currentUser?.uid ?: "",
             recordedByName = currentUser?.displayName ?: "قائد كشفي",
             updatedAt = System.currentTimeMillis()
         )
-        val result = dataSource.saveAttendance(prepared)
+        val result = dataSource.saveAttendance(
+            attendance = prepared,
+            awaitServer = awaitServer,
+            onAsyncFailure = onAsyncFailure
+        )
         if (result.isSuccess) {
-            val activity = if (prepared.activityId.isNotBlank()) {
-                try {
-                    activityDataSource.getActivityById(prepared.activityId)
-                } catch (_: Exception) {
-                    null
-                }
-            } else null
+            if (prepared.activityId.isNotBlank() && activity?.hasAttendanceRecorded != true) {
+                activityDataSource.updateHasAttendanceRecorded(
+                    activityId = prepared.activityId,
+                    hasRecorded = true,
+                    awaitServer = awaitServer,
+                    onAsyncFailure = onAsyncFailure
+                )
+            }
 
             val activityTitle = activity?.title
             val details = if (!activityTitle.isNullOrBlank()) {
@@ -131,7 +153,9 @@ class AttendanceRepositoryImpl(
                         scoutFullName = prepared.scoutFullName,
                         activityTitle = actTitle,
                         activityDate = actDate,
-                        attendanceStatus = subStatus
+                        attendanceStatus = subStatus,
+                        awaitServer = awaitServer,
+                        onAsyncFailure = onAsyncFailure
                     )
                 } catch (e: Exception) {
                     android.util.Log.e("AttendanceRepo", "Error syncing subscription: ${e.message}", e)
@@ -179,8 +203,17 @@ class AttendanceRepositoryImpl(
         val currentUser = authRepository.currentUser
         val currentUnitId = list.firstOrNull()?.unitId ?: authRepository.getCurrentLeader()?.unitId
         val now = System.currentTimeMillis()
+        val activity = if (activityId.isNotBlank()) {
+            try {
+                activityDataSource.getActivityById(activityId)
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+        val fallbackActivityDate = activity?.startDate?.takeIf { it > 0L } ?: now
         val preparedList = list.map {
             it.copy(
+                activityDate = if (it.activityDate > 0L) it.activityDate else fallbackActivityDate,
                 unitId = currentUnitId,
                 recordedBy = currentUser?.uid ?: "",
                 recordedByName = currentUser?.displayName ?: "قائد كشفي",
@@ -190,13 +223,13 @@ class AttendanceRepositoryImpl(
         }
         val result = dataSource.saveAttendanceBatch(preparedList)
         if (result.isSuccess) {
-            val activity = if (activityId.isNotBlank()) {
-                try {
-                    activityDataSource.getActivityById(activityId)
-                } catch (_: Exception) {
-                    null
-                }
-            } else null
+            if (activityId.isNotBlank() && activity?.hasAttendanceRecorded != true) {
+                activityDataSource.updateHasAttendanceRecorded(
+                    activityId = activityId,
+                    hasRecorded = true,
+                    awaitServer = true
+                )
+            }
 
             val activityTitle = activity?.title
             val details = if (!activityTitle.isNullOrBlank()) {
@@ -251,6 +284,14 @@ class AttendanceRepositoryImpl(
         val currentUser = authRepository.currentUser
         val result = dataSource.deleteAttendance(activityId, scoutId)
         if (result.isSuccess) {
+            if (activityId.isNotBlank()) {
+                val hasRemaining = dataSource.hasAnyAttendanceForActivity(activityId)
+                activityDataSource.updateHasAttendanceRecorded(
+                    activityId = activityId,
+                    hasRecorded = hasRemaining,
+                    awaitServer = true
+                )
+            }
             activityLogDataSource.logActivity(
                 userId = currentUser?.uid ?: "",
                 userName = currentUser?.displayName ?: "قائد كشفي",
@@ -290,16 +331,10 @@ class AttendanceRepositoryImpl(
     override fun computeScoutStatistics(scoutId: String): Flow<ScoutStatistics> {
         return combine(
             dataSource.getAttendanceForScout(scoutId),
-            dataSource.observeAllAttendance(),
             activityDataSource.observeActivities(),
             dataSource.observePointsSettings()
-        ) { directList, allList, activitiesList, settings ->
+        ) { records, activitiesList, settings ->
             try {
-                val records = if (directList.isNotEmpty()) {
-                    directList
-                } else {
-                    allList.filter { it.scoutId == scoutId }
-                }
 
                 val trainingActivitiesMap = activitiesList
                     .filter { it.type == ActivityType.TRAINING_MEETING.key || it.activityType == ActivityType.TRAINING_MEETING }
@@ -397,10 +432,6 @@ class AttendanceRepositoryImpl(
         }
     }
 
-    override fun observeRecordedActivityIds(): Flow<Set<String>> {
-        return dataSource.observeAllRecordedActivityIds()
-    }
-
     override fun getAttendanceRowsForActivity(activityId: String): Flow<List<AttendanceRow>> {
         val collator = Collator.getInstance(Locale("ar", "DZ")).apply {
             strength = Collator.PRIMARY
@@ -425,14 +456,14 @@ class AttendanceRepositoryImpl(
         }
     }
 
-    override fun getTrainingMeetingsRegister(): Flow<List<MeetingWithAttendance>> {
+    override fun getTrainingMeetingsRegister(sinceTimestamp: Long): Flow<List<MeetingWithAttendance>> {
         val collator = Collator.getInstance(Locale("ar", "DZ")).apply {
             strength = Collator.PRIMARY
         }
         return combine(
             activityDataSource.observeActivities(),
             scoutDataSource.observeScouts(),
-            dataSource.observeAllAttendance(),
+            dataSource.observeAllAttendance(sinceTimestamp),
             dataSource.observePointsSettings()
         ) { activities, scouts, rawAttendance, settings ->
             val allAttendance = rawAttendance.map { it.withDynamicPoints(settings) }
@@ -441,9 +472,9 @@ class AttendanceRepositoryImpl(
                 if (compName != 0) compName else collator.compare(a.surname, b.surname)
             }
 
-            // تصفية الاجتماعات التدريبية وترتيبها تصاعدياً لترقيمها زمنياً (من 1 إلى N)
+            // تصفية الاجتماعات التدريبية ضمن النافذة الزمنية وترتيبها تصاعدياً لترقيمها زمنياً (من 1 إلى N)
             val trainingMeetings = activities
-                .filter { it.activityType == ActivityType.TRAINING_MEETING }
+                .filter { it.activityType == ActivityType.TRAINING_MEETING && it.startDate >= sinceTimestamp }
                 .sortedWith(compareBy<Activity> { it.startDate }.thenBy { it.createdAt })
 
             val attendanceByActivity = allAttendance.groupBy { it.activityId }
@@ -486,9 +517,9 @@ class AttendanceRepositoryImpl(
         }
     }
 
-    override fun observeAllAttendance(): Flow<List<Attendance>> {
+    override fun observeAllAttendance(sinceTimestamp: Long): Flow<List<Attendance>> {
         return combine(
-            dataSource.observeAllAttendance(),
+            dataSource.observeAllAttendance(sinceTimestamp),
             dataSource.observePointsSettings()
         ) { allList, settings ->
             allList.map { it.withDynamicPoints(settings) }

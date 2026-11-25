@@ -114,11 +114,25 @@ class FinanceFirestoreDataSource(
         }
     }
 
-    suspend fun updateTransaction(tx: FinanceTransaction): Result<Unit> {
+    suspend fun updateTransaction(
+        tx: FinanceTransaction,
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
+    ): Result<Unit> {
         if (tx.id.isBlank()) return Result.failure(IllegalArgumentException("معرف المعاملة مفقود"))
         return try {
-            transactionsCollection.document(tx.id).set(mapTransactionToMap(tx)).await()
+            val task = transactionsCollection.document(tx.id).set(mapTransactionToMap(tx))
+            if (awaitServer) {
+                task.await()
+            } else if (onAsyncFailure != null) {
+                task.addOnFailureListener { e ->
+                    Log.e("FinanceFirestoreDS", "Async failure updating transaction ${tx.id}: ${e.message}", e)
+                    onAsyncFailure(e)
+                }
+            }
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -365,7 +379,7 @@ class FinanceFirestoreDataSource(
         }
     }
 
-    private fun mapTransactionToMap(tx: FinanceTransaction): Map<String, Any?> {
+    internal fun mapTransactionToMap(tx: FinanceTransaction): Map<String, Any?> {
         val map = mutableMapOf<String, Any?>(
             "id" to tx.id,
             "type" to tx.type.key,

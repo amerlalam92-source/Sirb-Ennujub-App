@@ -204,6 +204,20 @@ class ProgressFirestoreDataSource(
         awaitClose { listener.remove() }
     }
 
+    fun observeAllScoutProgress(): Flow<List<ScoutProgressEntry>> = callbackFlow {
+        val listener = firestore.collection(COLLECTION_SCOUT_PROGRESS)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e(TAG, "Error observing all scout progress: ${error.message}", error)
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val list = snapshot?.documents?.mapNotNull { it.toObject(ScoutProgressEntry::class.java) }.orEmpty()
+                trySend(list)
+            }
+        awaitClose { listener.remove() }
+    }
+
     suspend fun setRequirementProgress(
         scoutId: String,
         requirementId: String,

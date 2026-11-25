@@ -6,7 +6,6 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,8 +20,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
-import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
 import androidx.navigation.navArgument
 import com.example.di.AppContainer
@@ -166,15 +165,8 @@ fun ScoutNavGraph(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController()
 ) {
-    var currentFirebaseUser by remember { mutableStateOf(appContainer.authRepository.currentUser) }
-    DisposableEffect(Unit) {
-        val auth = FirebaseAuth.getInstance()
-        val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
-            currentFirebaseUser = firebaseAuth.currentUser
-        }
-        auth.addAuthStateListener(listener)
-        onDispose { auth.removeAuthStateListener(listener) }
-    }
+    val currentFirebaseUser by appContainer.authRepository.observeAuthState()
+        .collectAsStateWithLifecycle(initialValue = appContainer.authRepository.currentUser)
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -341,7 +333,8 @@ fun ScoutNavGraph(
                     addScoutUseCase = appContainer.addScoutUseCase,
                     updateScoutUseCase = appContainer.updateScoutUseCase,
                     archiveScoutUseCase = appContainer.archiveScoutUseCase,
-                    deleteScoutUseCase = appContainer.deleteScoutUseCase
+                    deleteScoutUseCase = appContainer.deleteScoutUseCase,
+                    progressRepository = appContainer.progressRepository
                 )
             )
 
@@ -382,7 +375,8 @@ fun ScoutNavGraph(
                     revokeBadgeUseCase = appContainer.revokeBadgeUseCase,
                     authRepository = appContainer.authRepository,
                     observeHobbyBadgeProgressForScoutUseCase = appContainer.observeHobbyBadgeProgressForScoutUseCase,
-                    financeRepository = appContainer.financeRepository
+                    financeRepository = appContainer.financeRepository,
+                    progressRepository = appContainer.progressRepository
                 )
             )
 

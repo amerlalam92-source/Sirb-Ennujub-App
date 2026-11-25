@@ -12,15 +12,27 @@ interface FinanceRepository {
     fun observeTransactionsBetween(from: Long, to: Long): Flow<List<FinanceTransaction>>
     fun observeTransactionsByType(type: FinanceTransactionType): Flow<List<FinanceTransaction>>
     suspend fun addTransaction(tx: FinanceTransaction): Result<String>
-    suspend fun updateTransaction(tx: FinanceTransaction): Result<Unit>
-    suspend fun upsertTransaction(transaction: FinanceTransaction): Result<Unit>
+    suspend fun updateTransaction(
+        tx: FinanceTransaction,
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
+    ): Result<Unit>
+    suspend fun upsertTransaction(
+        transaction: FinanceTransaction,
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
+    ): Result<Unit>
     suspend fun deleteTransaction(id: String): Result<Unit>
 
     // === Subscriptions (اشتراكات الأشبال) ===
     fun observeSubscriptionsForActivity(activityId: String): Flow<List<FinanceSubscription>>
     fun observeSubscriptionsForScout(scoutId: String): Flow<List<FinanceSubscription>>
     fun observeAllSubscriptions(): Flow<List<FinanceSubscription>>
-    suspend fun upsertSubscription(sub: FinanceSubscription): Result<Unit>
+    suspend fun upsertSubscription(
+        sub: FinanceSubscription,
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
+    ): Result<Unit>
     suspend fun deleteSubscription(activityId: String, scoutId: String): Result<Unit>
     suspend fun getRequiredAmountFor(activityId: String, status: SubscriptionStatus): Int
     suspend fun ensureSubscriptionForAttendance(
@@ -29,10 +41,23 @@ interface FinanceRepository {
         scoutFullName: String,
         activityTitle: String,
         activityDate: Long,
-        attendanceStatus: SubscriptionStatus
+        attendanceStatus: SubscriptionStatus,
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
     ): Result<Unit>
-    suspend fun payScoutDebts(scoutId: String, amountToPay: Int): Result<Unit>
-    suspend fun rollbackScoutDebts(scoutId: String, amountToRollback: Int, excludeActivityId: String? = null): Result<Unit>
+    suspend fun payScoutDebts(
+        scoutId: String,
+        amountToPay: Int,
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
+    ): Result<Unit>
+    suspend fun rollbackScoutDebts(
+        scoutId: String,
+        amountToRollback: Int,
+        excludeActivityId: String? = null,
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
+    ): Result<Unit>
     suspend fun updateSubscriptionDebtManually(subscriptionId: String, newDebtAmount: Int): Result<Unit>
 
     // === Settings (إعدادات المالية) ===

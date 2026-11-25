@@ -15,6 +15,7 @@ import com.example.domain.activity.ActivityType
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -240,6 +241,38 @@ class ActivityFirestoreDataSource(
     }
 
     /**
+     * تحديث علم وجود سجلات حضور مسجلة على مستند النشاط لتجنب المسح الكلي
+     */
+    suspend fun updateHasAttendanceRecorded(
+        activityId: String,
+        hasRecorded: Boolean,
+        awaitServer: Boolean = false,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
+    ): Result<Unit> {
+        if (activityId.isBlank()) return Result.success(Unit)
+        return try {
+            val updates = mapOf(
+                "hasAttendanceRecorded" to hasRecorded,
+                "updatedAt" to System.currentTimeMillis()
+            )
+            val task = collection.document(activityId).update(updates)
+            if (awaitServer) {
+                task.await()
+            } else if (onAsyncFailure != null) {
+                task.addOnFailureListener { e ->
+                    Log.w("ActivityFirestoreDS", "Async failure updating hasAttendanceRecorded for $activityId: ${e.message}", e)
+                    onAsyncFailure(e)
+                }
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
      * التحقق الصارم من مدخلات النشاط
      */
     private fun validateActivity(activity: Activity): Result<Unit> {
@@ -301,6 +334,7 @@ class ActivityFirestoreDataSource(
                 contributionDefaultAmount = doc.safeNullableInt("contributionDefaultAmount"),
                 collectSubscriptions = doc.safeBoolean("collectSubscriptions", true),
                 customSubscriptionAmount = doc.safeNullableInt("customSubscriptionAmount"),
+                hasAttendanceRecorded = doc.safeBoolean("hasAttendanceRecorded", false),
                 unitId = doc.safeNullableString("unitId"),
                 createdAt = doc.safeLong("createdAt", doc.safeLong("startDate", 0L)),
                 updatedAt = doc.safeLong("updatedAt", now),
@@ -342,6 +376,7 @@ class ActivityFirestoreDataSource(
             "contributionDefaultAmount" to activity.contributionDefaultAmount,
             "collectSubscriptions" to activity.collectSubscriptions,
             "customSubscriptionAmount" to activity.customSubscriptionAmount,
+            "hasAttendanceRecorded" to activity.hasAttendanceRecorded,
             "unitId" to activity.unitId,
             "createdAt" to activity.createdAt,
             "updatedAt" to activity.updatedAt,

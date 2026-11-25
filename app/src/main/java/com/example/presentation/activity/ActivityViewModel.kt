@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -75,10 +76,12 @@ class ActivityViewModel(
         }
     }
 
-    // معرفات الأنشطة التي تم تسجيل حضور لها مسبقاً (لتجنب N استعلامات)
-    val recordedAttendanceActivityIds: StateFlow<Set<String>> = attendanceRepository?.observeRecordedActivityIds()
-        ?.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
-        ?: MutableStateFlow(emptySet())
+    // معرفات الأنشطة التي تم تسجيل حضور لها مسبقاً من حقل hasAttendanceRecorded في مستند النشاط
+    val recordedAttendanceActivityIds: StateFlow<Set<String>> = observeActivitiesUseCase()
+        .map { activities ->
+            activities.filter { it.hasAttendanceRecorded }.map { it.id }.toSet()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     fun observeAttendanceForActivity(activityId: String): Flow<List<Attendance>> {
         return getAttendanceForActivityUseCase?.invoke(activityId) ?: flowOf(emptyList())

@@ -20,6 +20,7 @@ interface ProgressRepository {
 
     // تقدم الشبل (Scout Progress)
     fun observeScoutProgress(scoutId: String): Flow<List<ScoutProgressEntry>>
+    fun observeAllScoutProgress(): Flow<List<ScoutProgressEntry>>
     suspend fun setRequirementCompleted(
         scoutId: String,
         requirementId: String,

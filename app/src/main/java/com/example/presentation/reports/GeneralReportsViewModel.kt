@@ -219,11 +219,12 @@ class GeneralReportsViewModel(
             strength = Collator.PRIMARY
         }
 
+        val sinceTimestamp = AttendanceRepository.defaultScoutingYearStart()
         viewModelScope.launch {
             combine(
                 scoutRepository.observeScouts(),
                 activityRepository.observeActivities(),
-                attendanceRepository.observeAllAttendance()
+                attendanceRepository.observeAllAttendance(sinceTimestamp)
             ) { scouts, activities, attendanceRecords ->
                 val activeScouts = scouts.filter { it.isActive }.sortedWith { a, b ->
                     val comp = collator.compare(a.name, b.name)
@@ -232,7 +233,8 @@ class GeneralReportsViewModel(
 
                 val currentTime = System.currentTimeMillis()
                 val pastList = activities.filter { activity ->
-                    activity.startDate <= currentTime || activity.isPast() || activity.activityStatus == ActivityStatus.DONE
+                    activity.startDate >= sinceTimestamp &&
+                        (activity.startDate <= currentTime || activity.isPast() || activity.activityStatus == ActivityStatus.DONE)
                 }
 
                 val pastAscending = pastList.sortedWith(

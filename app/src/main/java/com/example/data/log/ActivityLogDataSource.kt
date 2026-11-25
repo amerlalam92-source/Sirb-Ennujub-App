@@ -61,8 +61,14 @@ class ActivityLogDataSource(
                 if (meta != null) {
                     logEntry["meta"] = meta
                 }
-                firestore.collection(COLLECTION_NAME).add(logEntry).await()
-                Log.d(TAG, "Activity recorded: $action on $targetType ($targetName)")
+                firestore.collection(COLLECTION_NAME)
+                    .add(logEntry)
+                    .addOnSuccessListener {
+                        Log.d(TAG, "Activity recorded: $action on $targetType ($targetName)")
+                    }
+                    .addOnFailureListener { e ->
+                        Log.w(TAG, "Failed to record activity log (non-fatal): ${e.message}")
+                    }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to record activity log (non-fatal): ${e.message}")
             }

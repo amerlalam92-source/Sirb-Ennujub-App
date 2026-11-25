@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 interface AuthRepository {
     val currentUser: FirebaseUser?
     val isEmailVerified: Boolean
+    fun observeAuthState(): Flow<FirebaseUser?>
     suspend fun login(email: String, password: String): Result<FirebaseUser>
     suspend fun signInWithGoogle(idToken: String): Result<FirebaseUser>
     suspend fun signUp(fullName: String, email: String, password: String): Result<Unit>

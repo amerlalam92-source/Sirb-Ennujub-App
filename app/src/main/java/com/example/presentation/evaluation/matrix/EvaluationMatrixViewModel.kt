@@ -37,7 +37,7 @@ class EvaluationMatrixViewModel(
     private val attendanceRepository: AttendanceRepository,
     private val evaluationRepository: EvaluationRepository,
     private val settingsRepository: SettingsRepository,
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+    private val firestore: FirebaseFirestore
 ) : ViewModel() {
 
     private val _searchQuery = MutableStateFlow("")
@@ -393,7 +393,7 @@ class EvaluationMatrixViewModel(
         private val attendanceRepository: AttendanceRepository,
         private val evaluationRepository: EvaluationRepository,
         private val settingsRepository: SettingsRepository,
-        private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
+        private val firestore: FirebaseFirestore
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {

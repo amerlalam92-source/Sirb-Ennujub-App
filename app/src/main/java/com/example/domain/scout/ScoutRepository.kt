@@ -19,7 +19,17 @@ interface ScoutRepository {
         guardianName: String,
         excludeScoutId: String? = null
     ): Scout?
-    suspend fun addCreditToScout(scoutId: String, amount: Int): Result<Unit>
-    suspend fun deductCreditFromScout(scoutId: String, amount: Int): Result<Unit>
+    suspend fun addCreditToScout(
+        scoutId: String,
+        amount: Int,
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
+    ): Result<Unit>
+    suspend fun deductCreditFromScout(
+        scoutId: String,
+        amount: Int,
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
+    ): Result<Unit>
     suspend fun updateCreditManually(scoutId: String, newBalance: Int): Result<Unit>
 }

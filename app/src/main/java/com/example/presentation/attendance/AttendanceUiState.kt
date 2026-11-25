@@ -42,7 +42,9 @@ data class AttendanceEntryUiState(
     val quickInputAmount: String = "",
     val selectedStatus: AttendanceStatus? = null,
     val canPay: Boolean = false,
-    val snackbarMessage: String? = null
+    val snackbarMessage: String? = null,
+    val failedSaveCount: Int = 0,
+    val failedSaveError: String? = null
 ) {
     val currentScoutDebt: Int
         get() = previousDebtRequired

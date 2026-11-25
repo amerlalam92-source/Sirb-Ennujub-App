@@ -12,7 +12,7 @@ import kotlinx.coroutines.tasks.await
  * مصدر بيانات المصادقة عبر Firebase Auth (Data Layer)
  */
 class FirebaseAuthDataSource(
-    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
+    private val auth: FirebaseAuth
 ) {
     val currentUser: FirebaseUser?
         get() = auth.currentUser

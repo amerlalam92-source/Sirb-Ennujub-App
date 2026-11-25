@@ -3,6 +3,7 @@ package com.example.presentation.attendance
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.domain.attendance.AttendanceRepository
 import com.example.domain.attendance.MeetingWithAttendance
 import com.example.domain.attendance.usecases.GetTrainingMeetingsRegisterUseCase
 import java.text.SimpleDateFormat
@@ -24,7 +25,7 @@ class TrainingMeetingsRegisterViewModel(
     private val shortDateFormatter = SimpleDateFormat("d/M", com.example.presentation.common.AppLocale.AR_DZ)
 
     val uiState: StateFlow<TrainingMeetingsRegisterUiState> =
-        getTrainingMeetingsRegisterUseCase()
+        getTrainingMeetingsRegisterUseCase(AttendanceRepository.defaultScoutingYearStart())
             .map { list ->
                 if (list.isEmpty()) {
                     TrainingMeetingsRegisterUiState.Success(

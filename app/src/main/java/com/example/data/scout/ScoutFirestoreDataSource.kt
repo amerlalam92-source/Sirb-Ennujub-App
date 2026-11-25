@@ -13,6 +13,7 @@ import com.example.domain.scout.Scout
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import java.util.Calendar
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -197,7 +198,13 @@ class ScoutFirestoreDataSource(
     /**
      * تحديث الرصيد المقدم للشبل (Credit Balance)
      */
-    suspend fun updateCreditBalance(id: String, newBalance: Int, updatedBy: String = ""): Result<Unit> {
+    suspend fun updateCreditBalance(
+        id: String,
+        newBalance: Int,
+        updatedBy: String = "",
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null
+    ): Result<Unit> {
         if (id.isBlank()) return Result.failure(IllegalArgumentException("معرف الشبل مفقود"))
         return try {
             val updates = mutableMapOf<String, Any>(
@@ -207,8 +214,18 @@ class ScoutFirestoreDataSource(
             if (updatedBy.isNotBlank()) {
                 updates["updatedBy"] = updatedBy
             }
-            collection.document(id).update(updates).await()
+            val task = collection.document(id).update(updates)
+            if (awaitServer) {
+                task.await()
+            } else if (onAsyncFailure != null) {
+                task.addOnFailureListener { e ->
+                    Log.e("ScoutFirestoreDS", "Async failure updating credit balance for $id: ${e.message}", e)
+                    onAsyncFailure(e)
+                }
+            }
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
