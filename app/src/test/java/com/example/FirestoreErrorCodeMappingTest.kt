@@ -1,18 +1,12 @@
 package com.example
 
-import android.app.Application
 import com.example.data.common.DataLoadErrorKind
 import com.example.data.common.mapFirestoreErrorCodeToKind
 import com.example.data.common.mapThrowableToDataLoadError
 import com.google.firebase.firestore.FirebaseFirestoreException
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = Application::class)
 class FirestoreErrorCodeMappingTest {
 
     @Test

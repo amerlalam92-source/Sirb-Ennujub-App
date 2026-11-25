@@ -1,6 +1,5 @@
 package com.example
 
-import android.app.Application
 import com.example.data.activity.ActivityFirestoreDataSource
 import com.example.data.activity.ActivityRepositoryImpl
 import com.example.data.attendance.AttendanceFirestoreDataSource
@@ -23,14 +22,12 @@ import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.WriteBatch
 import java.io.File
 import kotlinx.coroutines.runBlocking
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
-import org.junit.runner.RunWith
 import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.anyMap
 import org.mockito.ArgumentMatchers.anyString
@@ -40,11 +37,7 @@ import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
 
-@RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], application = Application::class)
 class BatchKFirestoreAndIndexesTest {
 
     private fun resolveIndexesFile(): File {
@@ -72,26 +65,156 @@ class BatchKFirestoreAndIndexesTest {
         return doc
     }
 
+    private class SimpleJsonParser(private val text: String) {
+        private var pos = 0
+
+        fun parse(): Any? {
+            skipWhitespace()
+            val value = parseValue()
+            skipWhitespace()
+            require(pos == text.length) { "Unexpected trailing JSON character at index $pos" }
+            return value
+        }
+
+        private fun parseValue(): Any? {
+            skipWhitespace()
+            require(pos < text.length) { "Unexpected end of JSON input" }
+            return when (val ch = text[pos]) {
+                '{' -> parseObject()
+                '[' -> parseArray()
+                '"' -> parseString()
+                't' -> parseLiteral("true", true)
+                'f' -> parseLiteral("false", false)
+                'n' -> parseLiteral("null", null)
+                '-', in '0'..'9' -> parseNumber()
+                else -> error("Unexpected JSON token '$ch' at index $pos")
+            }
+        }
+
+        private fun parseObject(): Map<String, Any?> {
+            pos++ // '{'
+            val map = linkedMapOf<String, Any?>()
+            skipWhitespace()
+            if (pos < text.length && text[pos] == '}') {
+                pos++
+                return map
+            }
+            while (true) {
+                skipWhitespace()
+                val key = parseString()
+                skipWhitespace()
+                require(pos < text.length && text[pos] == ':') { "Expected ':' at index $pos" }
+                pos++
+                map[key] = parseValue()
+                skipWhitespace()
+                require(pos < text.length) { "Unterminated JSON object" }
+                when (text[pos]) {
+                    ',' -> pos++
+                    '}' -> {
+                        pos++
+                        return map
+                    }
+                    else -> error("Expected ',' or '}' at index $pos")
+                }
+            }
+        }
+
+        private fun parseArray(): List<Any?> {
+            pos++ // '['
+            val list = mutableListOf<Any?>()
+            skipWhitespace()
+            if (pos < text.length && text[pos] == ']') {
+                pos++
+                return list
+            }
+            while (true) {
+                list.add(parseValue())
+                skipWhitespace()
+                require(pos < text.length) { "Unterminated JSON array" }
+                when (text[pos]) {
+                    ',' -> pos++
+                    ']' -> {
+                        pos++
+                        return list
+                    }
+                    else -> error("Expected ',' or ']' at index $pos")
+                }
+            }
+        }
+
+        private fun parseString(): String {
+            require(pos < text.length && text[pos] == '"') { "Expected '\"' at index $pos" }
+            pos++
+            val sb = StringBuilder()
+            while (pos < text.length) {
+                val ch = text[pos++]
+                when (ch) {
+                    '"' -> return sb.toString()
+                    '\\' -> {
+                        require(pos < text.length) { "Unterminated escape in JSON string" }
+                        when (val esc = text[pos++]) {
+                            '"', '\\', '/' -> sb.append(esc)
+                            'b' -> sb.append('\b')
+                            'f' -> sb.append('\u000C')
+                            'n' -> sb.append('\n')
+                            'r' -> sb.append('\r')
+                            't' -> sb.append('\t')
+                            'u' -> {
+                                require(pos + 4 <= text.length) { "Invalid unicode escape" }
+                                sb.append(text.substring(pos, pos + 4).toInt(16).toChar())
+                                pos += 4
+                            }
+                            else -> error("Invalid escape '\\$esc'")
+                        }
+                    }
+                    else -> sb.append(ch)
+                }
+            }
+            error("Unterminated JSON string")
+        }
+
+        private fun parseLiteral(literal: String, value: Any?): Any? {
+            require(text.startsWith(literal, pos)) { "Invalid JSON literal at index $pos" }
+            pos += literal.length
+            return value
+        }
+
+        private fun parseNumber(): Number {
+            val start = pos
+            while (pos < text.length && text[pos] in "-0123456789.eE+") {
+                pos++
+            }
+            val raw = text.substring(start, pos)
+            return if ('.' in raw || 'e' in raw || 'E' in raw) raw.toDouble() else raw.toLong()
+        }
+
+        private fun skipWhitespace() {
+            while (pos < text.length && text[pos].isWhitespace()) {
+                pos++
+            }
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
     @Test
     fun `firestore indexes json is valid and contains activity_log composite and full attendance overrides`() {
         val raw = resolveIndexesFile().readText()
-        val root = JSONObject(raw)
+        val root = SimpleJsonParser(raw).parse() as Map<String, Any?>
 
-        val indexes = root.getJSONArray("indexes")
+        val indexes = root["indexes"] as List<Map<String, Any?>>
         var foundActivityLogIndex = false
-        for (i in 0 until indexes.length()) {
-            val idx = indexes.getJSONObject(i)
-            if (idx.getString("collectionGroup") == "activity_log" &&
-                idx.getString("queryScope") == "COLLECTION"
+        for (idx in indexes) {
+            if (idx["collectionGroup"] == "activity_log" &&
+                idx["queryScope"] == "COLLECTION"
             ) {
-                val fields = idx.getJSONArray("fields")
-                if (fields.length() == 2) {
-                    val f0 = fields.getJSONObject(0)
-                    val f1 = fields.getJSONObject(1)
-                    if (f0.getString("fieldPath") == "unitId" &&
-                        f0.getString("order") == "ASCENDING" &&
-                        f1.getString("fieldPath") == "timestamp" &&
-                        f1.getString("order") == "DESCENDING"
+                val fields = idx["fields"] as List<Map<String, Any?>>
+                if (fields.size == 2) {
+                    val f0 = fields[0]
+                    val f1 = fields[1]
+                    if (f0["fieldPath"] == "unitId" &&
+                        f0["order"] == "ASCENDING" &&
+                        f1["fieldPath"] == "timestamp" &&
+                        f1["order"] == "DESCENDING"
                     ) {
                         foundActivityLogIndex = true
                     }
@@ -100,22 +223,20 @@ class BatchKFirestoreAndIndexesTest {
         }
         assertTrue("Missing activity_log (unitId ASC, timestamp DESC) composite index", foundActivityLogIndex)
 
-        val overrides = root.getJSONArray("fieldOverrides")
+        val overrides = root["fieldOverrides"] as List<Map<String, Any?>>
         val requiredFields = setOf("activityDate", "scoutId")
         val seenFields = mutableSetOf<String>()
 
-        for (i in 0 until overrides.length()) {
-            val override = overrides.getJSONObject(i)
-            if (override.getString("collectionGroup") == "attendance") {
-                val fieldPath = override.getString("fieldPath")
-                if (fieldPath in requiredFields) {
+        for (override in overrides) {
+            if (override["collectionGroup"] == "attendance") {
+                val fieldPath = override["fieldPath"] as? String
+                if (fieldPath != null && fieldPath in requiredFields) {
                     seenFields.add(fieldPath)
-                    val idxArray = override.getJSONArray("indexes")
-                    val pairs = mutableSetOf<Pair<String, String>>()
-                    for (j in 0 until idxArray.length()) {
-                        val entry = idxArray.getJSONObject(j)
-                        assertFalse("arrayConfig must not be present", entry.has("arrayConfig"))
-                        pairs.add(entry.getString("order") to entry.getString("queryScope"))
+                    val idxArray = override["indexes"] as List<Map<String, Any?>>
+                    val pairs = mutableSetOf<Pair<String?, String?>>()
+                    for (entry in idxArray) {
+                        assertFalse("arrayConfig must not be present", entry.containsKey("arrayConfig"))
+                        pairs.add((entry["order"] as? String) to (entry["queryScope"] as? String))
                     }
                     assertTrue(pairs.contains("ASCENDING" to "COLLECTION"))
                     assertTrue(pairs.contains("DESCENDING" to "COLLECTION"))
