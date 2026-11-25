@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -87,6 +88,7 @@ fun MainLeaderSettingsScreen(
     onNavigateToLeaderManagement: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val currentTerms by viewModel.currentTerms.collectAsStateWithLifecycle()
     val terms = LocalAppTerms.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -491,6 +493,60 @@ fun MainLeaderSettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(stringResource(id = R.string.action_save_terms))
+                    }
+                }
+            }
+
+            // قسم صيانة بيانات الحضور للأنشطة القديمة
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("attendance_flags_maintenance_card"),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "صيانة بيانات الحضور",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "فحص كافة الأنشطة السابقة وتحديث شارة تسجيل الحضور بناءً على السجلات الفعلية",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedButton(
+                        onClick = { viewModel.recalculateAllAttendanceFlags() },
+                        enabled = !uiState.isRecalculatingAttendance,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("recalculate_attendance_flags_button"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (uiState.isRecalculatingAttendance) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Sync,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Text("إصلاح حالة الحضور للأنشطة")
                     }
                 }
             }

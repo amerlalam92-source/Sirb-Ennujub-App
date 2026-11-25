@@ -284,6 +284,7 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
     override val activityRepository: ActivityRepository by lazy {
         ActivityRepositoryImpl(
             dataSource = activityFirestoreDataSource,
+            attendanceFirestoreDataSource = attendanceFirestoreDataSource,
             activityLogDataSource = activityLogDataSource,
             authRepository = authRepository,
             financeRepository = financeRepository,
@@ -773,7 +774,8 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
             attendanceRepository = attendanceRepository,
             evaluationRepository = evaluationRepository,
             settingsRepository = settingsRepository,
-            firestore = firestore
+            progressRepository = progressRepository,
+            hobbyBadgeRepository = hobbyBadgeRepository
         )
     }
 

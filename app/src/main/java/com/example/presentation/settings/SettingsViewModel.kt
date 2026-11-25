@@ -3,6 +3,7 @@ package com.example.presentation.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.domain.activity.ActivityRepository
 import com.example.domain.attendance.AttendancePointsSettings
 import com.example.domain.attendance.usecases.ObservePointsSettingsUseCase
 import com.example.domain.attendance.usecases.UpdatePointsSettingsUseCase
@@ -42,7 +43,8 @@ class SettingsViewModel(
     private val deleteCriteriaUseCase: DeleteCriteriaUseCase,
     private val authRepository: AuthRepository,
     private val brandingRepository: BrandingRepository,
-    private val termsRepository: TermsRepository
+    private val termsRepository: TermsRepository,
+    private val activityRepository: ActivityRepository
 ) : ViewModel() {
 
     private val _isMainLeader = MutableStateFlow(false)
@@ -530,6 +532,36 @@ class SettingsViewModel(
         }
     }
 
+    fun recalculateAllAttendanceFlags() {
+        if (!_isMainLeader.value) {
+            viewModelScope.launch {
+                _events.emit(SettingsEvent.ShowMessage("هذه العملية متاحة للقائد الرئيسي فقط"))
+            }
+            return
+        }
+        if (_uiState.value.isRecalculatingAttendance) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRecalculatingAttendance = true) }
+            val result = activityRepository.recalculateAllAttendanceFlags()
+            _uiState.update { it.copy(isRecalculatingAttendance = false) }
+            result.onSuccess { updatedCount ->
+                val message = if (updatedCount > 0) {
+                    "تم تحديث حالة الحضور بنجاح ($updatedCount نشاط)"
+                } else {
+                    "جميع حالات الحضور للأنشطة محدثة بالفعل"
+                }
+                _events.emit(SettingsEvent.ShowMessage(message))
+            }.onFailure { e ->
+                _events.emit(
+                    SettingsEvent.ShowMessage(
+                        "فشل إصلاح حالة الحضور: ${e.message ?: "خطأ غير معروف"}"
+                    )
+                )
+            }
+        }
+    }
+
     class Factory(
         private val observePointsSettingsUseCase: ObservePointsSettingsUseCase,
         private val updatePointsSettingsUseCase: UpdatePointsSettingsUseCase,
@@ -540,7 +572,8 @@ class SettingsViewModel(
         private val deleteCriteriaUseCase: DeleteCriteriaUseCase,
         private val authRepository: AuthRepository,
         private val brandingRepository: BrandingRepository,
-        private val termsRepository: TermsRepository
+        private val termsRepository: TermsRepository,
+        private val activityRepository: ActivityRepository
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -554,7 +587,8 @@ class SettingsViewModel(
                 deleteCriteriaUseCase,
                 authRepository,
                 brandingRepository,
-                termsRepository
+                termsRepository,
+                activityRepository
             ) as T
         }
     }

@@ -89,11 +89,9 @@ class AttendanceRepositoryImpl(
         } else null
 
         val currentUnitId = attendance.unitId ?: authRepository.getCurrentLeader()?.unitId
-        val resolvedActivityDate = if (attendance.activityDate > 0L) {
-            attendance.activityDate
-        } else {
-            activity?.startDate?.takeIf { it > 0L } ?: System.currentTimeMillis()
-        }
+        val resolvedActivityDate = activity?.startDate?.takeIf { it > 0L }
+            ?: attendance.activityDate.takeIf { it > 0L }
+            ?: System.currentTimeMillis()
         val prepared = attendance.copy(
             activityDate = resolvedActivityDate,
             unitId = currentUnitId,
@@ -210,10 +208,10 @@ class AttendanceRepositoryImpl(
                 null
             }
         } else null
-        val fallbackActivityDate = activity?.startDate?.takeIf { it > 0L } ?: now
+        val syncedActivityDate = activity?.startDate?.takeIf { it > 0L }
         val preparedList = list.map {
             it.copy(
-                activityDate = if (it.activityDate > 0L) it.activityDate else fallbackActivityDate,
+                activityDate = syncedActivityDate ?: it.activityDate.takeIf { date -> date > 0L } ?: now,
                 unitId = currentUnitId,
                 recordedBy = currentUser?.uid ?: "",
                 recordedByName = currentUser?.displayName ?: "قائد كشفي",

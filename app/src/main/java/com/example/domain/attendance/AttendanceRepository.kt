@@ -1,5 +1,6 @@
 package com.example.domain.attendance
 
+import java.util.Calendar
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -25,9 +26,20 @@ interface AttendanceRepository {
     fun observeAllAttendance(sinceTimestamp: Long = defaultScoutingYearStart()): Flow<List<Attendance>>
 
     companion object {
-        const val DEFAULT_LOOKBACK_MILLIS = 365L * 24L * 60L * 60L * 1000L
-
-        fun defaultScoutingYearStart(): Long = System.currentTimeMillis() - DEFAULT_LOOKBACK_MILLIS
+        fun defaultScoutingYearStart(): Long {
+            val calendar = Calendar.getInstance()
+            val currentMonth = calendar.get(Calendar.MONTH)
+            val currentYear = calendar.get(Calendar.YEAR)
+            val seasonStartYear = if (currentMonth >= Calendar.SEPTEMBER) currentYear else currentYear - 1
+            calendar.set(Calendar.YEAR, seasonStartYear)
+            calendar.set(Calendar.MONTH, Calendar.SEPTEMBER)
+            calendar.set(Calendar.DAY_OF_MONTH, 1)
+            calendar.set(Calendar.HOUR_OF_DAY, 0)
+            calendar.set(Calendar.MINUTE, 0)
+            calendar.set(Calendar.SECOND, 0)
+            calendar.set(Calendar.MILLISECOND, 0)
+            return calendar.timeInMillis
+        }
     }
 }
 

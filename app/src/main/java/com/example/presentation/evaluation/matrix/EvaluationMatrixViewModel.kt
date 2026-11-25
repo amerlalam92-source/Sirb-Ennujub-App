@@ -12,16 +12,16 @@ import com.example.domain.evaluation.CriteriaType
 import com.example.domain.evaluation.EvaluationCriteria
 import com.example.domain.evaluation.EvaluationRepository
 import com.example.domain.evaluation.ScoutEvaluation
+import com.example.domain.hobby.HobbyBadgeRepository
+import com.example.domain.hobby.ScoutHobbyBadge
+import com.example.domain.progress.ProgressRepository
+import com.example.domain.progress.ScoutBadge
 import com.example.domain.scout.Scout
 import com.example.domain.scout.ScoutRepository
 import com.example.domain.settings.SettingsRepository
-import com.google.firebase.firestore.FirebaseFirestore
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import java.text.Collator
@@ -37,59 +37,24 @@ class EvaluationMatrixViewModel(
     private val attendanceRepository: AttendanceRepository,
     private val evaluationRepository: EvaluationRepository,
     private val settingsRepository: SettingsRepository,
-    private val firestore: FirebaseFirestore
+    private val progressRepository: ProgressRepository,
+    private val hobbyBadgeRepository: HobbyBadgeRepository
 ) : ViewModel() {
 
     private val _searchQuery = MutableStateFlow("")
 
     private data class ProgressCalculationData(
-        val scoutBadges: List<Map<String, Any?>>,
+        val scoutBadges: List<ScoutBadge>,
         val requiredHobbyCount: Int,
-        val scoutHobbyBadges: List<Map<String, Any?>>
+        val scoutHobbyBadges: List<ScoutHobbyBadge>
     )
 
-    private fun observeScoutBadges(): Flow<List<Map<String, Any?>>> = callbackFlow {
-        val listener = firestore.collection("scout_badges").addSnapshotListener { snapshot, error ->
-            if (error != null) {
-                close(error)
-                return@addSnapshotListener
-            }
-            val list = snapshot?.documents?.mapNotNull { it.data }.orEmpty()
-            trySend(list)
-        }
-        awaitClose { listener.remove() }
-    }
-
-    private fun observeProgressRequirements(): Flow<List<Map<String, Any?>>> = callbackFlow {
-        val listener = firestore.collection("progress_requirements").addSnapshotListener { snapshot, error ->
-            if (error != null) {
-                close(error)
-                return@addSnapshotListener
-            }
-            val list = snapshot?.documents?.mapNotNull { it.data }.orEmpty()
-            trySend(list)
-        }
-        awaitClose { listener.remove() }
-    }
-
-    private fun observeScoutHobbyBadges(): Flow<List<Map<String, Any?>>> = callbackFlow {
-        val listener = firestore.collection("scout_hobby_badges").addSnapshotListener { snapshot, error ->
-            if (error != null) {
-                close(error)
-                return@addSnapshotListener
-            }
-            val list = snapshot?.documents?.mapNotNull { it.data }.orEmpty()
-            trySend(list)
-        }
-        awaitClose { listener.remove() }
-    }
-
     private val progressBonusFlow = combine(
-        observeScoutBadges(),
-        observeProgressRequirements(),
-        observeScoutHobbyBadges()
+        progressRepository.observeAllScoutBadges(),
+        progressRepository.observeAllRequirements(),
+        hobbyBadgeRepository.observeAllHobbyBadgesGranted()
     ) { badges, reqs, hobbies ->
-        val maxRequiredHobby = reqs.mapNotNull { (it["linkedHobbyBadgesCount"] as? Number)?.toInt() }.maxOrNull() ?: 0
+        val maxRequiredHobby = reqs.mapNotNull { it.linkedHobbyBadgesCount }.maxOrNull() ?: 0
         ProgressCalculationData(
             scoutBadges = badges,
             requiredHobbyCount = maxRequiredHobby,
@@ -323,13 +288,13 @@ class EvaluationMatrixViewModel(
 
         // e) نقاط شارات الكفاية وشارات الهواية الإضافية
         val kafaaCount = progressData.scoutBadges.count {
-            it["scoutId"] == scout.id && it["revokedAt"] == null
+            it.scoutId == scout.id && it.isActive()
         }
         val calculatedKafaaPoints = kafaaCount * pointsSettings.kafaaBadgePoints
         val kafaaPoints: Int? = if (calculatedKafaaPoints > 0) calculatedKafaaPoints else if (kafaaCount > 0) 0 else null
 
         val totalHobbyBadges = progressData.scoutHobbyBadges.count {
-            it["scoutId"] == scout.id && it["revokedAt"] == null
+            it.scoutId == scout.id && it.isActive()
         }
         val extraHobbyBadges = maxOf(0, totalHobbyBadges - progressData.requiredHobbyCount)
         val calculatedHobbyPoints = extraHobbyBadges * pointsSettings.extraHobbyBadgePoints
@@ -393,7 +358,8 @@ class EvaluationMatrixViewModel(
         private val attendanceRepository: AttendanceRepository,
         private val evaluationRepository: EvaluationRepository,
         private val settingsRepository: SettingsRepository,
-        private val firestore: FirebaseFirestore
+        private val progressRepository: ProgressRepository,
+        private val hobbyBadgeRepository: HobbyBadgeRepository
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -403,7 +369,8 @@ class EvaluationMatrixViewModel(
                     attendanceRepository = attendanceRepository,
                     evaluationRepository = evaluationRepository,
                     settingsRepository = settingsRepository,
-                    firestore = firestore
+                    progressRepository = progressRepository,
+                    hobbyBadgeRepository = hobbyBadgeRepository
                 ) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")

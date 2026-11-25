@@ -50,7 +50,8 @@ data class SettingsUiState(
     val availableLeadersForTransfer: List<Leader> = emptyList(),
     val isDeletingAccount: Boolean = false,
 
-    // حالات عامة
+    // صيانة البيانات والحالات العامة
+    val isRecalculatingAttendance: Boolean = false,
     val isLoading: Boolean = false,
     val isSaving: Boolean = false
 ) {

@@ -1,5 +1,6 @@
 package com.example.data.activity
 
+import com.example.data.attendance.AttendanceFirestoreDataSource
 import com.example.data.log.ActivityLogDataSource
 import com.example.domain.activity.Activity
 import com.example.domain.activity.ActivityRepository
@@ -19,6 +20,7 @@ import kotlinx.coroutines.tasks.await
  */
 class ActivityRepositoryImpl(
     private val dataSource: ActivityFirestoreDataSource,
+    private val attendanceFirestoreDataSource: AttendanceFirestoreDataSource,
     private val activityLogDataSource: ActivityLogDataSource,
     private val authRepository: AuthRepository,
     private val financeRepository: FinanceRepository,
@@ -127,10 +129,41 @@ class ActivityRepositoryImpl(
         val currentUnitId = activity.unitId ?: oldActivity.unitId ?: authRepository.getCurrentLeader()?.unitId
         val preparedActivity = activity.copy(
             unitId = currentUnitId,
+            hasAttendanceRecorded = oldActivity.hasAttendanceRecorded,
             updatedBy = currentUser?.uid ?: ""
         )
         val result = dataSource.updateActivity(preparedActivity)
         if (result.isSuccess) {
+            if (oldActivity.startDate != activity.startDate && activity.startDate > 0L) {
+                try {
+                    val attendanceSnapshot = firestore.collection(ActivityFirestoreDataSource.COLLECTION_ACTIVITIES)
+                        .document(activity.id)
+                        .collection(AttendanceFirestoreDataSource.SUBCOLLECTION_ATTENDANCE)
+                        .get()
+                        .await()
+                    if (!attendanceSnapshot.isEmpty) {
+                        val now = System.currentTimeMillis()
+                        attendanceSnapshot.documents.chunked(500).forEach { chunk ->
+                            val batch = firestore.batch()
+                            chunk.forEach { doc ->
+                                batch.update(
+                                    doc.reference,
+                                    mapOf(
+                                        "activityDate" to activity.startDate,
+                                        "updatedAt" to now
+                                    )
+                                )
+                            }
+                            batch.commit().await()
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // تجاهل تعذر المزامنة عند عدم توفر الاتصال مع إبقاء تعديل النشاط محفوظاً
+                }
+            }
+
             val detailsText = changes.joinToString(" | ")
             activityLogDataSource.logActivity(
                 userId = currentUser?.uid ?: "",
@@ -428,5 +461,33 @@ class ActivityRepositoryImpl(
             )
         }
         return result
+    }
+
+    override suspend fun recalculateAllAttendanceFlags(): Result<Int> {
+        return try {
+            val activities = dataSource.getAllActivities()
+            var updatedCount = 0
+            for (activity in activities) {
+                val hasAttendance = attendanceFirestoreDataSource.hasAnyAttendanceForActivity(activity.id)
+                if (activity.hasAttendanceRecorded != hasAttendance) {
+                    val updateResult = dataSource.updateHasAttendanceRecorded(
+                        activityId = activity.id,
+                        hasRecorded = hasAttendance,
+                        awaitServer = true
+                    )
+                    if (updateResult.isFailure) {
+                        return Result.failure(
+                            updateResult.exceptionOrNull() ?: Exception("فشل تحديث حالة الحضور للنشاط ${activity.title}")
+                        )
+                    }
+                    updatedCount++
+                }
+            }
+            Result.success(updatedCount)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 }

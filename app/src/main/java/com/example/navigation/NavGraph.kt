@@ -261,6 +261,7 @@ fun ScoutNavGraph(
                     authRepository = appContainer.authRepository,
                     firestore = appContainer.firestore,
                     financeRepository = appContainer.financeRepository,
+                    updateRepository = appContainer.updateRepository,
                     context = appContext,
                     evaluationRepository = appContainer.evaluationRepository
                 )
@@ -645,7 +646,8 @@ fun ScoutNavGraph(
                     deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
                     authRepository = appContainer.authRepository,
                     brandingRepository = appContainer.brandingRepository,
-                    termsRepository = appContainer.termsRepository
+                    termsRepository = appContainer.termsRepository,
+                    activityRepository = appContainer.activityRepository
                 )
             )
 
@@ -683,7 +685,8 @@ fun ScoutNavGraph(
                     deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
                     authRepository = appContainer.authRepository,
                     brandingRepository = appContainer.brandingRepository,
-                    termsRepository = appContainer.termsRepository
+                    termsRepository = appContainer.termsRepository,
+                    activityRepository = appContainer.activityRepository
                 )
             )
 
@@ -724,7 +727,8 @@ fun ScoutNavGraph(
                     deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
                     authRepository = appContainer.authRepository,
                     brandingRepository = appContainer.brandingRepository,
-                    termsRepository = appContainer.termsRepository
+                    termsRepository = appContainer.termsRepository,
+                    activityRepository = appContainer.activityRepository
                 )
             )
             GeneralSettingsScreen(
@@ -751,7 +755,8 @@ fun ScoutNavGraph(
                     deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
                     authRepository = appContainer.authRepository,
                     brandingRepository = appContainer.brandingRepository,
-                    termsRepository = appContainer.termsRepository
+                    termsRepository = appContainer.termsRepository,
+                    activityRepository = appContainer.activityRepository
                 )
             )
             FinanceSettingsScreen(
@@ -778,7 +783,8 @@ fun ScoutNavGraph(
                     deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
                     authRepository = appContainer.authRepository,
                     brandingRepository = appContainer.brandingRepository,
-                    termsRepository = appContainer.termsRepository
+                    termsRepository = appContainer.termsRepository,
+                    activityRepository = appContainer.activityRepository
                 )
             )
             MainLeaderSettingsScreen(
@@ -808,7 +814,8 @@ fun ScoutNavGraph(
                     deleteCriteriaUseCase = appContainer.deleteCriteriaUseCase,
                     authRepository = appContainer.authRepository,
                     brandingRepository = appContainer.brandingRepository,
-                    termsRepository = appContainer.termsRepository
+                    termsRepository = appContainer.termsRepository,
+                    activityRepository = appContainer.activityRepository
                 )
             )
             AccountSettingsScreen(

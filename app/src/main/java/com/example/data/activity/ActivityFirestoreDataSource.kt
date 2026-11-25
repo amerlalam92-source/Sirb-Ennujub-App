@@ -15,6 +15,7 @@ import com.example.domain.activity.ActivityType
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -97,6 +98,16 @@ class ActivityFirestoreDataSource(
     }
 
     /**
+     * جلب جميع الأنشطة لعمليات الترحيل والصيانة
+     */
+    suspend fun getAllActivities(): List<Activity> {
+        val snapshot = collection.get().await()
+        return snapshot.documents.mapNotNull { doc ->
+            mapDocumentToActivity(doc)
+        }
+    }
+
+    /**
      * إضافة نشاط كشفي جديد
      */
     suspend fun addActivity(activity: Activity): Result<String> {
@@ -127,7 +138,10 @@ class ActivityFirestoreDataSource(
 
         return try {
             val updated = activity.copy(updatedAt = System.currentTimeMillis())
-            collection.document(activity.id).set(mapActivityToMap(updated)).await()
+            val updateMap = mapActivityToMap(updated).toMutableMap().apply {
+                remove("hasAttendanceRecorded")
+            }
+            collection.document(activity.id).set(updateMap, SetOptions.merge()).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

@@ -8,7 +8,6 @@ import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
 import com.example.data.firestore.safeBoolean
 import com.example.data.firestore.safeNullableString
-import com.example.data.update.UpdateRepositoryImpl
 import com.example.domain.auth.AuthRepository
 import com.example.domain.evaluation.EvaluationRepository
 import com.example.domain.update.AppUpdateInfo
@@ -34,7 +33,7 @@ class HomeViewModel(
     private val authRepository: AuthRepository,
     private val firestore: FirebaseFirestore,
     private val financeRepository: com.example.domain.finance.FinanceRepository? = null,
-    private val updateRepository: UpdateRepository = UpdateRepositoryImpl(firestore),
+    private val updateRepository: UpdateRepository,
     private val context: Context? = null,
     private val evaluationRepository: EvaluationRepository? = null
 ) : ViewModel() {
@@ -241,18 +240,17 @@ class HomeViewModel(
         private val authRepository: AuthRepository,
         private val firestore: FirebaseFirestore,
         private val financeRepository: com.example.domain.finance.FinanceRepository? = null,
-        private val updateRepository: UpdateRepository? = null,
+        private val updateRepository: UpdateRepository,
         private val context: Context? = null,
         private val evaluationRepository: EvaluationRepository? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            val updateRepo = updateRepository ?: UpdateRepositoryImpl(firestore)
             return HomeViewModel(
                 authRepository = authRepository,
                 firestore = firestore,
                 financeRepository = financeRepository,
-                updateRepository = updateRepo,
+                updateRepository = updateRepository,
                 context = context,
                 evaluationRepository = evaluationRepository
             ) as T
