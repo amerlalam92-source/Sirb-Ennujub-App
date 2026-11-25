@@ -190,7 +190,22 @@ interface AppContainer {
     val updateRepository: com.example.domain.update.UpdateRepository
 }
 
-class DefaultAppContainer(private val context: Context) : AppContainer {
+class DefaultAppContainer(
+    private val context: Context,
+    private val firebaseAuthProvider: () -> FirebaseAuth = { FirebaseAuth.getInstance() },
+    private val firestoreProvider: () -> FirebaseFirestore = {
+        val db = FirebaseFirestore.getInstance()
+        try {
+            val settings = FirebaseFirestoreSettings.Builder()
+                .setLocalCacheSettings(PersistentCacheSettings.newBuilder().build())
+                .build()
+            db.firestoreSettings = settings
+        } catch (_: Exception) {
+            // إعدادات الكاش تم تطبيقها مسبقاً
+        }
+        db
+    }
+) : AppContainer {
 
     override val themePreferences: com.example.data.preferences.ThemePreferences by lazy {
         com.example.data.preferences.ThemePreferences(context)
@@ -202,21 +217,12 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
 
     // مصدر بيانات Firebase Auth
     private val firebaseAuth: FirebaseAuth by lazy {
-        FirebaseAuth.getInstance()
+        firebaseAuthProvider()
     }
 
     // مصدر بيانات Firestore مع تفعيل الحفظ المحلي دون اتصال (Offline Persistence)
     override val firestore: FirebaseFirestore by lazy {
-        val db = FirebaseFirestore.getInstance()
-        try {
-            val settings = FirebaseFirestoreSettings.Builder()
-                .setLocalCacheSettings(PersistentCacheSettings.newBuilder().build())
-                .build()
-            db.firestoreSettings = settings
-        } catch (_: Exception) {
-            // إعدادات الكاش تم تطبيقها مسبقاً
-        }
-        db
+        firestoreProvider()
     }
 
     override val dataLoadErrorReporter: com.example.data.common.DataLoadErrorReporter by lazy {
