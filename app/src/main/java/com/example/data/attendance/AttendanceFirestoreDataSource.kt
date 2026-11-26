@@ -3,6 +3,7 @@ package com.example.data.attendance
 import android.util.Log
 import com.example.data.common.DataLoadErrorReporter
 import com.example.data.common.ListenerFallbackState
+import com.example.data.common.attachServerResultListeners
 import com.example.data.firestore.safeInt
 import com.example.data.firestore.safeLong
 import com.example.data.firestore.safeNullableInt
@@ -122,26 +123,29 @@ class AttendanceFirestoreDataSource(
     suspend fun saveAttendance(
         attendance: Attendance,
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit> {
         return try {
             val docRef = getAttendanceSubcollection(attendance.activityId).document(attendance.scoutId)
             val data = mapAttendanceToMap(attendance)
+            val task = docRef.set(data)
             if (awaitServer) {
-                docRef.set(data).await()
+                task.await()
+                onServerResult?.invoke(Result.success(Unit))
             } else {
-                val task = docRef.set(data)
-                if (onAsyncFailure != null) {
-                    task.addOnFailureListener { e ->
-                        Log.e("AttendanceFirestoreDS", "Async failure saving attendance ${attendance.id}: ${e.message}", e)
-                        onAsyncFailure(e)
-                    }
-                }
+                task.attachServerResultListeners(
+                    logTag = "AttendanceFirestoreDS",
+                    failureMessage = "Async failure saving attendance ${attendance.id}",
+                    onAsyncFailure = onAsyncFailure,
+                    onServerResult = onServerResult
+                )
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            onServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }

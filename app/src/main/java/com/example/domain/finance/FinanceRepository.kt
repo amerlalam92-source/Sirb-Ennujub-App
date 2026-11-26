@@ -15,12 +15,14 @@ interface FinanceRepository {
     suspend fun updateTransaction(
         tx: FinanceTransaction,
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit>
     suspend fun upsertTransaction(
         transaction: FinanceTransaction,
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit>
     suspend fun deleteTransaction(id: String): Result<Unit>
 
@@ -31,7 +33,8 @@ interface FinanceRepository {
     suspend fun upsertSubscription(
         sub: FinanceSubscription,
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit>
     suspend fun deleteSubscription(activityId: String, scoutId: String): Result<Unit>
     suspend fun getRequiredAmountFor(activityId: String, status: SubscriptionStatus): Int
@@ -43,20 +46,23 @@ interface FinanceRepository {
         activityDate: Long,
         attendanceStatus: SubscriptionStatus,
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit>
     suspend fun payScoutDebts(
         scoutId: String,
         amountToPay: Int,
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit>
     suspend fun rollbackScoutDebts(
         scoutId: String,
         amountToRollback: Int,
         excludeActivityId: String? = null,
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit>
     suspend fun updateSubscriptionDebtManually(subscriptionId: String, newDebtAmount: Int): Result<Unit>
 

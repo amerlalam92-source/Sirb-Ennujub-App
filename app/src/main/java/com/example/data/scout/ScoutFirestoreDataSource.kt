@@ -3,6 +3,7 @@ package com.example.data.scout
 import android.util.Log
 import com.example.data.common.DataLoadErrorReporter
 import com.example.data.common.ListenerFallbackState
+import com.example.data.common.attachServerResultListeners
 import com.example.data.firestore.safeInt
 import com.example.data.firestore.safeLong
 import com.example.data.firestore.safeNullableLong
@@ -203,9 +204,14 @@ class ScoutFirestoreDataSource(
         newBalance: Int,
         updatedBy: String = "",
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit> {
-        if (id.isBlank()) return Result.failure(IllegalArgumentException("معرف الشبل مفقود"))
+        if (id.isBlank()) {
+            val err = IllegalArgumentException("معرف الشبل مفقود")
+            onServerResult?.invoke(Result.failure(err))
+            return Result.failure(err)
+        }
         return try {
             val updates = mutableMapOf<String, Any>(
                 "creditBalance" to newBalance,
@@ -217,16 +223,20 @@ class ScoutFirestoreDataSource(
             val task = collection.document(id).update(updates)
             if (awaitServer) {
                 task.await()
-            } else if (onAsyncFailure != null) {
-                task.addOnFailureListener { e ->
-                    Log.e("ScoutFirestoreDS", "Async failure updating credit balance for $id: ${e.message}", e)
-                    onAsyncFailure(e)
-                }
+                onServerResult?.invoke(Result.success(Unit))
+            } else {
+                task.attachServerResultListeners(
+                    logTag = "ScoutFirestoreDS",
+                    failureMessage = "Async failure updating credit balance for $id",
+                    onAsyncFailure = onAsyncFailure,
+                    onServerResult = onServerResult
+                )
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            onServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }

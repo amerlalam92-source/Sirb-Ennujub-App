@@ -1,5 +1,7 @@
 package com.example.data.finance
 
+import com.example.data.common.CompositeServerResultNotifier
+import com.example.data.common.attachServerResultListeners
 import com.example.data.log.ActivityLogDataSource
 import com.example.data.scout.ScoutFirestoreDataSource
 import com.example.domain.auth.AuthRepository
@@ -93,7 +95,8 @@ class FinanceRepositoryImpl(
     override suspend fun updateTransaction(
         tx: FinanceTransaction,
         awaitServer: Boolean,
-        onAsyncFailure: ((Throwable) -> Unit)?
+        onAsyncFailure: ((Throwable) -> Unit)?,
+        onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
         val currentUser = authRepository.currentUser
         val currentUnitId = tx.unitId ?: authRepository.getCurrentLeader()?.unitId
@@ -101,7 +104,8 @@ class FinanceRepositoryImpl(
         val result = dataSource.updateTransaction(
             tx = prepared,
             awaitServer = awaitServer,
-            onAsyncFailure = onAsyncFailure
+            onAsyncFailure = onAsyncFailure,
+            onServerResult = onServerResult
         )
         if (result.isSuccess) {
             activityLogDataSource.logActivity(
@@ -121,7 +125,8 @@ class FinanceRepositoryImpl(
     override suspend fun upsertTransaction(
         transaction: FinanceTransaction,
         awaitServer: Boolean,
-        onAsyncFailure: ((Throwable) -> Unit)?
+        onAsyncFailure: ((Throwable) -> Unit)?,
+        onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
         return try {
             val currentUser = authRepository.currentUser
@@ -161,15 +166,15 @@ class FinanceRepositoryImpl(
                     }
                 )
                 val task = docRef.set(dataSource.mapTransactionToMap(preparedTx))
-                if (onAsyncFailure != null) {
-                    task.addOnFailureListener { e ->
-                        Log.e("FinanceRepo", "Async failure upserting transaction ${preparedTx.id}: ${e.message}", e)
-                        onAsyncFailure(e)
-                    }
-                }
+                task.attachServerResultListeners(
+                    logTag = "FinanceRepo",
+                    failureMessage = "Async failure upserting transaction ${preparedTx.id}",
+                    onAsyncFailure = onAsyncFailure,
+                    onServerResult = onServerResult
+                )
                 docExists to preparedTx
             } else {
-                firestore.runTransaction { tx ->
+                val res = firestore.runTransaction { tx ->
                     val snapshot = tx.get(docRef)
                     val docExists = snapshot.exists()
                     val existingCreatedBy = if (docExists) snapshot.getString("createdBy").orEmpty() else ""
@@ -200,6 +205,8 @@ class FinanceRepositoryImpl(
                     tx.set(docRef, txMap)
                     docExists to preparedTx
                 }.await()
+                onServerResult?.invoke(Result.success(Unit))
+                res
             }
 
             activityLogDataSource.logActivity(
@@ -220,6 +227,7 @@ class FinanceRepositoryImpl(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            onServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }
@@ -369,7 +377,8 @@ class FinanceRepositoryImpl(
     override suspend fun upsertSubscription(
         sub: FinanceSubscription,
         awaitServer: Boolean,
-        onAsyncFailure: ((Throwable) -> Unit)?
+        onAsyncFailure: ((Throwable) -> Unit)?,
+        onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
         return try {
             val currentUser = authRepository.currentUser
@@ -395,16 +404,18 @@ class FinanceRepositoryImpl(
                 )
                 if (computed.changed) {
                     val task = docRef.set(dataSource.mapSubscriptionToMap(computed.prepared))
-                    if (onAsyncFailure != null) {
-                        task.addOnFailureListener { e ->
-                            Log.e("FinanceRepo", "Async failure upserting subscription ${computed.prepared.id}: ${e.message}", e)
-                            onAsyncFailure(e)
-                        }
-                    }
+                    task.attachServerResultListeners(
+                        logTag = "FinanceRepo",
+                        failureMessage = "Async failure upserting subscription ${computed.prepared.id}",
+                        onAsyncFailure = onAsyncFailure,
+                        onServerResult = onServerResult
+                    )
+                } else {
+                    onServerResult?.invoke(Result.success(Unit))
                 }
                 computed
             } else {
-                firestore.runTransaction { tx ->
+                val res = firestore.runTransaction { tx ->
                     val snapshot = tx.get(docRef)
                     val existing = if (snapshot.exists()) dataSource.mapDocumentToSubscription(snapshot) else null
                     val computed = buildSubscriptionUpsertOutcome(
@@ -420,6 +431,8 @@ class FinanceRepositoryImpl(
                     }
                     computed
                 }.await()
+                onServerResult?.invoke(Result.success(Unit))
+                res
             }
 
             if (!outcome.changed) {
@@ -451,6 +464,7 @@ class FinanceRepositoryImpl(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            onServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }
@@ -509,7 +523,8 @@ class FinanceRepositoryImpl(
         activityDate: Long,
         attendanceStatus: SubscriptionStatus,
         awaitServer: Boolean,
-        onAsyncFailure: ((Throwable) -> Unit)?
+        onAsyncFailure: ((Throwable) -> Unit)?,
+        onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
         return try {
             val existing = if (awaitServer) {
@@ -576,11 +591,13 @@ class FinanceRepositoryImpl(
             upsertSubscription(
                 sub = subToSave,
                 awaitServer = awaitServer,
-                onAsyncFailure = onAsyncFailure
+                onAsyncFailure = onAsyncFailure,
+                onServerResult = onServerResult
             )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            onServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }
@@ -595,15 +612,22 @@ class FinanceRepositoryImpl(
         scoutId: String,
         amountToPay: Int,
         awaitServer: Boolean,
-        onAsyncFailure: ((Throwable) -> Unit)?
+        onAsyncFailure: ((Throwable) -> Unit)?,
+        onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
-        if (amountToPay <= 0 || scoutId.isBlank()) return Result.success(Unit)
+        if (amountToPay <= 0 || scoutId.isBlank()) {
+            onServerResult?.invoke(Result.success(Unit))
+            return Result.success(Unit)
+        }
         return try {
             if (!awaitServer) {
                 val cachedSubs = dataSource.observeSubscriptionsForScout(scoutId).first()
                     .filter { it.paidAmount < it.requiredAmount && it.debtAmount > 0 }
                     .sortedBy { it.activityDate }
-                if (cachedSubs.isEmpty()) return Result.success(Unit)
+                if (cachedSubs.isEmpty()) {
+                    onServerResult?.invoke(Result.success(Unit))
+                    return Result.success(Unit)
+                }
 
                 val currentUser = authRepository.currentUser
                 val leaderUnitId = authRepository.getCurrentLeader()?.unitId
@@ -613,7 +637,10 @@ class FinanceRepositoryImpl(
                     amountToPay = amountToPay,
                     now = now
                 )
-                if (allocation.updatedSubscriptions.isEmpty()) return Result.success(Unit)
+                if (allocation.updatedSubscriptions.isEmpty()) {
+                    onServerResult?.invoke(Result.success(Unit))
+                    return Result.success(Unit)
+                }
 
                 val subCol = firestore.collection(FinanceFirestoreDataSource.COLLECTION_SUBSCRIPTIONS)
                 val preparedSubs = allocation.updatedSubscriptions.map { updated ->
@@ -623,19 +650,21 @@ class FinanceRepositoryImpl(
                         recordedByName = updated.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" }
                     )
                 }
-                preparedSubs.chunked(500).forEach { chunk ->
+                val chunks = preparedSubs.chunked(500)
+                val notifier = onServerResult?.let { CompositeServerResultNotifier(chunks.size, it) }
+                chunks.forEach { chunk ->
                     val batch = firestore.batch()
                     chunk.forEach { prepared ->
                         val docId = if (prepared.id.isNotBlank()) prepared.id else "${prepared.activityId}_${prepared.scoutId}"
                         batch.set(subCol.document(docId), dataSource.mapSubscriptionToMap(prepared))
                     }
                     val commitTask = batch.commit()
-                    if (onAsyncFailure != null) {
-                        commitTask.addOnFailureListener { e ->
-                            Log.e("FinanceRepo", "Async failure paying scout debts for $scoutId: ${e.message}", e)
-                            onAsyncFailure(e)
-                        }
-                    }
+                    commitTask.attachServerResultListeners(
+                        logTag = "FinanceRepo",
+                        failureMessage = "Async failure paying scout debts for $scoutId",
+                        onAsyncFailure = onAsyncFailure,
+                        onServerResult = notifier?.childCallback()
+                    )
                 }
                 val firstUpdatedSub = preparedSubs.first()
                 activityLogDataSource.logActivity(
@@ -656,7 +685,10 @@ class FinanceRepositoryImpl(
                 .sortedBy { (_, sub) -> sub.activityDate }
                 .map { (ref, _) -> ref }
 
-            if (candidateRefs.isEmpty()) return Result.success(Unit)
+            if (candidateRefs.isEmpty()) {
+                onServerResult?.invoke(Result.success(Unit))
+                return Result.success(Unit)
+            }
 
             val currentUser = authRepository.currentUser
             val leaderUnitId = authRepository.getCurrentLeader()?.unitId
@@ -729,11 +761,13 @@ class FinanceRepositoryImpl(
                 )
             }
 
+            onServerResult?.invoke(Result.success(Unit))
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e("FinanceRepo", "Error paying scout debts: ${e.message}", e)
+            onServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }
@@ -743,9 +777,13 @@ class FinanceRepositoryImpl(
         amountToRollback: Int,
         excludeActivityId: String?,
         awaitServer: Boolean,
-        onAsyncFailure: ((Throwable) -> Unit)?
+        onAsyncFailure: ((Throwable) -> Unit)?,
+        onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
-        if (amountToRollback <= 0 || scoutId.isBlank()) return Result.success(Unit)
+        if (amountToRollback <= 0 || scoutId.isBlank()) {
+            onServerResult?.invoke(Result.success(Unit))
+            return Result.success(Unit)
+        }
         return try {
             if (!awaitServer) {
                 val cachedSubs = dataSource.observeSubscriptionsForScout(scoutId).first()
@@ -754,7 +792,10 @@ class FinanceRepositoryImpl(
                             (excludeActivityId.isNullOrBlank() || it.activityId != excludeActivityId)
                     }
                     .sortedBy { it.activityDate }
-                if (cachedSubs.isEmpty()) return Result.success(Unit)
+                if (cachedSubs.isEmpty()) {
+                    onServerResult?.invoke(Result.success(Unit))
+                    return Result.success(Unit)
+                }
 
                 val currentUser = authRepository.currentUser
                 val leaderUnitId = authRepository.getCurrentLeader()?.unitId
@@ -765,7 +806,10 @@ class FinanceRepositoryImpl(
                     excludeActivityId = excludeActivityId,
                     now = now
                 )
-                if (allocation.updatedSubscriptions.isEmpty()) return Result.success(Unit)
+                if (allocation.updatedSubscriptions.isEmpty()) {
+                    onServerResult?.invoke(Result.success(Unit))
+                    return Result.success(Unit)
+                }
 
                 val subCol = firestore.collection(FinanceFirestoreDataSource.COLLECTION_SUBSCRIPTIONS)
                 val preparedSubs = allocation.updatedSubscriptions.map { updated ->
@@ -775,19 +819,21 @@ class FinanceRepositoryImpl(
                         recordedByName = updated.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" }
                     )
                 }
-                preparedSubs.chunked(500).forEach { chunk ->
+                val chunks = preparedSubs.chunked(500)
+                val notifier = onServerResult?.let { CompositeServerResultNotifier(chunks.size, it) }
+                chunks.forEach { chunk ->
                     val batch = firestore.batch()
                     chunk.forEach { prepared ->
                         val docId = if (prepared.id.isNotBlank()) prepared.id else "${prepared.activityId}_${prepared.scoutId}"
                         batch.set(subCol.document(docId), dataSource.mapSubscriptionToMap(prepared))
                     }
                     val commitTask = batch.commit()
-                    if (onAsyncFailure != null) {
-                        commitTask.addOnFailureListener { e ->
-                            Log.e("FinanceRepo", "Async failure rolling back scout debts for $scoutId: ${e.message}", e)
-                            onAsyncFailure(e)
-                        }
-                    }
+                    commitTask.attachServerResultListeners(
+                        logTag = "FinanceRepo",
+                        failureMessage = "Async failure rolling back scout debts for $scoutId",
+                        onAsyncFailure = onAsyncFailure,
+                        onServerResult = notifier?.childCallback()
+                    )
                 }
                 val firstUpdatedSub = preparedSubs.first()
                 activityLogDataSource.logActivity(
@@ -811,7 +857,10 @@ class FinanceRepositoryImpl(
                 .sortedBy { (_, sub) -> sub.activityDate }
                 .map { (ref, _) -> ref }
 
-            if (candidateRefs.isEmpty()) return Result.success(Unit)
+            if (candidateRefs.isEmpty()) {
+                onServerResult?.invoke(Result.success(Unit))
+                return Result.success(Unit)
+            }
 
             val currentUser = authRepository.currentUser
             val leaderUnitId = authRepository.getCurrentLeader()?.unitId
@@ -885,11 +934,13 @@ class FinanceRepositoryImpl(
                 )
             }
 
+            onServerResult?.invoke(Result.success(Unit))
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e("FinanceRepo", "Error rolling back scout debts: ${e.message}", e)
+            onServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }

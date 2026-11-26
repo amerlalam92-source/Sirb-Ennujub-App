@@ -15,7 +15,8 @@ interface AttendanceRepository {
         attendance: Attendance,
         syncSubscription: Boolean = true,
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit>
     suspend fun saveAttendanceBatch(list: List<Attendance>): Result<Unit>
     suspend fun deleteAttendance(activityId: String, scoutId: String): Result<Unit>

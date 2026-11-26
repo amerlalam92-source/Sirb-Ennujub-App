@@ -178,21 +178,30 @@ class ScoutRepositoryImpl(
         scoutId: String,
         amount: Int,
         awaitServer: Boolean,
-        onAsyncFailure: ((Throwable) -> Unit)?
+        onAsyncFailure: ((Throwable) -> Unit)?,
+        onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
-        if (scoutId.isBlank() || amount == 0) return Result.success(Unit)
+        if (scoutId.isBlank() || amount == 0) {
+            onServerResult?.invoke(Result.success(Unit))
+            return Result.success(Unit)
+        }
         val scout = if (awaitServer) {
             dataSource.getScoutById(scoutId)
         } else {
             dataSource.observeScouts().first().find { it.id == scoutId }
-        } ?: return Result.failure(Exception("الشبل غير موجود"))
+        } ?: run {
+            val err = Exception("الشبل غير موجود")
+            onServerResult?.invoke(Result.failure(err))
+            return Result.failure(err)
+        }
         val newBalance = (scout.creditBalance + amount).coerceAtLeast(0)
         val result = dataSource.updateCreditBalance(
             id = scoutId,
             newBalance = newBalance,
             updatedBy = currentUserId,
             awaitServer = awaitServer,
-            onAsyncFailure = onAsyncFailure
+            onAsyncFailure = onAsyncFailure,
+            onServerResult = onServerResult
         )
         result.onSuccess {
             activityLogDataSource.logActivity(
@@ -213,22 +222,34 @@ class ScoutRepositoryImpl(
         scoutId: String,
         amount: Int,
         awaitServer: Boolean,
-        onAsyncFailure: ((Throwable) -> Unit)?
+        onAsyncFailure: ((Throwable) -> Unit)?,
+        onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
-        if (scoutId.isBlank() || amount <= 0) return Result.success(Unit)
+        if (scoutId.isBlank() || amount <= 0) {
+            onServerResult?.invoke(Result.success(Unit))
+            return Result.success(Unit)
+        }
         val scout = if (awaitServer) {
             dataSource.getScoutById(scoutId)
         } else {
             dataSource.observeScouts().first().find { it.id == scoutId }
-        } ?: return Result.failure(Exception("الشبل غير موجود"))
+        } ?: run {
+            val err = Exception("الشبل غير موجود")
+            onServerResult?.invoke(Result.failure(err))
+            return Result.failure(err)
+        }
         val newBalance = (scout.creditBalance - amount).coerceAtLeast(0)
-        if (newBalance == scout.creditBalance) return Result.success(Unit)
+        if (newBalance == scout.creditBalance) {
+            onServerResult?.invoke(Result.success(Unit))
+            return Result.success(Unit)
+        }
         val result = dataSource.updateCreditBalance(
             id = scoutId,
             newBalance = newBalance,
             updatedBy = currentUserId,
             awaitServer = awaitServer,
-            onAsyncFailure = onAsyncFailure
+            onAsyncFailure = onAsyncFailure,
+            onServerResult = onServerResult
         )
         result.onSuccess {
             activityLogDataSource.logActivity(

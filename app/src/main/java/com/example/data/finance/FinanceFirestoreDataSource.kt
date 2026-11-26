@@ -1,6 +1,7 @@
 package com.example.data.finance
 
 import android.util.Log
+import com.example.data.common.attachServerResultListeners
 import com.example.data.firestore.safeBoolean
 import com.example.data.firestore.safeInt
 import com.example.data.firestore.safeLong
@@ -117,23 +118,32 @@ class FinanceFirestoreDataSource(
     suspend fun updateTransaction(
         tx: FinanceTransaction,
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit> {
-        if (tx.id.isBlank()) return Result.failure(IllegalArgumentException("معرف المعاملة مفقود"))
+        if (tx.id.isBlank()) {
+            val err = IllegalArgumentException("معرف المعاملة مفقود")
+            onServerResult?.invoke(Result.failure(err))
+            return Result.failure(err)
+        }
         return try {
             val task = transactionsCollection.document(tx.id).set(mapTransactionToMap(tx))
             if (awaitServer) {
                 task.await()
-            } else if (onAsyncFailure != null) {
-                task.addOnFailureListener { e ->
-                    Log.e("FinanceFirestoreDS", "Async failure updating transaction ${tx.id}: ${e.message}", e)
-                    onAsyncFailure(e)
-                }
+                onServerResult?.invoke(Result.success(Unit))
+            } else {
+                task.attachServerResultListeners(
+                    logTag = "FinanceFirestoreDS",
+                    failureMessage = "Async failure updating transaction ${tx.id}",
+                    onAsyncFailure = onAsyncFailure,
+                    onServerResult = onServerResult
+                )
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            onServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }

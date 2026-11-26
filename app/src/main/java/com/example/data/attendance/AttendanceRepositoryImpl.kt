@@ -2,6 +2,7 @@ package com.example.data.attendance
 
 import android.util.Log
 import com.example.data.activity.ActivityFirestoreDataSource
+import com.example.data.common.CompositeServerResultNotifier
 import com.example.data.log.ActivityLogDataSource
 import com.example.data.scout.ScoutFirestoreDataSource
 import com.example.domain.activity.Activity
@@ -59,7 +60,8 @@ class AttendanceRepositoryImpl(
         attendance: Attendance,
         syncSubscription: Boolean,
         awaitServer: Boolean,
-        onAsyncFailure: ((Throwable) -> Unit)?
+        onAsyncFailure: ((Throwable) -> Unit)?,
+        onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
         val currentUser = authRepository.currentUser
         val existingRecords = if (attendance.activityId.isNotBlank()) {
@@ -74,6 +76,7 @@ class AttendanceRepositoryImpl(
         val old = existingRecords.find { it.scoutId == attendance.scoutId }
         if (old != null && old.status == attendance.status) {
             // لا يوجد أي تغيير، لا نحفظ في Firestore ولا نسجل في سجل العمليات
+            onServerResult?.invoke(Result.success(Unit))
             return Result.success(Unit)
         }
 
@@ -100,18 +103,33 @@ class AttendanceRepositoryImpl(
             recordedByName = currentUser?.displayName ?: "قائد كشفي",
             updatedAt = System.currentTimeMillis()
         )
+        val needsActivityFlagUpdate = prepared.activityId.isNotBlank() && activity?.hasAttendanceRecorded != true
+        val isMeeting = activity == null ||
+            activity.type == ActivityType.TRAINING_MEETING.key ||
+            activity.type.equals("training_meeting", ignoreCase = true) ||
+            activity.type == "اجتماع تدريبي" ||
+            activity.activityType == ActivityType.TRAINING_MEETING ||
+            activity.activityType.isMeetingType()
+        val shouldCollect = activity?.collectSubscriptions ?: true
+        val needsSubscriptionSync = syncSubscription && isMeeting && shouldCollect
+
+        val expectedWrites = 1 + (if (needsActivityFlagUpdate) 1 else 0) + (if (needsSubscriptionSync) 1 else 0)
+        val notifier = onServerResult?.let { CompositeServerResultNotifier(expectedWrites, it) }
+
         val result = dataSource.saveAttendance(
             attendance = prepared,
             awaitServer = awaitServer,
-            onAsyncFailure = onAsyncFailure
+            onAsyncFailure = onAsyncFailure,
+            onServerResult = notifier?.childCallback()
         )
         if (result.isSuccess) {
-            if (prepared.activityId.isNotBlank() && activity?.hasAttendanceRecorded != true) {
+            if (needsActivityFlagUpdate) {
                 activityDataSource.updateHasAttendanceRecorded(
                     activityId = prepared.activityId,
                     hasRecorded = true,
                     awaitServer = awaitServer,
-                    onAsyncFailure = onAsyncFailure
+                    onAsyncFailure = onAsyncFailure,
+                    onServerResult = notifier?.childCallback()
                 )
             }
 
@@ -134,19 +152,12 @@ class AttendanceRepositoryImpl(
             )
 
             // مزامنة اشتراك الشبل في المالية إذا كان النشاط اجتماعاً تدريبياً ومفعلاً فيه تحصيل الاشتراكات
-            val isMeeting = activity == null ||
-                activity.type == ActivityType.TRAINING_MEETING.key ||
-                activity.type.equals("training_meeting", ignoreCase = true) ||
-                activity.type == "اجتماع تدريبي" ||
-                activity.activityType == ActivityType.TRAINING_MEETING ||
-                activity.activityType.isMeetingType()
-            val shouldCollect = activity?.collectSubscriptions ?: true
-            if (syncSubscription && isMeeting && shouldCollect) {
+            if (needsSubscriptionSync) {
                 try {
                     val subStatus = SubscriptionStatus.fromKey(prepared.status)
                     val actDate = if (prepared.activityDate > 0) prepared.activityDate else (activity?.startDate ?: System.currentTimeMillis())
                     val actTitle = activity?.title?.ifBlank { "اجتماع تدريبي" } ?: "اجتماع تدريبي"
-                    financeRepository.ensureSubscriptionForAttendance(
+                    val subRes = financeRepository.ensureSubscriptionForAttendance(
                         activityId = prepared.activityId,
                         scoutId = prepared.scoutId,
                         scoutFullName = prepared.scoutFullName,
@@ -154,10 +165,15 @@ class AttendanceRepositoryImpl(
                         activityDate = actDate,
                         attendanceStatus = subStatus,
                         awaitServer = awaitServer,
-                        onAsyncFailure = onAsyncFailure
+                        onAsyncFailure = onAsyncFailure,
+                        onServerResult = notifier?.childCallback()
                     )
+                    if (subRes.isFailure) {
+                        notifier?.onChildResult(Result.success(Unit))
+                    }
                 } catch (e: Exception) {
                     android.util.Log.e("AttendanceRepo", "Error syncing subscription: ${e.message}", e)
+                    notifier?.onChildResult(Result.success(Unit))
                 }
             }
         }

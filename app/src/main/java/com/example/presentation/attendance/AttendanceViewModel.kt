@@ -28,10 +28,13 @@ import com.example.presentation.reports.PdfExporter
 import com.google.firebase.firestore.FirebaseFirestoreException
 import java.text.Collator
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -41,8 +44,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * نموذج العرض لتسجيل الحضور الكشفي (Attendance ViewModel)
@@ -56,8 +61,13 @@ class AttendanceViewModel(
     private val saveAttendanceBatchUseCase: SaveAttendanceBatchUseCase,
     private val observePointsSettingsUseCase: ObservePointsSettingsUseCase,
     private val financeRepository: FinanceRepository? = null,
-    private val settingsRepository: SettingsRepository? = null
+    private val settingsRepository: SettingsRepository? = null,
+    private val serverConfirmationTimeoutMs: Long = DEFAULT_SERVER_CONFIRMATION_TIMEOUT_MS
 ) : ViewModel() {
+
+    companion object {
+        const val DEFAULT_SERVER_CONFIRMATION_TIMEOUT_MS = 30_000L
+    }
 
     private val arabicCollator = Collator.getInstance(com.example.presentation.common.AppLocale.AR_DZ).apply {
         strength = Collator.PRIMARY
@@ -132,7 +142,10 @@ class AttendanceViewModel(
             val todayPaid: Int,
             val prevPaid: Int,
             val todayReq: Int,
-            val credit: Int
+            val credit: Int,
+            val syncAttendanceSubscription: Boolean = !syncFinance,
+            val localResultDeferred: CompletableDeferred<Result<Unit>>? = null,
+            val serverConfirmations: CopyOnWriteArrayList<CompletableDeferred<Result<Unit>>> = CopyOnWriteArrayList()
         ) : SaveQueueItem
 
         data class FlushBarrier(
@@ -162,20 +175,27 @@ class AttendanceViewModel(
 
     private fun scoutSessionKey(activityId: String, scoutId: String): String = "${activityId}_${scoutId}"
 
-    private val persistedAttendanceStatus = mutableMapOf<String, AttendanceStatus>()
-    private val persistedFinanceSignature = mutableMapOf<String, FinanceSnapshot>()
+    private val persistedAttendanceStatus = ConcurrentHashMap<String, AttendanceStatus>()
+    private val persistedFinanceSignature = ConcurrentHashMap<String, FinanceSnapshot>()
     private val scoutFinanceCache = mutableMapOf<String, ScoutFinanceDraft>()
     private val cachedRequiredAmounts = mutableMapOf<SubscriptionStatus, Int>()
-    private val scoutsWithReversibleTxs = mutableSetOf<String>()
-    private val failedSaveTasks = mutableMapOf<String, SaveQueueItem.PersistScout>()
-    private val completedReverseStep = mutableMapOf<String, FinanceSnapshot>()
-    private val completedPayDebtStep = mutableMapOf<String, FinanceSnapshot>()
-    private val completedAddCreditStep = mutableMapOf<String, FinanceSnapshot>()
+    private val scoutsWithReversibleTxs: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val failedSaveTasks = ConcurrentHashMap<String, SaveQueueItem.PersistScout>()
+    private val completedReverseStep = ConcurrentHashMap<String, FinanceSnapshot>()
+    private val completedPayDebtStep = ConcurrentHashMap<String, FinanceSnapshot>()
+    private val completedAddCreditStep = ConcurrentHashMap<String, FinanceSnapshot>()
+    private val perScoutLocalJobs = ConcurrentHashMap<String, Job>()
     private var transactionsPreloaded = false
     private var currentSessionActivityId: String? = null
 
     init {
         startSaveWorker()
+    }
+
+    private fun isRecoverableOfflineOrTransient(error: Throwable?): Boolean {
+        val fsCode = (error as? FirebaseFirestoreException)?.code
+        return fsCode == FirebaseFirestoreException.Code.UNAVAILABLE ||
+            fsCode == FirebaseFirestoreException.Code.DEADLINE_EXCEEDED
     }
 
     private fun formatSaveFailureMessage(scout: Scout, error: Throwable?): String {
@@ -206,6 +226,10 @@ class AttendanceViewModel(
     }
 
     private fun onBackgroundWriteFailed(item: SaveQueueItem.PersistScout, error: Throwable) {
+        if (isRecoverableOfflineOrTransient(error)) {
+            Log.w("AttendanceVM", "Recoverable async write warning for ${item.scout.fullName}: ${error.message}")
+            return
+        }
         viewModelScope.launch {
             Log.e("AttendanceVM", "Async write failure for ${item.scout.fullName}: ${error.message}", error)
             recordSaveFailure(item, error)
@@ -227,6 +251,38 @@ class AttendanceViewModel(
         _entryUiState.update { it.copy(failedSaveError = null) }
     }
 
+    private suspend fun awaitServerConfirmations(
+        confirmations: List<CompletableDeferred<Result<Unit>>>,
+        scoutName: String
+    ): Result<Unit> {
+        if (confirmations.isEmpty()) return Result.success(Unit)
+        val confirmResult = withTimeoutOrNull(serverConfirmationTimeoutMs) {
+            for (deferred in confirmations) {
+                val res = deferred.await()
+                if (res.isFailure) return@withTimeoutOrNull res
+            }
+            Result.success(Unit)
+        }
+        if (confirmResult == null) {
+            Log.w(
+                "AttendanceVM",
+                "Timed out after ${serverConfirmationTimeoutMs}ms awaiting server confirmation for $scoutName; local cache write preserved."
+            )
+            return Result.success(Unit)
+        }
+        if (confirmResult.isFailure) {
+            val err = confirmResult.exceptionOrNull()
+            if (isRecoverableOfflineOrTransient(err)) {
+                Log.w(
+                    "AttendanceVM",
+                    "Weak/offline connection confirming $scoutName; local cache write preserved: ${err?.message}"
+                )
+                return Result.success(Unit)
+            }
+        }
+        return confirmResult
+    }
+
     private fun startSaveWorker() {
         viewModelScope.launch {
             for (item in saveQueue) {
@@ -234,17 +290,44 @@ class AttendanceViewModel(
                     is SaveQueueItem.PersistScout -> {
                         val key = scoutSessionKey(item.activity.id, item.scout.id)
                         try {
-                            val result = executePersistScout(item)
-                            if (result.isSuccess) {
-                                failedSaveTasks.remove(key)
-                                _entryUiState.update { state ->
-                                    state.copy(
-                                        failedSaveCount = failedSaveTasks.size,
-                                        failedSaveError = if (failedSaveTasks.isEmpty()) null else state.failedSaveError
-                                    )
+                            var activeItem: SaveQueueItem.PersistScout = item
+                            var localResult = item.localResultDeferred?.await()
+                                ?: run {
+                                    val retryConfirmations = CopyOnWriteArrayList<CompletableDeferred<Result<Unit>>>()
+                                    val fallbackItem = item.copy(serverConfirmations = retryConfirmations)
+                                    activeItem = fallbackItem
+                                    executePersistScout(fallbackItem) { deferred ->
+                                        retryConfirmations.add(deferred)
+                                    }
+                                }
+
+                            if (localResult.isFailure) {
+                                val retryConfirmations = CopyOnWriteArrayList<CompletableDeferred<Result<Unit>>>()
+                                val retryItem = item.copy(serverConfirmations = retryConfirmations)
+                                activeItem = retryItem
+                                localResult = executePersistScout(retryItem) { deferred ->
+                                    retryConfirmations.add(deferred)
+                                }
+                            }
+
+                            if (localResult.isSuccess) {
+                                val confirmResult = awaitServerConfirmations(
+                                    confirmations = activeItem.serverConfirmations.toList(),
+                                    scoutName = item.scout.fullName
+                                )
+                                if (confirmResult.isSuccess) {
+                                    failedSaveTasks.remove(key)
+                                    _entryUiState.update { state ->
+                                        state.copy(
+                                            failedSaveCount = failedSaveTasks.size,
+                                            failedSaveError = if (failedSaveTasks.isEmpty()) null else state.failedSaveError
+                                        )
+                                    }
+                                } else {
+                                    recordSaveFailure(activeItem, confirmResult.exceptionOrNull())
                                 }
                             } else {
-                                recordSaveFailure(item, result.exceptionOrNull())
+                                recordSaveFailure(activeItem, localResult.exceptionOrNull())
                             }
                         } catch (e: CancellationException) {
                             throw e
@@ -266,14 +349,26 @@ class AttendanceViewModel(
                         if (failedSaveTasks.isNotEmpty()) {
                             for ((key, failedItem) in failedSaveTasks.entries.toList()) {
                                 try {
-                                    val retryResult = executePersistScout(failedItem)
+                                    val retryConfirmations = CopyOnWriteArrayList<CompletableDeferred<Result<Unit>>>()
+                                    val retryResult = executePersistScout(failedItem) { deferred ->
+                                        retryConfirmations.add(deferred)
+                                    }
                                     if (retryResult.isSuccess) {
-                                        failedSaveTasks.remove(key)
-                                        _entryUiState.update { state ->
-                                            state.copy(
-                                                failedSaveCount = failedSaveTasks.size,
-                                                failedSaveError = if (failedSaveTasks.isEmpty()) null else state.failedSaveError
-                                            )
+                                        val confirmResult = awaitServerConfirmations(
+                                            confirmations = retryConfirmations.toList(),
+                                            scoutName = failedItem.scout.fullName
+                                        )
+                                        if (confirmResult.isSuccess) {
+                                            failedSaveTasks.remove(key)
+                                            _entryUiState.update { state ->
+                                                state.copy(
+                                                    failedSaveCount = failedSaveTasks.size,
+                                                    failedSaveError = if (failedSaveTasks.isEmpty()) null else state.failedSaveError
+                                                )
+                                            }
+                                        } else {
+                                            flushError = confirmResult.exceptionOrNull()
+                                            recordSaveFailure(failedItem, flushError)
                                         }
                                     } else {
                                         flushError = retryResult.exceptionOrNull()
@@ -301,7 +396,36 @@ class AttendanceViewModel(
     private fun enqueueScoutSave(item: SaveQueueItem.PersistScout) {
         val count = pendingSavesCounter.incrementAndGet()
         _entryUiState.update { it.copy(isSaving = true, pendingSyncCount = count) }
-        val sendResult = saveQueue.trySend(item)
+
+        val key = scoutSessionKey(item.activity.id, item.scout.id)
+        val localResultDeferred = CompletableDeferred<Result<Unit>>()
+        val serverConfirmations = CopyOnWriteArrayList<CompletableDeferred<Result<Unit>>>()
+        val previousScoutJob = perScoutLocalJobs[key]
+
+        val localJob = viewModelScope.launch {
+            try {
+                previousScoutJob?.join()
+                val result = executePersistScout(
+                    item = item,
+                    collectServerConfirmation = { deferred ->
+                        serverConfirmations.add(deferred)
+                    }
+                )
+                localResultDeferred.complete(result)
+            } catch (e: CancellationException) {
+                localResultDeferred.cancel(e)
+                throw e
+            } catch (e: Exception) {
+                localResultDeferred.complete(Result.failure(e))
+            }
+        }
+        perScoutLocalJobs[key] = localJob
+
+        val queuedItem = item.copy(
+            localResultDeferred = localResultDeferred,
+            serverConfirmations = serverConfirmations
+        )
+        val sendResult = saveQueue.trySend(queuedItem)
         if (sendResult.isFailure) {
             val remaining = pendingSavesCounter.decrementAndGet().coerceAtLeast(0)
             _entryUiState.update { state ->
@@ -313,7 +437,10 @@ class AttendanceViewModel(
         }
     }
 
-    private suspend fun executePersistScout(item: SaveQueueItem.PersistScout): Result<Unit> {
+    private suspend fun executePersistScout(
+        item: SaveQueueItem.PersistScout,
+        collectServerConfirmation: ((CompletableDeferred<Result<Unit>>) -> Unit)? = null
+    ): Result<Unit> {
         val key = scoutSessionKey(item.activity.id, item.scout.id)
         var attendanceFailed = false
         var attendanceError: Throwable? = null
@@ -325,13 +452,19 @@ class AttendanceViewModel(
                 pointsSettings = item.pointsSettings
             )
             try {
+                val attDeferred = CompletableDeferred<Result<Unit>>()
+                collectServerConfirmation?.invoke(attDeferred)
                 // عند تفعيل التحصيل المالي يتكفل saveFinancePayment بحفظ الاشتراك مرة واحدة لتفادي التكرار
                 val attResult = attendanceRepository.saveAttendance(
                     attendance = singleAttendance,
-                    syncSubscription = !item.syncFinance,
+                    syncSubscription = item.syncAttendanceSubscription,
                     awaitServer = false,
-                    onAsyncFailure = { err -> onBackgroundWriteFailed(item, err) }
+                    onAsyncFailure = { err -> onBackgroundWriteFailed(item, err) },
+                    onServerResult = { res -> attDeferred.complete(res) }
                 )
+                if (!attDeferred.isCompleted && attResult.isFailure) {
+                    attDeferred.complete(attResult)
+                }
                 if (attResult.isSuccess) {
                     persistedAttendanceStatus[key] = item.status
                 } else {
@@ -362,7 +495,8 @@ class AttendanceViewModel(
                 todayReq = item.todayReq,
                 overpaymentCredit = item.credit,
                 isFinanceEnabled = true,
-                queueItem = item
+                queueItem = item,
+                collectServerConfirmation = collectServerConfirmation
             )
             if (financeResult.isFailure) {
                 return financeResult
@@ -606,6 +740,7 @@ class AttendanceViewModel(
         completedReverseStep.keys.removeAll { it.startsWith(prefix) }
         completedPayDebtStep.keys.removeAll { it.startsWith(prefix) }
         completedAddCreditStep.keys.removeAll { it.startsWith(prefix) }
+        perScoutLocalJobs.keys.removeAll { it.startsWith(prefix) }
         transactionsPreloaded = false
         _entryUiState.update {
             it.copy(
@@ -820,6 +955,25 @@ class AttendanceViewModel(
             totalPaid = 0,
             overpaymentCredit = 0
         )
+
+        if (activity != null) {
+            val stateAfterStatus = _entryUiState.value
+            val isFinanceActive = stateAfterStatus.isFinanceSectionVisible && financeRepository != null
+            enqueueScoutSave(
+                SaveQueueItem.PersistScout(
+                    scout = currentScout,
+                    activity = activity,
+                    status = status,
+                    pointsSettings = stateAfterStatus.pointsSettings,
+                    syncFinance = false,
+                    todayPaid = 0,
+                    prevPaid = 0,
+                    todayReq = stateAfterStatus.todaySubRequired,
+                    credit = 0,
+                    syncAttendanceSubscription = !isFinanceActive
+                )
+            )
+        }
 
         if (activity != null && activity.collectSubscriptions && trainingMeeting && cachedRequired == null && financeRepository != null) {
             viewModelScope.launch {
@@ -1047,7 +1201,8 @@ class AttendanceViewModel(
     private suspend fun reverseOldPayments(
         activityId: String,
         scoutId: String,
-        queueItem: SaveQueueItem.PersistScout? = null
+        queueItem: SaveQueueItem.PersistScout? = null,
+        collectServerConfirmation: ((CompletableDeferred<Result<Unit>>) -> Unit)? = null
     ): Result<Unit> {
         if (financeRepository == null) return Result.success(Unit)
         val key = scoutSessionKey(activityId, scoutId)
@@ -1072,13 +1227,19 @@ class AttendanceViewModel(
                 when (tx.type) {
                     FinanceTransactionType.DEBT_PAYMENT -> {
                         if (tx.amount > 0) {
+                            val rollbackDeferred = CompletableDeferred<Result<Unit>>()
+                            collectServerConfirmation?.invoke(rollbackDeferred)
                             val rollbackResult = financeRepository.rollbackScoutDebts(
                                 scoutId = scoutId,
                                 amountToRollback = tx.amount,
                                 excludeActivityId = activityId,
                                 awaitServer = false,
-                                onAsyncFailure = onFailure
+                                onAsyncFailure = onFailure,
+                                onServerResult = { res -> rollbackDeferred.complete(res) }
                             )
+                            if (!rollbackDeferred.isCompleted && rollbackResult.isFailure) {
+                                rollbackDeferred.complete(rollbackResult)
+                            }
                             if (rollbackResult.isFailure) {
                                 return Result.failure(
                                     Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.")
@@ -1088,12 +1249,18 @@ class AttendanceViewModel(
                     }
                     FinanceTransactionType.ADVANCE_PAYMENT -> {
                         if (tx.amount > 0) {
+                            val deductDeferred = CompletableDeferred<Result<Unit>>()
+                            collectServerConfirmation?.invoke(deductDeferred)
                             val deductResult = scoutRepository.deductCreditFromScout(
                                 scoutId = scoutId,
                                 amount = tx.amount,
                                 awaitServer = false,
-                                onAsyncFailure = onFailure
+                                onAsyncFailure = onFailure,
+                                onServerResult = { res -> deductDeferred.complete(res) }
                             )
+                            if (!deductDeferred.isCompleted && deductResult.isFailure) {
+                                deductDeferred.complete(deductResult)
+                            }
                             if (deductResult.isFailure) {
                                 return Result.failure(
                                     Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.")
@@ -1103,11 +1270,17 @@ class AttendanceViewModel(
                     }
                     else -> Unit
                 }
+                val auditDeferred = CompletableDeferred<Result<Unit>>()
+                collectServerConfirmation?.invoke(auditDeferred)
                 val auditResult = financeRepository.updateTransaction(
                     tx = tx.copy(isRolledBack = true),
                     awaitServer = false,
-                    onAsyncFailure = onFailure
+                    onAsyncFailure = onFailure,
+                    onServerResult = { res -> auditDeferred.complete(res) }
                 )
+                if (!auditDeferred.isCompleted && auditResult.isFailure) {
+                    auditDeferred.complete(auditResult)
+                }
                 if (auditResult.isFailure) {
                     return Result.failure(
                         Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.")
@@ -1136,7 +1309,8 @@ class AttendanceViewModel(
         todayReq: Int = _entryUiState.value.todaySubRequired,
         overpaymentCredit: Int = _entryUiState.value.overpaymentCredit,
         isFinanceEnabled: Boolean = _entryUiState.value.isFinanceSectionVisible,
-        queueItem: SaveQueueItem.PersistScout? = null
+        queueItem: SaveQueueItem.PersistScout? = null,
+        collectServerConfirmation: ((CompletableDeferred<Result<Unit>>) -> Unit)? = null
     ): Result<Unit> {
         if (financeRepository == null || !isFinanceEnabled) {
             return Result.success(Unit)
@@ -1158,7 +1332,12 @@ class AttendanceViewModel(
         return try {
             // 1. عكس معاملات سداد الديون والرصيد المقدم السابقة لتفادي الازدواجية عند التعديل أو الحذف
             if (completedReverseStep[key] != snapshot) {
-                val reverseResult = reverseOldPayments(activity.id, scout.id, queueItem)
+                val reverseResult = reverseOldPayments(
+                    activityId = activity.id,
+                    scoutId = scout.id,
+                    queueItem = queueItem,
+                    collectServerConfirmation = collectServerConfirmation
+                )
                 if (reverseResult.isFailure) {
                     val msg = reverseResult.exceptionOrNull()?.message
                         ?: "فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى."
@@ -1185,11 +1364,17 @@ class AttendanceViewModel(
                 unitId = activity.unitId,
                 updatedAt = System.currentTimeMillis()
             )
+            val subDeferred = CompletableDeferred<Result<Unit>>()
+            collectServerConfirmation?.invoke(subDeferred)
             val subResult = financeRepository.upsertSubscription(
                 sub = todaySub,
                 awaitServer = false,
-                onAsyncFailure = onFailure
+                onAsyncFailure = onFailure,
+                onServerResult = { res -> subDeferred.complete(res) }
             )
+            if (!subDeferred.isCompleted && subResult.isFailure) {
+                subDeferred.complete(subResult)
+            }
             if (subResult.isFailure) {
                 val err = subResult.exceptionOrNull() ?: Exception("فشل حفظ اشتراك النشاط")
                 return Result.failure(err)
@@ -1199,15 +1384,23 @@ class AttendanceViewModel(
             if (prevPaid > 0) {
                 scoutsWithReversibleTxs.add(key)
                 if (completedPayDebtStep[key] != snapshot) {
+                    val payDebtDeferred = CompletableDeferred<Result<Unit>>()
+                    collectServerConfirmation?.invoke(payDebtDeferred)
                     val payDebtResult = financeRepository.payScoutDebts(
                         scoutId = scout.id,
                         amountToPay = prevPaid,
                         awaitServer = false,
                         onAsyncFailure = { err ->
-                            viewModelScope.launch { completedPayDebtStep.remove(key) }
+                            if (!isRecoverableOfflineOrTransient(err)) {
+                                viewModelScope.launch { completedPayDebtStep.remove(key) }
+                            }
                             onFailure?.invoke(err)
-                        }
+                        },
+                        onServerResult = { res -> payDebtDeferred.complete(res) }
                     )
+                    if (!payDebtDeferred.isCompleted && payDebtResult.isFailure) {
+                        payDebtDeferred.complete(payDebtResult)
+                    }
                     if (payDebtResult.isFailure) {
                         val err = payDebtResult.exceptionOrNull() ?: Exception("فشل تسجيل سداد الديون السابقة")
                         return Result.failure(err)
@@ -1227,11 +1420,17 @@ class AttendanceViewModel(
                     unitId = activity.unitId,
                     isRolledBack = false
                 )
+                val debtTxDeferred = CompletableDeferred<Result<Unit>>()
+                collectServerConfirmation?.invoke(debtTxDeferred)
                 val debtTxResult = financeRepository.upsertTransaction(
                     transaction = debtTx,
                     awaitServer = false,
-                    onAsyncFailure = onFailure
+                    onAsyncFailure = onFailure,
+                    onServerResult = { res -> debtTxDeferred.complete(res) }
                 )
+                if (!debtTxDeferred.isCompleted && debtTxResult.isFailure) {
+                    debtTxDeferred.complete(debtTxResult)
+                }
                 if (debtTxResult.isFailure) {
                     val err = debtTxResult.exceptionOrNull() ?: Exception("فشل حفظ معاملة سداد الديون")
                     return Result.failure(err)
@@ -1242,15 +1441,23 @@ class AttendanceViewModel(
             if (overpaymentCredit > 0) {
                 scoutsWithReversibleTxs.add(key)
                 if (completedAddCreditStep[key] != snapshot) {
+                    val addCreditDeferred = CompletableDeferred<Result<Unit>>()
+                    collectServerConfirmation?.invoke(addCreditDeferred)
                     val addCreditResult = scoutRepository.addCreditToScout(
                         scoutId = scout.id,
                         amount = overpaymentCredit,
                         awaitServer = false,
                         onAsyncFailure = { err ->
-                            viewModelScope.launch { completedAddCreditStep.remove(key) }
+                            if (!isRecoverableOfflineOrTransient(err)) {
+                                viewModelScope.launch { completedAddCreditStep.remove(key) }
+                            }
                             onFailure?.invoke(err)
-                        }
+                        },
+                        onServerResult = { res -> addCreditDeferred.complete(res) }
                     )
+                    if (!addCreditDeferred.isCompleted && addCreditResult.isFailure) {
+                        addCreditDeferred.complete(addCreditResult)
+                    }
                     if (addCreditResult.isFailure) {
                         val err = addCreditResult.exceptionOrNull() ?: Exception("فشل تحديث الرصيد المقدم")
                         return Result.failure(err)
@@ -1270,11 +1477,17 @@ class AttendanceViewModel(
                     unitId = activity.unitId,
                     isRolledBack = false
                 )
+                val advanceTxDeferred = CompletableDeferred<Result<Unit>>()
+                collectServerConfirmation?.invoke(advanceTxDeferred)
                 val advanceTxResult = financeRepository.upsertTransaction(
                     transaction = advanceTx,
                     awaitServer = false,
-                    onAsyncFailure = onFailure
+                    onAsyncFailure = onFailure,
+                    onServerResult = { res -> advanceTxDeferred.complete(res) }
                 )
+                if (!advanceTxDeferred.isCompleted && advanceTxResult.isFailure) {
+                    advanceTxDeferred.complete(advanceTxResult)
+                }
                 if (advanceTxResult.isFailure) {
                     val err = advanceTxResult.exceptionOrNull() ?: Exception("فشل حفظ معاملة الدفعة المقدمة")
                     return Result.failure(err)
@@ -1422,7 +1635,10 @@ class AttendanceViewModel(
     /**
      * إنهاء تسجيل الحضور: يجدول الشبل الأخير وينتظر اكتمال جميع مهام المزامنة المعلقة قبل المغادرة
      */
-    fun saveAttendance(onSuccess: () -> Unit) {
+    fun saveAttendance(
+        onSuccess: () -> Unit,
+        awaitServerConfirmation: Boolean = true
+    ) {
         val state = _entryUiState.value
         if (state.isFinishing) return
         val activity = state.activity ?: return
@@ -1450,11 +1666,42 @@ class AttendanceViewModel(
         _entryUiState.update { it.copy(isSaving = true, isFinishing = true) }
 
         viewModelScope.launch {
+            if (!awaitServerConfirmation) {
+                perScoutLocalJobs.values.toList().joinAll()
+                _liveAmountInput.value = ""
+                _entryUiState.update {
+                    it.copy(
+                        selectedStatus = null,
+                        canPay = false,
+                        todaySubRequired = 0,
+                        todaySubPaid = 0,
+                        previousDebtPaid = 0,
+                        totalPaidToday = 0,
+                        overpaymentCredit = 0,
+                        quickInputAmount = "",
+                        isSaving = false,
+                        isFinishing = false,
+                        pendingSyncCount = 0,
+                        isFinished = true
+                    )
+                }
+                onSuccess()
+                return@launch
+            }
+
             val completion = CompletableDeferred<Result<Unit>>()
             saveQueue.send(SaveQueueItem.FlushBarrier(completion))
-            val flushResult = completion.await()
+            val flushResult = withTimeoutOrNull(serverConfirmationTimeoutMs) {
+                completion.await()
+            }
 
-            if (flushResult.isFailure) {
+            if (flushResult == null) {
+                Log.w(
+                    "AttendanceVM",
+                    "Timed out after ${serverConfirmationTimeoutMs}ms awaiting Finish confirmation; local cache writes preserved."
+                )
+                perScoutLocalJobs.values.toList().joinAll()
+            } else if (flushResult.isFailure) {
                 val remaining = pendingSavesCounter.get().coerceAtLeast(0)
                 val fallbackMsg = flushResult.exceptionOrNull()?.message ?: "فشل حفظ بعض البيانات، يرجى المحاولة مرة أخرى."
                 _entryUiState.update {
@@ -1490,7 +1737,10 @@ class AttendanceViewModel(
     }
 
     fun onNextClicked(onSkipped: () -> Unit = {}) = onNext(onSkipped)
-    fun onFinishClicked(onSuccess: () -> Unit = {}) = saveAttendance(onSuccess)
+    fun onFinishClicked(
+        awaitServerConfirmation: Boolean = true,
+        onSuccess: () -> Unit = {}
+    ) = saveAttendance(onSuccess = onSuccess, awaitServerConfirmation = awaitServerConfirmation)
 
     /**
      * تصدير استمارة تسجيل الحضور القابلة للطباعة (صفحة واحدة A4 عمودي) ومشاركتها

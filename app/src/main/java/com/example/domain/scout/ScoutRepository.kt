@@ -23,13 +23,15 @@ interface ScoutRepository {
         scoutId: String,
         amount: Int,
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit>
     suspend fun deductCreditFromScout(
         scoutId: String,
         amount: Int,
         awaitServer: Boolean = true,
-        onAsyncFailure: ((Throwable) -> Unit)? = null
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit>
     suspend fun updateCreditManually(scoutId: String, newBalance: Int): Result<Unit>
 }

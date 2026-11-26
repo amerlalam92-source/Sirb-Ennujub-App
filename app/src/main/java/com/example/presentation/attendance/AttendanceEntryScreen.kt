@@ -180,11 +180,11 @@ fun AttendanceEntryScreen(
     val offlineSaveToastMessage = stringResource(id = R.string.attendance_offline_save_toast)
 
     val handleExitRequest: () -> Unit = {
-        if (!state.isFinishing) {
-            if (!isDeviceOnline(context)) {
-                Toast.makeText(context, offlineSaveToastMessage, Toast.LENGTH_LONG).show()
-                onNavigateBack()
-            } else if (state.isSaving) {
+        if (!isDeviceOnline(context)) {
+            Toast.makeText(context, offlineSaveToastMessage, Toast.LENGTH_LONG).show()
+            onNavigateBack()
+        } else if (!state.isFinishing) {
+            if (state.isSaving) {
                 scope.launch {
                     snackbarHostState.showSnackbar(syncWaitMessage)
                 }
@@ -225,7 +225,7 @@ fun AttendanceEntryScreen(
                 navigationIcon = {
                     IconButton(
                         onClick = handleExitRequest,
-                        enabled = !state.isFinishing,
+                        enabled = !state.isFinishing || !isOnline,
                         modifier = Modifier.testTag("attendance_entry_back_btn")
                     ) {
                         Icon(
@@ -708,8 +708,9 @@ fun AttendanceEntryScreen(
                 Button(
                     onClick = {
                         showFinishDialog = false
-                        viewModel.onFinishClicked {
-                            if (!isDeviceOnline(context)) {
+                        val online = isDeviceOnline(context)
+                        viewModel.onFinishClicked(awaitServerConfirmation = online) {
+                            if (!online || !isDeviceOnline(context)) {
                                 Toast.makeText(context, offlineSaveToastMessage, Toast.LENGTH_LONG).show()
                             }
                             onNavigateBack()
