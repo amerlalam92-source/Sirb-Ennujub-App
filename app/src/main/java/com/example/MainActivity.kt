@@ -54,6 +54,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.common.DataLoadError
 import com.example.data.common.DataLoadErrorKind
+import com.example.data.common.WriteFailure
+import com.example.data.common.WriteFailureKind
 import com.example.data.settings.LocalSettingsCache
 import com.example.domain.preferences.ThemeMode
 import com.example.navigation.ScoutNavGraph
@@ -212,6 +214,7 @@ class MainActivity : ComponentActivity() {
                     val isDownloadingUpdate by updateViewModel.isDownloading.collectAsStateWithLifecycle()
                     val updateDownloadError by updateViewModel.downloadError.collectAsStateWithLifecycle()
                     val dataLoadErrors by appContainer.dataLoadErrorReporter.errors.collectAsStateWithLifecycle()
+                    val writeFailures by appContainer.writeFailureReporter.failures.collectAsStateWithLifecycle()
                     var dismissedErrors by remember { mutableStateOf<Map<String, DataLoadError>>(emptyMap()) }
 
                     LaunchedEffect(dataLoadErrors) {
@@ -245,21 +248,38 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.fillMaxSize()
                         )
 
-                        AnimatedVisibility(
-                            visible = prioritizedError != null && !isForceUpdateRequired,
-                            enter = slideInVertically { -it } + fadeIn(),
-                            exit = slideOutVertically { -it } + fadeOut(),
+                        Column(
                             modifier = Modifier
                                 .align(Alignment.TopCenter)
                                 .statusBarsPadding()
                                 .padding(horizontal = 12.dp, vertical = 8.dp)
-                                .widthIn(max = 560.dp)
+                                .widthIn(max = 560.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            prioritizedError?.let { error ->
-                                DataLoadErrorBanner(
-                                    error = error,
-                                    onDismiss = { dismissedErrors = dismissedErrors + visibleErrors }
-                                )
+                            AnimatedVisibility(
+                                visible = prioritizedError != null && !isForceUpdateRequired,
+                                enter = slideInVertically { -it } + fadeIn(),
+                                exit = slideOutVertically { -it } + fadeOut()
+                            ) {
+                                prioritizedError?.let { error ->
+                                    DataLoadErrorBanner(
+                                        error = error,
+                                        onDismiss = { dismissedErrors = dismissedErrors + visibleErrors }
+                                    )
+                                }
+                            }
+
+                            AnimatedVisibility(
+                                visible = writeFailures.isNotEmpty() && !isForceUpdateRequired,
+                                enter = slideInVertically { -it } + fadeIn(),
+                                exit = slideOutVertically { -it } + fadeOut()
+                            ) {
+                                if (writeFailures.isNotEmpty()) {
+                                    WriteFailureBanner(
+                                        failures = writeFailures,
+                                        onDismiss = { appContainer.writeFailureReporter.clear() }
+                                    )
+                                }
                             }
                         }
 
@@ -344,6 +364,90 @@ private fun DataLoadErrorBanner(
                 Icon(
                     imageVector = Icons.Rounded.Close,
                     contentDescription = stringResource(R.string.data_error_dismiss),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WriteFailureBanner(
+    failures: List<WriteFailure>,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val visibleFailures = failures.take(3)
+    val overflowCount = (failures.size - visibleFailures.size).coerceAtLeast(0)
+    val hasPermissionError = failures.any { it.kind == WriteFailureKind.NO_PERMISSION }
+    val explanation = if (hasPermissionError) {
+        stringResource(R.string.write_failure_no_permission)
+    } else {
+        stringResource(R.string.write_failure_review_retry)
+    }
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("write_failure_banner"),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        tonalElevation = 4.dp,
+        shadowElevation = 6.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.WarningAmber,
+                contentDescription = null,
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .size(20.dp)
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.write_failure_banner_title),
+                    style = MaterialTheme.typography.titleSmall
+                )
+                visibleFailures.forEach { failure ->
+                    Text(
+                        text = "• ${failure.description}",
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (overflowCount > 0) {
+                    Text(
+                        text = stringResource(R.string.write_failure_more_format, overflowCount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.9f)
+                    )
+                }
+                Text(
+                    text = explanation,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
+                )
+            }
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("write_failure_dismiss_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.write_failure_dismiss),
                     modifier = Modifier.size(18.dp)
                 )
             }

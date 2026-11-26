@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.data.common.DataLoadErrorReporter
 import com.example.data.common.ListenerFallbackState
 import com.example.data.common.attachServerResultListeners
+import com.example.data.common.singleShotResultCallback
 import com.example.data.firestore.safeBoolean
 import com.example.data.firestore.safeLong
 import com.example.data.firestore.safeNullableInt
@@ -270,8 +271,9 @@ class ActivityFirestoreDataSource(
         onAsyncFailure: ((Throwable) -> Unit)? = null,
         onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         if (activityId.isBlank()) {
-            onServerResult?.invoke(Result.success(Unit))
+            safeOnServerResult?.invoke(Result.success(Unit))
             return Result.success(Unit)
         }
         return try {
@@ -282,20 +284,20 @@ class ActivityFirestoreDataSource(
             val task = collection.document(activityId).update(updates)
             if (awaitServer) {
                 task.await()
-                onServerResult?.invoke(Result.success(Unit))
+                safeOnServerResult?.invoke(Result.success(Unit))
             } else {
                 task.attachServerResultListeners(
                     logTag = "ActivityFirestoreDS",
                     failureMessage = "Async failure updating hasAttendanceRecorded for $activityId",
                     onAsyncFailure = onAsyncFailure,
-                    onServerResult = onServerResult
+                    onServerResult = safeOnServerResult
                 )
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            onServerResult?.invoke(Result.failure(e))
+            safeOnServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }

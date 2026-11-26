@@ -587,7 +587,8 @@ fun ScoutNavGraph(
                     saveAttendanceBatchUseCase = appContainer.saveAttendanceBatchUseCase,
                     observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase,
                     financeRepository = appContainer.financeRepository,
-                    settingsRepository = appContainer.settingsRepository
+                    settingsRepository = appContainer.settingsRepository,
+                    writeFailureReporter = appContainer.writeFailureReporter
                 )
             )
 
@@ -619,7 +620,8 @@ fun ScoutNavGraph(
                     saveAttendanceBatchUseCase = appContainer.saveAttendanceBatchUseCase,
                     observePointsSettingsUseCase = appContainer.observePointsSettingsUseCase,
                     financeRepository = appContainer.financeRepository,
-                    settingsRepository = appContainer.settingsRepository
+                    settingsRepository = appContainer.settingsRepository,
+                    writeFailureReporter = appContainer.writeFailureReporter
                 )
             )
 

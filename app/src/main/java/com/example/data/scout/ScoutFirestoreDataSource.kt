@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.data.common.DataLoadErrorReporter
 import com.example.data.common.ListenerFallbackState
 import com.example.data.common.attachServerResultListeners
+import com.example.data.common.singleShotResultCallback
 import com.example.data.firestore.safeInt
 import com.example.data.firestore.safeLong
 import com.example.data.firestore.safeNullableLong
@@ -207,9 +208,10 @@ class ScoutFirestoreDataSource(
         onAsyncFailure: ((Throwable) -> Unit)? = null,
         onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         if (id.isBlank()) {
             val err = IllegalArgumentException("معرف الشبل مفقود")
-            onServerResult?.invoke(Result.failure(err))
+            safeOnServerResult?.invoke(Result.failure(err))
             return Result.failure(err)
         }
         return try {
@@ -223,20 +225,20 @@ class ScoutFirestoreDataSource(
             val task = collection.document(id).update(updates)
             if (awaitServer) {
                 task.await()
-                onServerResult?.invoke(Result.success(Unit))
+                safeOnServerResult?.invoke(Result.success(Unit))
             } else {
                 task.attachServerResultListeners(
                     logTag = "ScoutFirestoreDS",
                     failureMessage = "Async failure updating credit balance for $id",
                     onAsyncFailure = onAsyncFailure,
-                    onServerResult = onServerResult
+                    onServerResult = safeOnServerResult
                 )
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            onServerResult?.invoke(Result.failure(e))
+            safeOnServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }

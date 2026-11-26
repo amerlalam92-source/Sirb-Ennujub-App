@@ -96,10 +96,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import android.content.Context
 import android.net.ConnectivityManager
-import android.net.Network
 import android.net.NetworkCapabilities
 import android.widget.Toast
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
@@ -145,34 +143,6 @@ fun AttendanceEntryScreen(
     }
 
     val context = LocalContext.current
-    var isOnline by remember { mutableStateOf(isDeviceOnline(context)) }
-
-    DisposableEffect(context) {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                isOnline = true
-            }
-
-            override fun onLost(network: Network) {
-                isOnline = isDeviceOnline(context)
-            }
-        }
-        if (cm != null) {
-            try {
-                cm.registerDefaultNetworkCallback(callback)
-            } catch (_: Exception) {
-            }
-        }
-        onDispose {
-            if (cm != null) {
-                try {
-                    cm.unregisterNetworkCallback(callback)
-                } catch (_: Exception) {
-                }
-            }
-        }
-    }
 
     val skippedMessage = "تم تخطي ${terms.scoutSingularDefinite} وسيعاد عرضه في نهاية القائمة"
     val selectStatusFirstMessage = stringResource(id = R.string.error_select_status_first)
@@ -180,21 +150,19 @@ fun AttendanceEntryScreen(
     val offlineSaveToastMessage = stringResource(id = R.string.attendance_offline_save_toast)
 
     val handleExitRequest: () -> Unit = {
-        if (!isDeviceOnline(context)) {
-            Toast.makeText(context, offlineSaveToastMessage, Toast.LENGTH_LONG).show()
-            onNavigateBack()
-        } else if (!state.isFinishing) {
-            if (state.isSaving) {
-                scope.launch {
-                    snackbarHostState.showSnackbar(syncWaitMessage)
-                }
-            } else {
-                onNavigateBack()
+        if (!state.localWritesDispatched) {
+            scope.launch {
+                snackbarHostState.showSnackbar(syncWaitMessage)
             }
+        } else {
+            if (state.pendingServerConfirmationCount > 0) {
+                Toast.makeText(context, offlineSaveToastMessage, Toast.LENGTH_LONG).show()
+            }
+            onNavigateBack()
         }
     }
 
-    BackHandler(enabled = state.isSaving || state.isFinishing || !isOnline) {
+    BackHandler(enabled = !state.localWritesDispatched || state.pendingServerConfirmationCount > 0) {
         handleExitRequest()
     }
 
@@ -225,7 +193,7 @@ fun AttendanceEntryScreen(
                 navigationIcon = {
                     IconButton(
                         onClick = handleExitRequest,
-                        enabled = !state.isFinishing || !isOnline,
+                        enabled = state.localWritesDispatched,
                         modifier = Modifier.testTag("attendance_entry_back_btn")
                     ) {
                         Icon(
@@ -483,7 +451,7 @@ fun AttendanceEntryScreen(
                         }
 
                         androidx.compose.animation.AnimatedVisibility(
-                            visible = state.isSaving && !state.isFinishing,
+                            visible = (state.pendingServerConfirmationCount > 0 || state.isSaving) && !state.isFinishing,
                             enter = fadeIn(),
                             exit = fadeOut(),
                             modifier = Modifier
@@ -508,10 +476,7 @@ fun AttendanceEntryScreen(
                                         strokeWidth = 2.dp
                                     )
                                     Text(
-                                        text = stringResource(
-                                            id = R.string.attendance_syncing_background,
-                                            state.pendingSyncCount.coerceAtLeast(1)
-                                        ),
+                                        text = stringResource(id = R.string.attendance_syncing_short),
                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                                         maxLines = 1,
@@ -708,9 +673,10 @@ fun AttendanceEntryScreen(
                 Button(
                     onClick = {
                         showFinishDialog = false
-                        val online = isDeviceOnline(context)
-                        viewModel.onFinishClicked(awaitServerConfirmation = online) {
-                            if (!online || !isDeviceOnline(context)) {
+                        // مسار سريع لحالة انقطاع الاتصال القاطع فقط؛ القرار النهائي للتنبيه يعتمد على FinishOutcome
+                        val definitelyOffline = !isDeviceOnline(context)
+                        viewModel.onFinishClicked(definitelyOffline = definitelyOffline) { outcome ->
+                            if (outcome == FinishOutcome.PENDING_SYNC) {
                                 Toast.makeText(context, offlineSaveToastMessage, Toast.LENGTH_LONG).show()
                             }
                             onNavigateBack()

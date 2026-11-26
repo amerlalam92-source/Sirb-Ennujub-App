@@ -1127,6 +1127,7 @@
     <string name="attendance_print_form_error">تعذر إنشاء استمارة الحضور</string>
     <string name="attendance_pick_activity_to_print_title">اختر النشاط لطباعة الاستمارة</string>
     <string name="attendance_syncing_background">جارٍ مزامنة الحضور (%1$d)...</string>
+    <string name="attendance_syncing_short">جارٍ المزامنة…</string>
     <string name="attendance_sync_wait_before_exit">جارٍ حفظ ومزامنة البيانات في الخلفية، يرجى الانتظار لحظة...</string>
     <string name="attendance_offline_save_toast">سيتم الحفظ عند عودة الاتصال</string>
     <string name="attendance_failed_saves_banner_format">تعذر حفظ بيانات %1$d شبل في السحابة.</string>
@@ -1149,6 +1150,13 @@
     <string name="data_error_signed_out">انتهت الجلسة، سجّل الدخول من جديد.</string>
     <string name="data_error_other">تعذّر تحميل بعض البيانات؛ قد تكون القوائم ناقصة.</string>
     <string name="data_error_dismiss">إغلاق التنبيه</string>
+
+    <!-- تنبيه إخفاقات الكتابة غير المتزامنة على الخادم -->
+    <string name="write_failure_banner_title">تعذر حفظ بعض التغييرات على الخادم</string>
+    <string name="write_failure_no_permission">ليست لديك صلاحية لحفظ هذه البيانات، راجع القائد الرئيسي</string>
+    <string name="write_failure_review_retry">يرجى مراجعة البيانات وإعادة إدخالها</string>
+    <string name="write_failure_more_format">و %1$d أخرى</string>
+    <string name="write_failure_dismiss">إغلاق التنبيه</string>
 </resources>
 
 

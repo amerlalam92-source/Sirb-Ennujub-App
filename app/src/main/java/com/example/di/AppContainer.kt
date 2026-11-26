@@ -48,6 +48,7 @@ import com.google.firebase.firestore.PersistentCacheSettings
  */
 interface AppContainer {
     val dataLoadErrorReporter: com.example.data.common.DataLoadErrorReporter
+    val writeFailureReporter: com.example.data.common.WriteFailureReporter
     val authRepository: AuthRepository
     val googleSignInHelper: com.example.data.auth.GoogleSignInHelper
     val firestore: FirebaseFirestore
@@ -229,6 +230,10 @@ class DefaultAppContainer(
         com.example.data.common.DataLoadErrorReporter()
     }
 
+    override val writeFailureReporter: com.example.data.common.WriteFailureReporter by lazy {
+        com.example.data.common.WriteFailureReporter()
+    }
+
     private val authDataSource: FirebaseAuthDataSource by lazy {
         FirebaseAuthDataSource(firebaseAuth)
     }
@@ -351,7 +356,8 @@ class DefaultAppContainer(
             scoutDataSource = scoutFirestoreDataSource,
             activityLogDataSource = activityLogDataSource,
             authRepository = authRepository,
-            financeRepository = financeRepository
+            financeRepository = financeRepository,
+            writeFailureReporter = writeFailureReporter
         )
     }
 

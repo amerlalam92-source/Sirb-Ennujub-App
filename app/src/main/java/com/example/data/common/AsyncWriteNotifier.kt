@@ -35,7 +35,29 @@ class CompositeServerResultNotifier(
         }
     }
 
-    fun childCallback(): (Result<Unit>) -> Unit = ::onChildResult
+    fun childCallback(): (Result<Unit>) -> Unit {
+        val invoked = AtomicBoolean(false)
+        return { result ->
+            if (invoked.compareAndSet(false, true)) {
+                onChildResult(result)
+            }
+        }
+    }
+}
+
+/**
+ * يضمن عدم استدعاء رد نداء النتيجة أكثر من مرة واحدة مهما تعددت مسارات الخروج أو المستمعات.
+ */
+fun singleShotResultCallback(
+    onResult: ((Result<Unit>) -> Unit)?
+): ((Result<Unit>) -> Unit)? {
+    if (onResult == null) return null
+    val invoked = AtomicBoolean(false)
+    return { result ->
+        if (invoked.compareAndSet(false, true)) {
+            onResult(result)
+        }
+    }
 }
 
 fun <T> Task<T>.attachServerResultListeners(

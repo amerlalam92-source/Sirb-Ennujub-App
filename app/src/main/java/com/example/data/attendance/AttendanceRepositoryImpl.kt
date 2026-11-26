@@ -3,6 +3,8 @@ package com.example.data.attendance
 import android.util.Log
 import com.example.data.activity.ActivityFirestoreDataSource
 import com.example.data.common.CompositeServerResultNotifier
+import com.example.data.common.WriteFailureReporter
+import com.example.data.common.singleShotResultCallback
 import com.example.data.log.ActivityLogDataSource
 import com.example.data.scout.ScoutFirestoreDataSource
 import com.example.domain.activity.Activity
@@ -35,7 +37,8 @@ class AttendanceRepositoryImpl(
     private val scoutDataSource: ScoutFirestoreDataSource,
     private val activityLogDataSource: ActivityLogDataSource,
     private val authRepository: AuthRepository,
-    private val financeRepository: FinanceRepository
+    private val financeRepository: FinanceRepository,
+    private val writeFailureReporter: WriteFailureReporter? = null
 ) : AttendanceRepository {
 
     override fun getAttendanceForActivity(activityId: String): Flow<List<Attendance>> {
@@ -63,6 +66,7 @@ class AttendanceRepositoryImpl(
         onAsyncFailure: ((Throwable) -> Unit)?,
         onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         val currentUser = authRepository.currentUser
         val existingRecords = if (attendance.activityId.isNotBlank()) {
             try {
@@ -76,7 +80,7 @@ class AttendanceRepositoryImpl(
         val old = existingRecords.find { it.scoutId == attendance.scoutId }
         if (old != null && old.status == attendance.status) {
             // لا يوجد أي تغيير، لا نحفظ في Firestore ولا نسجل في سجل العمليات
-            onServerResult?.invoke(Result.success(Unit))
+            safeOnServerResult?.invoke(Result.success(Unit))
             return Result.success(Unit)
         }
 
@@ -114,23 +118,52 @@ class AttendanceRepositoryImpl(
         val needsSubscriptionSync = syncSubscription && isMeeting && shouldCollect
 
         val expectedWrites = 1 + (if (needsActivityFlagUpdate) 1 else 0) + (if (needsSubscriptionSync) 1 else 0)
-        val notifier = onServerResult?.let { CompositeServerResultNotifier(expectedWrites, it) }
+        val notifier = safeOnServerResult?.let { CompositeServerResultNotifier(expectedWrites, it) }
+
+        val attendanceCallback = notifier?.childCallback()
+        val attendanceDescription = "تعذر حفظ حضور الشبل ${prepared.scoutFullName}"
+        val attendanceAsyncFailure: ((Throwable) -> Unit)? = if (writeFailureReporter != null || onAsyncFailure != null) {
+            { err ->
+                writeFailureReporter?.report(attendanceDescription, err)
+                onAsyncFailure?.invoke(err)
+            }
+        } else null
 
         val result = dataSource.saveAttendance(
             attendance = prepared,
             awaitServer = awaitServer,
-            onAsyncFailure = onAsyncFailure,
-            onServerResult = notifier?.childCallback()
+            onAsyncFailure = attendanceAsyncFailure,
+            onServerResult = attendanceCallback
         )
         if (result.isSuccess) {
             if (needsActivityFlagUpdate) {
-                activityDataSource.updateHasAttendanceRecorded(
-                    activityId = prepared.activityId,
-                    hasRecorded = true,
-                    awaitServer = awaitServer,
-                    onAsyncFailure = onAsyncFailure,
-                    onServerResult = notifier?.childCallback()
-                )
+                val flagCallback = notifier?.childCallback()
+                val flagDescription = "تعذر تحديث حالة حضور النشاط"
+                val flagAsyncFailure: ((Throwable) -> Unit)? = if (writeFailureReporter != null || onAsyncFailure != null) {
+                    { err ->
+                        writeFailureReporter?.report(flagDescription, err)
+                        onAsyncFailure?.invoke(err)
+                    }
+                } else null
+                try {
+                    val flagRes = activityDataSource.updateHasAttendanceRecorded(
+                        activityId = prepared.activityId,
+                        hasRecorded = true,
+                        awaitServer = awaitServer,
+                        onAsyncFailure = flagAsyncFailure,
+                        onServerResult = flagCallback
+                    )
+                    if (flagRes.isFailure) {
+                        val err = flagRes.exceptionOrNull() ?: Exception(flagDescription)
+                        writeFailureReporter?.report(flagDescription, err)
+                        flagCallback?.invoke(Result.failure(err))
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    writeFailureReporter?.report(flagDescription, e)
+                    flagCallback?.invoke(Result.failure(e))
+                }
             }
 
             val activityTitle = activity?.title
@@ -140,19 +173,33 @@ class AttendanceRepositoryImpl(
                 "تم تحديث حضور 1 شبل"
             }
 
-            activityLogDataSource.logActivity(
-                userId = currentUser?.uid ?: "",
-                userName = currentUser?.displayName ?: "قائد كشفي",
-                action = "save_batch",
-                targetType = "attendance",
-                targetId = prepared.id,
-                targetName = "سجل حضور",
-                details = details,
-                unitId = currentUnitId
-            )
+            try {
+                activityLogDataSource.logActivity(
+                    userId = currentUser?.uid ?: "",
+                    userName = currentUser?.displayName ?: "قائد كشفي",
+                    action = "save_batch",
+                    targetType = "attendance",
+                    targetId = prepared.id,
+                    targetName = "سجل حضور",
+                    details = details,
+                    unitId = currentUnitId
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("AttendanceRepo", "Error logging attendance save: ${e.message}", e)
+            }
 
             // مزامنة اشتراك الشبل في المالية إذا كان النشاط اجتماعاً تدريبياً ومفعلاً فيه تحصيل الاشتراكات
             if (needsSubscriptionSync) {
+                val subCallback = notifier?.childCallback()
+                val subDescription = "تعذر مزامنة اشتراك الشبل ${prepared.scoutFullName}"
+                val subAsyncFailure: ((Throwable) -> Unit)? = if (writeFailureReporter != null || onAsyncFailure != null) {
+                    { err ->
+                        writeFailureReporter?.report(subDescription, err)
+                        onAsyncFailure?.invoke(err)
+                    }
+                } else null
                 try {
                     val subStatus = SubscriptionStatus.fromKey(prepared.status)
                     val actDate = if (prepared.activityDate > 0) prepared.activityDate else (activity?.startDate ?: System.currentTimeMillis())
@@ -165,17 +212,25 @@ class AttendanceRepositoryImpl(
                         activityDate = actDate,
                         attendanceStatus = subStatus,
                         awaitServer = awaitServer,
-                        onAsyncFailure = onAsyncFailure,
-                        onServerResult = notifier?.childCallback()
+                        onAsyncFailure = subAsyncFailure,
+                        onServerResult = subCallback
                     )
                     if (subRes.isFailure) {
-                        notifier?.onChildResult(Result.success(Unit))
+                        val err = subRes.exceptionOrNull() ?: Exception(subDescription)
+                        writeFailureReporter?.report(subDescription, err)
+                        subCallback?.invoke(Result.failure(err))
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
-                    android.util.Log.e("AttendanceRepo", "Error syncing subscription: ${e.message}", e)
-                    notifier?.onChildResult(Result.success(Unit))
+                    Log.e("AttendanceRepo", "Error syncing subscription: ${e.message}", e)
+                    writeFailureReporter?.report(subDescription, e)
+                    subCallback?.invoke(Result.failure(e))
                 }
             }
+        } else {
+            val err = result.exceptionOrNull() ?: Exception("فشل حفظ سجل الحضور")
+            attendanceCallback?.invoke(Result.failure(err))
         }
         return result
     }

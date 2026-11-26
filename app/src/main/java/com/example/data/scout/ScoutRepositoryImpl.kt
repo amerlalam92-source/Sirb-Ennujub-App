@@ -1,9 +1,11 @@
 package com.example.data.scout
 
+import com.example.data.common.singleShotResultCallback
 import com.example.data.log.ActivityLogDataSource
 import com.example.domain.auth.AuthRepository
 import com.example.domain.scout.Scout
 import com.example.domain.scout.ScoutRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 
@@ -181,8 +183,9 @@ class ScoutRepositoryImpl(
         onAsyncFailure: ((Throwable) -> Unit)?,
         onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         if (scoutId.isBlank() || amount == 0) {
-            onServerResult?.invoke(Result.success(Unit))
+            safeOnServerResult?.invoke(Result.success(Unit))
             return Result.success(Unit)
         }
         val scout = if (awaitServer) {
@@ -191,7 +194,7 @@ class ScoutRepositoryImpl(
             dataSource.observeScouts().first().find { it.id == scoutId }
         } ?: run {
             val err = Exception("الشبل غير موجود")
-            onServerResult?.invoke(Result.failure(err))
+            safeOnServerResult?.invoke(Result.failure(err))
             return Result.failure(err)
         }
         val newBalance = (scout.creditBalance + amount).coerceAtLeast(0)
@@ -201,19 +204,27 @@ class ScoutRepositoryImpl(
             updatedBy = currentUserId,
             awaitServer = awaitServer,
             onAsyncFailure = onAsyncFailure,
-            onServerResult = onServerResult
+            onServerResult = safeOnServerResult
         )
-        result.onSuccess {
-            activityLogDataSource.logActivity(
-                userId = currentUserId,
-                userName = currentUserName,
-                action = "update",
-                targetType = "scout",
-                targetId = scoutId,
-                targetName = scout.fullName,
-                details = "تحديث الرصيد المقدم: من ${scout.creditBalance} دج إلى $newBalance دج",
-                unitId = scout.unitId ?: authRepository.getCurrentLeader()?.unitId
-            )
+        if (result.isSuccess) {
+            try {
+                activityLogDataSource.logActivity(
+                    userId = currentUserId,
+                    userName = currentUserName,
+                    action = "update",
+                    targetType = "scout",
+                    targetId = scoutId,
+                    targetName = scout.fullName,
+                    details = "تحديث الرصيد المقدم: من ${scout.creditBalance} دج إلى $newBalance دج",
+                    unitId = scout.unitId ?: authRepository.getCurrentLeader()?.unitId
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        } else {
+            val err = result.exceptionOrNull() ?: Exception("فشل تحديث الرصيد المقدم")
+            safeOnServerResult?.invoke(Result.failure(err))
         }
         return result
     }
@@ -225,8 +236,9 @@ class ScoutRepositoryImpl(
         onAsyncFailure: ((Throwable) -> Unit)?,
         onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         if (scoutId.isBlank() || amount <= 0) {
-            onServerResult?.invoke(Result.success(Unit))
+            safeOnServerResult?.invoke(Result.success(Unit))
             return Result.success(Unit)
         }
         val scout = if (awaitServer) {
@@ -235,12 +247,12 @@ class ScoutRepositoryImpl(
             dataSource.observeScouts().first().find { it.id == scoutId }
         } ?: run {
             val err = Exception("الشبل غير موجود")
-            onServerResult?.invoke(Result.failure(err))
+            safeOnServerResult?.invoke(Result.failure(err))
             return Result.failure(err)
         }
         val newBalance = (scout.creditBalance - amount).coerceAtLeast(0)
         if (newBalance == scout.creditBalance) {
-            onServerResult?.invoke(Result.success(Unit))
+            safeOnServerResult?.invoke(Result.success(Unit))
             return Result.success(Unit)
         }
         val result = dataSource.updateCreditBalance(
@@ -249,19 +261,27 @@ class ScoutRepositoryImpl(
             updatedBy = currentUserId,
             awaitServer = awaitServer,
             onAsyncFailure = onAsyncFailure,
-            onServerResult = onServerResult
+            onServerResult = safeOnServerResult
         )
-        result.onSuccess {
-            activityLogDataSource.logActivity(
-                userId = currentUserId,
-                userName = currentUserName,
-                action = "update",
-                targetType = "scout",
-                targetId = scoutId,
-                targetName = scout.fullName,
-                details = "خصم من الرصيد المقدم: من ${scout.creditBalance} دج إلى $newBalance دج",
-                unitId = scout.unitId ?: authRepository.getCurrentLeader()?.unitId
-            )
+        if (result.isSuccess) {
+            try {
+                activityLogDataSource.logActivity(
+                    userId = currentUserId,
+                    userName = currentUserName,
+                    action = "update",
+                    targetType = "scout",
+                    targetId = scoutId,
+                    targetName = scout.fullName,
+                    details = "خصم من الرصيد المقدم: من ${scout.creditBalance} دج إلى $newBalance دج",
+                    unitId = scout.unitId ?: authRepository.getCurrentLeader()?.unitId
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        } else {
+            val err = result.exceptionOrNull() ?: Exception("فشل خصم الرصيد المقدم")
+            safeOnServerResult?.invoke(Result.failure(err))
         }
         return result
     }

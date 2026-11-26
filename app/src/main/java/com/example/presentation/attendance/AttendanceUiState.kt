@@ -17,6 +17,11 @@ sealed interface AttendancePickerUiState {
     data class Error(val message: String) : AttendancePickerUiState
 }
 
+enum class FinishOutcome {
+    CONFIRMED,
+    PENDING_SYNC
+}
+
 /**
  * حالة استمارة الحضور المتسلسلة (Wizard)
  */
@@ -29,6 +34,8 @@ data class AttendanceEntryUiState(
     val isLoading: Boolean = false,
     val isSaving: Boolean = false,
     val isFinishing: Boolean = false,
+    val localWritesDispatched: Boolean = true,
+    val pendingServerConfirmationCount: Int = 0,
     val pendingSyncCount: Int = 0,
     val isFinished: Boolean = false,
     val errorMessage: String? = null,

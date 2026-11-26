@@ -2,6 +2,7 @@ package com.example.data.finance
 
 import com.example.data.common.CompositeServerResultNotifier
 import com.example.data.common.attachServerResultListeners
+import com.example.data.common.singleShotResultCallback
 import com.example.data.log.ActivityLogDataSource
 import com.example.data.scout.ScoutFirestoreDataSource
 import com.example.domain.auth.AuthRepository
@@ -98,6 +99,7 @@ class FinanceRepositoryImpl(
         onAsyncFailure: ((Throwable) -> Unit)?,
         onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         val currentUser = authRepository.currentUser
         val currentUnitId = tx.unitId ?: authRepository.getCurrentLeader()?.unitId
         val prepared = tx.copy(unitId = currentUnitId)
@@ -105,19 +107,28 @@ class FinanceRepositoryImpl(
             tx = prepared,
             awaitServer = awaitServer,
             onAsyncFailure = onAsyncFailure,
-            onServerResult = onServerResult
+            onServerResult = safeOnServerResult
         )
         if (result.isSuccess) {
-            activityLogDataSource.logActivity(
-                userId = currentUser?.uid ?: "",
-                userName = currentUser?.displayName ?: "قائد كشفي",
-                action = "update",
-                targetType = "finance_transaction",
-                targetId = tx.id,
-                targetName = "${tx.type.arabicLabel}: ${tx.amount} دج",
-                details = "المبلغ المحدث: ${tx.amount} دج | البيان: ${tx.description.ifBlank { tx.type.arabicLabel }}",
-                unitId = currentUnitId
-            )
+            try {
+                activityLogDataSource.logActivity(
+                    userId = currentUser?.uid ?: "",
+                    userName = currentUser?.displayName ?: "قائد كشفي",
+                    action = "update",
+                    targetType = "finance_transaction",
+                    targetId = tx.id,
+                    targetName = "${tx.type.arabicLabel}: ${tx.amount} دج",
+                    details = "المبلغ المحدث: ${tx.amount} دج | البيان: ${tx.description.ifBlank { tx.type.arabicLabel }}",
+                    unitId = currentUnitId
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("FinanceRepo", "Error logging updateTransaction: ${e.message}", e)
+            }
+        } else {
+            val err = result.exceptionOrNull() ?: Exception("فشل تحديث المعاملة المالية")
+            safeOnServerResult?.invoke(Result.failure(err))
         }
         return result
     }
@@ -128,6 +139,7 @@ class FinanceRepositoryImpl(
         onAsyncFailure: ((Throwable) -> Unit)?,
         onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         return try {
             val currentUser = authRepository.currentUser
             val currentUnitId = transaction.unitId ?: authRepository.getCurrentLeader()?.unitId
@@ -170,7 +182,7 @@ class FinanceRepositoryImpl(
                     logTag = "FinanceRepo",
                     failureMessage = "Async failure upserting transaction ${preparedTx.id}",
                     onAsyncFailure = onAsyncFailure,
-                    onServerResult = onServerResult
+                    onServerResult = safeOnServerResult
                 )
                 docExists to preparedTx
             } else {
@@ -205,29 +217,35 @@ class FinanceRepositoryImpl(
                     tx.set(docRef, txMap)
                     docExists to preparedTx
                 }.await()
-                onServerResult?.invoke(Result.success(Unit))
+                safeOnServerResult?.invoke(Result.success(Unit))
                 res
             }
 
-            activityLogDataSource.logActivity(
-                userId = currentUser?.uid ?: "",
-                userName = currentUser?.displayName ?: "قائد كشفي",
-                action = if (exists) "update" else "add",
-                targetType = "finance_transaction",
-                targetId = prepared.id,
-                targetName = "${prepared.type.arabicLabel}: ${prepared.amount} دج",
-                details = if (exists) {
-                    "المبلغ المحدث: ${prepared.amount} دج | البيان: ${prepared.description.ifBlank { prepared.type.arabicLabel }}"
-                } else {
-                    "المبلغ: ${prepared.amount} دج | البيان: ${prepared.description.ifBlank { prepared.type.arabicLabel }}"
-                },
-                unitId = currentUnitId
-            )
+            try {
+                activityLogDataSource.logActivity(
+                    userId = currentUser?.uid ?: "",
+                    userName = currentUser?.displayName ?: "قائد كشفي",
+                    action = if (exists) "update" else "add",
+                    targetType = "finance_transaction",
+                    targetId = prepared.id,
+                    targetName = "${prepared.type.arabicLabel}: ${prepared.amount} دج",
+                    details = if (exists) {
+                        "المبلغ المحدث: ${prepared.amount} دج | البيان: ${prepared.description.ifBlank { prepared.type.arabicLabel }}"
+                    } else {
+                        "المبلغ: ${prepared.amount} دج | البيان: ${prepared.description.ifBlank { prepared.type.arabicLabel }}"
+                    },
+                    unitId = currentUnitId
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("FinanceRepo", "Error logging upsertTransaction: ${e.message}", e)
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            onServerResult?.invoke(Result.failure(e))
+            safeOnServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }
@@ -380,6 +398,7 @@ class FinanceRepositoryImpl(
         onAsyncFailure: ((Throwable) -> Unit)?,
         onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         return try {
             val currentUser = authRepository.currentUser
             val fallbackLeaderUnitId = if (sub.unitId == null) authRepository.getCurrentLeader()?.unitId else null
@@ -408,10 +427,10 @@ class FinanceRepositoryImpl(
                         logTag = "FinanceRepo",
                         failureMessage = "Async failure upserting subscription ${computed.prepared.id}",
                         onAsyncFailure = onAsyncFailure,
-                        onServerResult = onServerResult
+                        onServerResult = safeOnServerResult
                     )
                 } else {
-                    onServerResult?.invoke(Result.success(Unit))
+                    safeOnServerResult?.invoke(Result.success(Unit))
                 }
                 computed
             } else {
@@ -431,7 +450,7 @@ class FinanceRepositoryImpl(
                     }
                     computed
                 }.await()
-                onServerResult?.invoke(Result.success(Unit))
+                safeOnServerResult?.invoke(Result.success(Unit))
                 res
             }
 
@@ -450,21 +469,27 @@ class FinanceRepositoryImpl(
             } else {
                 "تسجيل اشتراك جديد: المطلوب: ${prepared.requiredAmount} دج | المدفوع: ${prepared.paidAmount} دج | الحالة: $statusLabel"
             }
-            activityLogDataSource.logActivity(
-                userId = currentUser?.uid ?: "",
-                userName = currentUser?.displayName ?: "قائد كشفي",
-                action = if (outcome.isNew) "add" else "update",
-                targetType = "finance_subscription",
-                targetId = prepared.id,
-                targetName = "اشتراك: ${prepared.scoutFullName}",
-                details = detailsText,
-                unitId = outcome.unitId
-            )
+            try {
+                activityLogDataSource.logActivity(
+                    userId = currentUser?.uid ?: "",
+                    userName = currentUser?.displayName ?: "قائد كشفي",
+                    action = if (outcome.isNew) "add" else "update",
+                    targetType = "finance_subscription",
+                    targetId = prepared.id,
+                    targetName = "اشتراك: ${prepared.scoutFullName}",
+                    details = detailsText,
+                    unitId = outcome.unitId
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("FinanceRepo", "Error logging upsertSubscription: ${e.message}", e)
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            onServerResult?.invoke(Result.failure(e))
+            safeOnServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }
@@ -526,6 +551,7 @@ class FinanceRepositoryImpl(
         onAsyncFailure: ((Throwable) -> Unit)?,
         onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         return try {
             val existing = if (awaitServer) {
                 dataSource.getSubscription(activityId, scoutId)
@@ -588,16 +614,21 @@ class FinanceRepositoryImpl(
                     updatedAt = System.currentTimeMillis()
                 )
             }
-            upsertSubscription(
+            val upsertResult = upsertSubscription(
                 sub = subToSave,
                 awaitServer = awaitServer,
                 onAsyncFailure = onAsyncFailure,
-                onServerResult = onServerResult
+                onServerResult = safeOnServerResult
             )
+            if (upsertResult.isFailure) {
+                val err = upsertResult.exceptionOrNull() ?: Exception("فشل حفظ اشتراك الشبل")
+                safeOnServerResult?.invoke(Result.failure(err))
+            }
+            upsertResult
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            onServerResult?.invoke(Result.failure(e))
+            safeOnServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }
@@ -615,8 +646,9 @@ class FinanceRepositoryImpl(
         onAsyncFailure: ((Throwable) -> Unit)?,
         onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         if (amountToPay <= 0 || scoutId.isBlank()) {
-            onServerResult?.invoke(Result.success(Unit))
+            safeOnServerResult?.invoke(Result.success(Unit))
             return Result.success(Unit)
         }
         return try {
@@ -625,7 +657,7 @@ class FinanceRepositoryImpl(
                     .filter { it.paidAmount < it.requiredAmount && it.debtAmount > 0 }
                     .sortedBy { it.activityDate }
                 if (cachedSubs.isEmpty()) {
-                    onServerResult?.invoke(Result.success(Unit))
+                    safeOnServerResult?.invoke(Result.success(Unit))
                     return Result.success(Unit)
                 }
 
@@ -638,7 +670,7 @@ class FinanceRepositoryImpl(
                     now = now
                 )
                 if (allocation.updatedSubscriptions.isEmpty()) {
-                    onServerResult?.invoke(Result.success(Unit))
+                    safeOnServerResult?.invoke(Result.success(Unit))
                     return Result.success(Unit)
                 }
 
@@ -651,8 +683,9 @@ class FinanceRepositoryImpl(
                     )
                 }
                 val chunks = preparedSubs.chunked(500)
-                val notifier = onServerResult?.let { CompositeServerResultNotifier(chunks.size, it) }
-                chunks.forEach { chunk ->
+                val notifier = safeOnServerResult?.let { CompositeServerResultNotifier(chunks.size, it) }
+                val chunkCallbacks = chunks.map { notifier?.childCallback() }
+                chunks.forEachIndexed { index, chunk ->
                     val batch = firestore.batch()
                     chunk.forEach { prepared ->
                         val docId = if (prepared.id.isNotBlank()) prepared.id else "${prepared.activityId}_${prepared.scoutId}"
@@ -663,20 +696,26 @@ class FinanceRepositoryImpl(
                         logTag = "FinanceRepo",
                         failureMessage = "Async failure paying scout debts for $scoutId",
                         onAsyncFailure = onAsyncFailure,
-                        onServerResult = notifier?.childCallback()
+                        onServerResult = chunkCallbacks[index]
                     )
                 }
                 val firstUpdatedSub = preparedSubs.first()
-                activityLogDataSource.logActivity(
-                    userId = currentUser?.uid ?: "",
-                    userName = currentUser?.displayName ?: "قائد كشفي",
-                    action = "update",
-                    targetType = "finance_subscription",
-                    targetId = firstUpdatedSub.id,
-                    targetName = "تسديد ديون: ${firstUpdatedSub.scoutFullName}",
-                    details = "تسديد مبلغ ${allocation.totalApplied} دج عبر ${preparedSubs.size} اشتراك(ات)",
-                    unitId = firstUpdatedSub.unitId ?: leaderUnitId
-                )
+                try {
+                    activityLogDataSource.logActivity(
+                        userId = currentUser?.uid ?: "",
+                        userName = currentUser?.displayName ?: "قائد كشفي",
+                        action = "update",
+                        targetType = "finance_subscription",
+                        targetId = firstUpdatedSub.id,
+                        targetName = "تسديد ديون: ${firstUpdatedSub.scoutFullName}",
+                        details = "تسديد مبلغ ${allocation.totalApplied} دج عبر ${preparedSubs.size} اشتراك(ات)",
+                        unitId = firstUpdatedSub.unitId ?: leaderUnitId
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("FinanceRepo", "Error logging payScoutDebts: ${e.message}", e)
+                }
                 return Result.success(Unit)
             }
 
@@ -686,7 +725,7 @@ class FinanceRepositoryImpl(
                 .map { (ref, _) -> ref }
 
             if (candidateRefs.isEmpty()) {
-                onServerResult?.invoke(Result.success(Unit))
+                safeOnServerResult?.invoke(Result.success(Unit))
                 return Result.success(Unit)
             }
 
@@ -749,25 +788,31 @@ class FinanceRepositoryImpl(
             }
 
             if (totalUpdatedCount > 0 && firstUpdatedSub != null) {
-                activityLogDataSource.logActivity(
-                    userId = currentUser?.uid ?: "",
-                    userName = currentUser?.displayName ?: "قائد كشفي",
-                    action = "update",
-                    targetType = "finance_subscription",
-                    targetId = firstUpdatedSub.id,
-                    targetName = "تسديد ديون: ${firstUpdatedSub.scoutFullName}",
-                    details = "تسديد مبلغ $totalPaidApplied دج عبر $totalUpdatedCount اشتراك(ات)",
-                    unitId = firstUpdatedSub.unitId ?: leaderUnitId
-                )
+                try {
+                    activityLogDataSource.logActivity(
+                        userId = currentUser?.uid ?: "",
+                        userName = currentUser?.displayName ?: "قائد كشفي",
+                        action = "update",
+                        targetType = "finance_subscription",
+                        targetId = firstUpdatedSub.id,
+                        targetName = "تسديد ديون: ${firstUpdatedSub.scoutFullName}",
+                        details = "تسديد مبلغ $totalPaidApplied دج عبر $totalUpdatedCount اشتراك(ات)",
+                        unitId = firstUpdatedSub.unitId ?: leaderUnitId
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("FinanceRepo", "Error logging payScoutDebts: ${e.message}", e)
+                }
             }
 
-            onServerResult?.invoke(Result.success(Unit))
+            safeOnServerResult?.invoke(Result.success(Unit))
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e("FinanceRepo", "Error paying scout debts: ${e.message}", e)
-            onServerResult?.invoke(Result.failure(e))
+            safeOnServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }
@@ -780,8 +825,9 @@ class FinanceRepositoryImpl(
         onAsyncFailure: ((Throwable) -> Unit)?,
         onServerResult: ((Result<Unit>) -> Unit)?
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         if (amountToRollback <= 0 || scoutId.isBlank()) {
-            onServerResult?.invoke(Result.success(Unit))
+            safeOnServerResult?.invoke(Result.success(Unit))
             return Result.success(Unit)
         }
         return try {
@@ -793,7 +839,7 @@ class FinanceRepositoryImpl(
                     }
                     .sortedBy { it.activityDate }
                 if (cachedSubs.isEmpty()) {
-                    onServerResult?.invoke(Result.success(Unit))
+                    safeOnServerResult?.invoke(Result.success(Unit))
                     return Result.success(Unit)
                 }
 
@@ -807,7 +853,7 @@ class FinanceRepositoryImpl(
                     now = now
                 )
                 if (allocation.updatedSubscriptions.isEmpty()) {
-                    onServerResult?.invoke(Result.success(Unit))
+                    safeOnServerResult?.invoke(Result.success(Unit))
                     return Result.success(Unit)
                 }
 
@@ -820,8 +866,9 @@ class FinanceRepositoryImpl(
                     )
                 }
                 val chunks = preparedSubs.chunked(500)
-                val notifier = onServerResult?.let { CompositeServerResultNotifier(chunks.size, it) }
-                chunks.forEach { chunk ->
+                val notifier = safeOnServerResult?.let { CompositeServerResultNotifier(chunks.size, it) }
+                val chunkCallbacks = chunks.map { notifier?.childCallback() }
+                chunks.forEachIndexed { index, chunk ->
                     val batch = firestore.batch()
                     chunk.forEach { prepared ->
                         val docId = if (prepared.id.isNotBlank()) prepared.id else "${prepared.activityId}_${prepared.scoutId}"
@@ -832,20 +879,26 @@ class FinanceRepositoryImpl(
                         logTag = "FinanceRepo",
                         failureMessage = "Async failure rolling back scout debts for $scoutId",
                         onAsyncFailure = onAsyncFailure,
-                        onServerResult = notifier?.childCallback()
+                        onServerResult = chunkCallbacks[index]
                     )
                 }
                 val firstUpdatedSub = preparedSubs.first()
-                activityLogDataSource.logActivity(
-                    userId = currentUser?.uid ?: "",
-                    userName = currentUser?.displayName ?: "قائد كشفي",
-                    action = "update",
-                    targetType = "finance_subscription",
-                    targetId = firstUpdatedSub.id,
-                    targetName = "التراجع عن تسديد ديون: ${firstUpdatedSub.scoutFullName}",
-                    details = "استرجاع مبلغ ${allocation.totalApplied} دج عبر ${preparedSubs.size} اشتراك(ات)",
-                    unitId = firstUpdatedSub.unitId ?: leaderUnitId
-                )
+                try {
+                    activityLogDataSource.logActivity(
+                        userId = currentUser?.uid ?: "",
+                        userName = currentUser?.displayName ?: "قائد كشفي",
+                        action = "update",
+                        targetType = "finance_subscription",
+                        targetId = firstUpdatedSub.id,
+                        targetName = "التراجع عن تسديد ديون: ${firstUpdatedSub.scoutFullName}",
+                        details = "استرجاع مبلغ ${allocation.totalApplied} دج عبر ${preparedSubs.size} اشتراك(ات)",
+                        unitId = firstUpdatedSub.unitId ?: leaderUnitId
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("FinanceRepo", "Error logging rollbackScoutDebts: ${e.message}", e)
+                }
                 return Result.success(Unit)
             }
 
@@ -858,7 +911,7 @@ class FinanceRepositoryImpl(
                 .map { (ref, _) -> ref }
 
             if (candidateRefs.isEmpty()) {
-                onServerResult?.invoke(Result.success(Unit))
+                safeOnServerResult?.invoke(Result.success(Unit))
                 return Result.success(Unit)
             }
 
@@ -922,25 +975,31 @@ class FinanceRepositoryImpl(
             }
 
             if (totalUpdatedCount > 0 && firstUpdatedSub != null) {
-                activityLogDataSource.logActivity(
-                    userId = currentUser?.uid ?: "",
-                    userName = currentUser?.displayName ?: "قائد كشفي",
-                    action = "update",
-                    targetType = "finance_subscription",
-                    targetId = firstUpdatedSub.id,
-                    targetName = "التراجع عن تسديد ديون: ${firstUpdatedSub.scoutFullName}",
-                    details = "استرجاع مبلغ $totalRolledBack دج عبر $totalUpdatedCount اشتراك(ات)",
-                    unitId = firstUpdatedSub.unitId ?: leaderUnitId
-                )
+                try {
+                    activityLogDataSource.logActivity(
+                        userId = currentUser?.uid ?: "",
+                        userName = currentUser?.displayName ?: "قائد كشفي",
+                        action = "update",
+                        targetType = "finance_subscription",
+                        targetId = firstUpdatedSub.id,
+                        targetName = "التراجع عن تسديد ديون: ${firstUpdatedSub.scoutFullName}",
+                        details = "استرجاع مبلغ $totalRolledBack دج عبر $totalUpdatedCount اشتراك(ات)",
+                        unitId = firstUpdatedSub.unitId ?: leaderUnitId
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("FinanceRepo", "Error logging rollbackScoutDebts: ${e.message}", e)
+                }
             }
 
-            onServerResult?.invoke(Result.success(Unit))
+            safeOnServerResult?.invoke(Result.success(Unit))
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e("FinanceRepo", "Error rolling back scout debts: ${e.message}", e)
-            onServerResult?.invoke(Result.failure(e))
+            safeOnServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }

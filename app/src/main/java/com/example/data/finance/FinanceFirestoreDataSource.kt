@@ -2,6 +2,7 @@ package com.example.data.finance
 
 import android.util.Log
 import com.example.data.common.attachServerResultListeners
+import com.example.data.common.singleShotResultCallback
 import com.example.data.firestore.safeBoolean
 import com.example.data.firestore.safeInt
 import com.example.data.firestore.safeLong
@@ -121,29 +122,30 @@ class FinanceFirestoreDataSource(
         onAsyncFailure: ((Throwable) -> Unit)? = null,
         onServerResult: ((Result<Unit>) -> Unit)? = null
     ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
         if (tx.id.isBlank()) {
             val err = IllegalArgumentException("معرف المعاملة مفقود")
-            onServerResult?.invoke(Result.failure(err))
+            safeOnServerResult?.invoke(Result.failure(err))
             return Result.failure(err)
         }
         return try {
             val task = transactionsCollection.document(tx.id).set(mapTransactionToMap(tx))
             if (awaitServer) {
                 task.await()
-                onServerResult?.invoke(Result.success(Unit))
+                safeOnServerResult?.invoke(Result.success(Unit))
             } else {
                 task.attachServerResultListeners(
                     logTag = "FinanceFirestoreDS",
                     failureMessage = "Async failure updating transaction ${tx.id}",
                     onAsyncFailure = onAsyncFailure,
-                    onServerResult = onServerResult
+                    onServerResult = safeOnServerResult
                 )
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            onServerResult?.invoke(Result.failure(e))
+            safeOnServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
     }
