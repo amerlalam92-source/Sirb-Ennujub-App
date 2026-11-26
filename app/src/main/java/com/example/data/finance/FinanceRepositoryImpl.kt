@@ -3,19 +3,32 @@ package com.example.data.finance
 import com.example.data.common.CompositeServerResultNotifier
 import com.example.data.common.attachServerResultListeners
 import com.example.data.common.singleShotResultCallback
+import com.example.data.firestore.safeInt
+import com.example.data.firestore.safeNullableInt
+import com.example.data.firestore.safeNullableString
+import com.example.data.firestore.safeString
 import com.example.data.log.ActivityLogDataSource
 import com.example.data.scout.ScoutFirestoreDataSource
 import com.example.domain.auth.AuthRepository
 import com.example.domain.finance.DebtAllocationCalculator
+import com.example.domain.finance.DebtAllocationResult
+import com.example.domain.finance.FinanceMaintenancePolicy
+import com.example.domain.finance.FinanceMaintenanceReport
 import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.FinanceSettings
 import com.example.domain.finance.FinanceSubscription
 import com.example.domain.finance.FinanceSummary
 import com.example.domain.finance.FinanceTransaction
 import com.example.domain.finance.FinanceTransactionType
+import com.example.domain.finance.OfflineDebtBatchOp
+import com.example.domain.finance.OfflineDebtPaymentBatchPlanner
 import com.example.domain.finance.ScoutDebt
+import com.example.domain.finance.StoredScoutCreditState
+import com.example.domain.finance.StoredSubscriptionState
+import com.example.domain.finance.SubscriptionDeltaPlanner
 import com.example.domain.finance.SubscriptionStatus
 import android.util.Log
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Source
 import java.text.SimpleDateFormat
@@ -152,30 +165,12 @@ class FinanceRepositoryImpl(
             val now = System.currentTimeMillis()
 
             val (exists, prepared) = if (!awaitServer) {
-                val existingTx = try {
-                    dataSource.observeAllTransactions().first().find { it.id == docRef.id }
-                } catch (_: Exception) {
-                    null
-                }
-                val docExists = existingTx != null
-                val preparedTx = transaction.copy(
-                    id = docRef.id,
-                    unitId = currentUnitId,
-                    createdBy = when {
-                        transaction.createdBy.isNotBlank() -> transaction.createdBy
-                        !existingTx?.createdBy.isNullOrBlank() -> existingTx!!.createdBy
-                        else -> currentUser?.uid ?: ""
-                    },
-                    createdByName = when {
-                        transaction.createdByName.isNotBlank() -> transaction.createdByName
-                        !existingTx?.createdByName.isNullOrBlank() -> existingTx!!.createdByName
-                        else -> currentUser?.displayName ?: "قائد كشفي"
-                    },
-                    createdAt = when {
-                        transaction.createdAt > 0 -> transaction.createdAt
-                        (existingTx?.createdAt ?: 0L) > 0 -> existingTx!!.createdAt
-                        else -> now
-                    }
+                val (docExists, preparedTx) = prepareTransactionForUpsertOffline(
+                    transaction = transaction,
+                    docId = docRef.id,
+                    currentUnitId = currentUnitId,
+                    currentUser = currentUser,
+                    now = now
                 )
                 val task = docRef.set(dataSource.mapTransactionToMap(preparedTx))
                 task.attachServerResultListeners(
@@ -248,6 +243,41 @@ class FinanceRepositoryImpl(
             safeOnServerResult?.invoke(Result.failure(e))
             Result.failure(e)
         }
+    }
+
+    private suspend fun prepareTransactionForUpsertOffline(
+        transaction: FinanceTransaction,
+        docId: String,
+        currentUnitId: String?,
+        currentUser: com.google.firebase.auth.FirebaseUser?,
+        now: Long
+    ): Pair<Boolean, FinanceTransaction> {
+        val existingTx = try {
+            dataSource.observeAllTransactions().first().find { it.id == docId }
+        } catch (_: Exception) {
+            null
+        }
+        val docExists = existingTx != null
+        val preparedTx = transaction.copy(
+            id = docId,
+            unitId = currentUnitId,
+            createdBy = when {
+                transaction.createdBy.isNotBlank() -> transaction.createdBy
+                !existingTx?.createdBy.isNullOrBlank() -> existingTx!!.createdBy
+                else -> currentUser?.uid ?: ""
+            },
+            createdByName = when {
+                transaction.createdByName.isNotBlank() -> transaction.createdByName
+                !existingTx?.createdByName.isNullOrBlank() -> existingTx!!.createdByName
+                else -> currentUser?.displayName ?: "قائد كشفي"
+            },
+            createdAt = when {
+                transaction.createdAt > 0 -> transaction.createdAt
+                (existingTx?.createdAt ?: 0L) > 0 -> existingTx!!.createdAt
+                else -> now
+            }
+        )
+        return docExists to preparedTx
     }
 
     override suspend fun deleteTransaction(id: String): Result<Unit> {
@@ -422,7 +452,18 @@ class FinanceRepositoryImpl(
                     now = now
                 )
                 if (computed.changed) {
-                    val task = docRef.set(dataSource.mapSubscriptionToMap(computed.prepared))
+                    val task = if (existing != null) {
+                        val paidDelta = computed.prepared.paidAmount - existing.paidAmount
+                        docRef.update(
+                            FinanceFirestoreDataSource.buildExistingSubscriptionUpdateMap(
+                                prepared = computed.prepared,
+                                existing = existing,
+                                paidDelta = paidDelta
+                            )
+                        )
+                    } else {
+                        docRef.set(dataSource.mapSubscriptionToMap(computed.prepared))
+                    }
                     task.attachServerResultListeners(
                         logTag = "FinanceRepo",
                         failureMessage = "Async failure upserting subscription ${computed.prepared.id}",
@@ -644,77 +685,163 @@ class FinanceRepositoryImpl(
         amountToPay: Int,
         awaitServer: Boolean,
         onAsyncFailure: ((Throwable) -> Unit)?,
-        onServerResult: ((Result<Unit>) -> Unit)?
+        onServerResult: ((Result<Unit>) -> Unit)?,
+        auditTransaction: FinanceTransaction?,
+        creditDelta: Int
     ): Result<Unit> {
         val safeOnServerResult = singleShotResultCallback(onServerResult)
-        if (amountToPay <= 0 || scoutId.isBlank()) {
+        if (scoutId.isBlank() || (amountToPay <= 0 && (awaitServer || (auditTransaction == null && creditDelta == 0)))) {
             safeOnServerResult?.invoke(Result.success(Unit))
             return Result.success(Unit)
         }
         return try {
             if (!awaitServer) {
-                val cachedSubs = dataSource.observeSubscriptionsForScout(scoutId).first()
-                    .filter { it.paidAmount < it.requiredAmount && it.debtAmount > 0 }
-                    .sortedBy { it.activityDate }
-                if (cachedSubs.isEmpty()) {
-                    safeOnServerResult?.invoke(Result.success(Unit))
-                    return Result.success(Unit)
-                }
-
                 val currentUser = authRepository.currentUser
                 val leaderUnitId = authRepository.getCurrentLeader()?.unitId
                 val now = System.currentTimeMillis()
-                val allocation = DebtAllocationCalculator.allocatePayment(
-                    subscriptions = cachedSubs,
-                    amountToPay = amountToPay,
-                    now = now
+
+                val cachedSubs = if (amountToPay > 0) {
+                    dataSource.observeSubscriptionsForScout(scoutId).first()
+                        .filter { it.paidAmount < it.requiredAmount && it.debtAmount > 0 }
+                        .sortedBy { it.activityDate }
+                } else {
+                    emptyList()
+                }
+                val allocation = if (cachedSubs.isNotEmpty() && amountToPay > 0) {
+                    DebtAllocationCalculator.allocatePayment(
+                        subscriptions = cachedSubs,
+                        amountToPay = amountToPay,
+                        now = now
+                    )
+                } else {
+                    DebtAllocationResult(emptyList(), 0, amountToPay.coerceAtLeast(0))
+                }
+                val deltas = SubscriptionDeltaPlanner.planFromAllocation(
+                    originalSubscriptions = cachedSubs,
+                    allocation = allocation,
+                    fallbackUnitId = leaderUnitId,
+                    fallbackRecordedBy = currentUser?.uid,
+                    fallbackRecordedByName = currentUser?.displayName ?: "قائد كشفي"
                 )
-                if (allocation.updatedSubscriptions.isEmpty()) {
+                val preparedAuditTx = auditTransaction?.let { tx ->
+                    val txDocId = tx.id.ifBlank { firestore.collection(FinanceFirestoreDataSource.COLLECTION_TRANSACTIONS).document().id }
+                    val txUnitId = tx.unitId ?: leaderUnitId
+                    prepareTransactionForUpsertOffline(
+                        transaction = tx,
+                        docId = txDocId,
+                        currentUnitId = txUnitId,
+                        currentUser = currentUser,
+                        now = now
+                    ).second
+                }
+                val plannedBatches = OfflineDebtPaymentBatchPlanner.planBatches(
+                    subscriptionDeltas = deltas,
+                    auditTransaction = preparedAuditTx,
+                    scoutId = scoutId,
+                    creditDelta = creditDelta
+                )
+                if (plannedBatches.isEmpty()) {
                     safeOnServerResult?.invoke(Result.success(Unit))
                     return Result.success(Unit)
                 }
 
                 val subCol = firestore.collection(FinanceFirestoreDataSource.COLLECTION_SUBSCRIPTIONS)
-                val preparedSubs = allocation.updatedSubscriptions.map { updated ->
-                    updated.copy(
-                        unitId = updated.unitId ?: leaderUnitId,
-                        recordedBy = updated.recordedBy.ifBlank { currentUser?.uid ?: "" },
-                        recordedByName = updated.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" }
-                    )
-                }
-                val chunks = preparedSubs.chunked(500)
-                val notifier = safeOnServerResult?.let { CompositeServerResultNotifier(chunks.size, it) }
-                val chunkCallbacks = chunks.map { notifier?.childCallback() }
-                chunks.forEachIndexed { index, chunk ->
+                val txCol = firestore.collection(FinanceFirestoreDataSource.COLLECTION_TRANSACTIONS)
+                val scoutCol = firestore.collection(ScoutFirestoreDataSource.COLLECTION_SCOUTS)
+                val notifier = safeOnServerResult?.let { CompositeServerResultNotifier(plannedBatches.size, it) }
+                val batchCallbacks = plannedBatches.map { notifier?.childCallback() }
+
+                plannedBatches.forEachIndexed { index, ops ->
                     val batch = firestore.batch()
-                    chunk.forEach { prepared ->
-                        val docId = if (prepared.id.isNotBlank()) prepared.id else "${prepared.activityId}_${prepared.scoutId}"
-                        batch.set(subCol.document(docId), dataSource.mapSubscriptionToMap(prepared))
+                    for (op in ops) {
+                        when (op) {
+                            is OfflineDebtBatchOp.SubscriptionIncrement -> {
+                                batch.update(
+                                    subCol.document(op.delta.docId),
+                                    FinanceFirestoreDataSource.buildSubscriptionPaidDeltaUpdateMap(op.delta)
+                                )
+                            }
+                            is OfflineDebtBatchOp.AuditTransactionSet -> {
+                                batch.set(
+                                    txCol.document(op.transaction.id),
+                                    dataSource.mapTransactionToMap(op.transaction)
+                                )
+                            }
+                            is OfflineDebtBatchOp.ScoutCreditIncrement -> {
+                                batch.update(
+                                    scoutCol.document(op.scoutId),
+                                    ScoutFirestoreDataSource.buildAdjustCreditBalanceUpdateMap(
+                                        delta = op.delta,
+                                        updatedAt = now,
+                                        updatedBy = currentUser?.uid ?: ""
+                                    )
+                                )
+                            }
+                        }
                     }
                     val commitTask = batch.commit()
                     commitTask.attachServerResultListeners(
                         logTag = "FinanceRepo",
-                        failureMessage = "Async failure paying scout debts for $scoutId",
+                        failureMessage = "Async failure paying scout debts batch for $scoutId",
                         onAsyncFailure = onAsyncFailure,
-                        onServerResult = chunkCallbacks[index]
+                        onServerResult = batchCallbacks[index]
                     )
                 }
-                val firstUpdatedSub = preparedSubs.first()
-                try {
-                    activityLogDataSource.logActivity(
-                        userId = currentUser?.uid ?: "",
-                        userName = currentUser?.displayName ?: "قائد كشفي",
-                        action = "update",
-                        targetType = "finance_subscription",
-                        targetId = firstUpdatedSub.id,
-                        targetName = "تسديد ديون: ${firstUpdatedSub.scoutFullName}",
-                        details = "تسديد مبلغ ${allocation.totalApplied} دج عبر ${preparedSubs.size} اشتراك(ات)",
-                        unitId = firstUpdatedSub.unitId ?: leaderUnitId
-                    )
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.w("FinanceRepo", "Error logging payScoutDebts: ${e.message}", e)
+
+                val firstUpdatedSub = allocation.updatedSubscriptions.firstOrNull()
+                if (deltas.isNotEmpty() && firstUpdatedSub != null) {
+                    try {
+                        activityLogDataSource.logActivity(
+                            userId = currentUser?.uid ?: "",
+                            userName = currentUser?.displayName ?: "قائد كشفي",
+                            action = "update",
+                            targetType = "finance_subscription",
+                            targetId = firstUpdatedSub.id,
+                            targetName = "تسديد ديون: ${firstUpdatedSub.scoutFullName}",
+                            details = "تسديد مبلغ ${allocation.totalApplied} دج عبر ${deltas.size} اشتراك(ات)",
+                            unitId = firstUpdatedSub.unitId ?: leaderUnitId
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w("FinanceRepo", "Error logging payScoutDebts: ${e.message}", e)
+                    }
+                }
+                if (preparedAuditTx != null) {
+                    try {
+                        activityLogDataSource.logActivity(
+                            userId = currentUser?.uid ?: "",
+                            userName = currentUser?.displayName ?: "قائد كشفي",
+                            action = "add",
+                            targetType = "finance_transaction",
+                            targetId = preparedAuditTx.id,
+                            targetName = "${preparedAuditTx.type.arabicLabel}: ${preparedAuditTx.amount} دج",
+                            details = "المبلغ: ${preparedAuditTx.amount} دج | البيان: ${preparedAuditTx.description.ifBlank { preparedAuditTx.type.arabicLabel }}",
+                            unitId = preparedAuditTx.unitId ?: leaderUnitId
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w("FinanceRepo", "Error logging batch auditTransaction: ${e.message}", e)
+                    }
+                }
+                if (creditDelta != 0) {
+                    try {
+                        activityLogDataSource.logActivity(
+                            userId = currentUser?.uid ?: "",
+                            userName = currentUser?.displayName ?: "قائد كشفي",
+                            action = "update",
+                            targetType = "scout",
+                            targetId = scoutId,
+                            targetName = preparedAuditTx?.source ?: firstUpdatedSub?.scoutFullName ?: scoutId,
+                            details = "إضافة رصيد مقدم: +$creditDelta دج",
+                            unitId = leaderUnitId
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w("FinanceRepo", "Error logging batch creditDelta: ${e.message}", e)
+                    }
                 }
                 return Result.success(Unit)
             }
@@ -852,27 +979,29 @@ class FinanceRepositoryImpl(
                     excludeActivityId = excludeActivityId,
                     now = now
                 )
-                if (allocation.updatedSubscriptions.isEmpty()) {
+                val deltas = SubscriptionDeltaPlanner.planFromAllocation(
+                    originalSubscriptions = cachedSubs,
+                    allocation = allocation,
+                    fallbackUnitId = leaderUnitId,
+                    fallbackRecordedBy = currentUser?.uid,
+                    fallbackRecordedByName = currentUser?.displayName ?: "قائد كشفي"
+                )
+                if (deltas.isEmpty()) {
                     safeOnServerResult?.invoke(Result.success(Unit))
                     return Result.success(Unit)
                 }
 
                 val subCol = firestore.collection(FinanceFirestoreDataSource.COLLECTION_SUBSCRIPTIONS)
-                val preparedSubs = allocation.updatedSubscriptions.map { updated ->
-                    updated.copy(
-                        unitId = updated.unitId ?: leaderUnitId,
-                        recordedBy = updated.recordedBy.ifBlank { currentUser?.uid ?: "" },
-                        recordedByName = updated.recordedByName.ifBlank { currentUser?.displayName ?: "قائد كشفي" }
-                    )
-                }
-                val chunks = preparedSubs.chunked(500)
+                val chunks = deltas.chunked(500)
                 val notifier = safeOnServerResult?.let { CompositeServerResultNotifier(chunks.size, it) }
                 val chunkCallbacks = chunks.map { notifier?.childCallback() }
                 chunks.forEachIndexed { index, chunk ->
                     val batch = firestore.batch()
-                    chunk.forEach { prepared ->
-                        val docId = if (prepared.id.isNotBlank()) prepared.id else "${prepared.activityId}_${prepared.scoutId}"
-                        batch.set(subCol.document(docId), dataSource.mapSubscriptionToMap(prepared))
+                    chunk.forEach { delta ->
+                        batch.update(
+                            subCol.document(delta.docId),
+                            FinanceFirestoreDataSource.buildSubscriptionPaidDeltaUpdateMap(delta)
+                        )
                     }
                     val commitTask = batch.commit()
                     commitTask.attachServerResultListeners(
@@ -882,7 +1011,7 @@ class FinanceRepositoryImpl(
                         onServerResult = chunkCallbacks[index]
                     )
                 }
-                val firstUpdatedSub = preparedSubs.first()
+                val firstUpdatedSub = allocation.updatedSubscriptions.first()
                 try {
                     activityLogDataSource.logActivity(
                         userId = currentUser?.uid ?: "",
@@ -891,7 +1020,7 @@ class FinanceRepositoryImpl(
                         targetType = "finance_subscription",
                         targetId = firstUpdatedSub.id,
                         targetName = "التراجع عن تسديد ديون: ${firstUpdatedSub.scoutFullName}",
-                        details = "استرجاع مبلغ ${allocation.totalApplied} دج عبر ${preparedSubs.size} اشتراك(ات)",
+                        details = "استرجاع مبلغ ${allocation.totalApplied} دج عبر ${deltas.size} اشتراك(ات)",
                         unitId = firstUpdatedSub.unitId ?: leaderUnitId
                     )
                 } catch (e: CancellationException) {
@@ -1322,6 +1451,137 @@ class FinanceRepositoryImpl(
         } catch (e: Exception) {
             Log.e("FinanceCleanup", "Error cleaning orphaned records", e)
             Result.failure(e)
+        }
+    }
+
+    override suspend fun reconcileFinancialBalances(): Result<FinanceMaintenanceReport> {
+        return try {
+            val subsSnapshot = firestore.collection(FinanceFirestoreDataSource.COLLECTION_SUBSCRIPTIONS)
+                .get(Source.SERVER)
+                .await()
+            val scoutsSnapshot = firestore.collection(ScoutFirestoreDataSource.COLLECTION_SCOUTS)
+                .get(Source.SERVER)
+                .await()
+
+            val subRefsById = mutableMapOf<String, DocumentReference>()
+            val storedSubs = subsSnapshot.documents.map { doc ->
+                subRefsById[doc.id] = doc.reference
+                val rawReq = doc.safeInt("requiredAmount", 0)
+                val rawPaid = doc.safeInt("paidAmount", 0)
+                val rawDebt = doc.safeNullableInt("debtAmount")
+                val scoutName = (doc.safeNullableString("scoutFullName") ?: doc.safeString("scoutName"))
+                val actTitle = (doc.safeNullableString("activityTitle") ?: doc.safeString("title"))
+                StoredSubscriptionState(
+                    id = doc.id,
+                    scoutFullName = scoutName,
+                    activityTitle = actTitle,
+                    requiredAmount = rawReq,
+                    storedPaidAmount = rawPaid,
+                    storedDebtAmount = rawDebt
+                )
+            }
+
+            val scoutRefsById = mutableMapOf<String, DocumentReference>()
+            val storedScouts = scoutsSnapshot.documents.map { doc ->
+                scoutRefsById[doc.id] = doc.reference
+                val name = doc.safeString("name")
+                val surname = doc.safeString("surname")
+                val fullName = "$name $surname".trim().ifBlank { doc.safeString("fullName") }
+                StoredScoutCreditState(
+                    id = doc.id,
+                    fullName = fullName,
+                    storedCreditBalance = doc.safeInt("creditBalance", 0)
+                )
+            }
+
+            val plan = FinanceMaintenancePolicy.planReconciliation(storedSubs, storedScouts)
+            val now = System.currentTimeMillis()
+            val pendingUpdates = mutableListOf<Pair<DocumentReference, Map<String, Any>>>()
+
+            var negativePaidFixed = 0
+            var debtMismatchFixed = 0
+            for (fix in plan.subscriptionFixes) {
+                val ref = subRefsById[fix.subscriptionId] ?: continue
+                val fields = mutableMapOf<String, Any>("updatedAt" to now)
+                if (fix.newPaidAmount != null) {
+                    fields["paidAmount"] = fix.newPaidAmount
+                    negativePaidFixed++
+                }
+                if (fix.newDebtAmount != null) {
+                    fields["debtAmount"] = fix.newDebtAmount
+                    debtMismatchFixed++
+                }
+                if (fields.size > 1) {
+                    pendingUpdates.add(ref to fields)
+                }
+            }
+
+            var negativeCreditFixed = 0
+            for (fix in plan.creditFixes) {
+                val ref = scoutRefsById[fix.scoutId] ?: continue
+                pendingUpdates.add(
+                    ref to mapOf(
+                        "creditBalance" to fix.newCreditBalance,
+                        "updatedAt" to now
+                    )
+                )
+                negativeCreditFixed++
+            }
+
+            pendingUpdates.chunked(500).forEach { chunk ->
+                val batch = firestore.batch()
+                chunk.forEach { (ref, fields) ->
+                    batch.update(ref, fields)
+                }
+                batch.commit().await()
+            }
+
+            val currentUser = authRepository.currentUser
+            val currentUnitId = authRepository.getCurrentLeader()?.unitId
+            try {
+                activityLogDataSource.logActivity(
+                    userId = currentUser?.uid ?: "",
+                    userName = currentUser?.displayName ?: "قائد كشفي",
+                    action = "reconcile_finance_balances",
+                    targetType = "finance",
+                    targetId = "balances_maintenance",
+                    targetName = "فحص وتصحيح الأرصدة المالية",
+                    details = "فحص ${storedSubs.size} اشتراكاً و ${storedScouts.size} شبلاً | مدفوعات سالبة مصححة: $negativePaidFixed | ديون محدثة: $debtMismatchFixed | أرصدة سالبة مصححة: $negativeCreditFixed | مدفوعات زائدة للمراجعة: ${plan.overpayments.size}",
+                    meta = mapOf(
+                        "subscriptionsChecked" to storedSubs.size,
+                        "scoutsChecked" to storedScouts.size,
+                        "negativePaidFixed" to negativePaidFixed,
+                        "debtMismatchFixed" to debtMismatchFixed,
+                        "negativeCreditFixed" to negativeCreditFixed,
+                        "overpaymentsCount" to plan.overpayments.size
+                    ),
+                    unitId = currentUnitId
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("FinanceRepo", "Error logging reconcileFinancialBalances: ${e.message}", e)
+            }
+
+            Result.success(
+                FinanceMaintenanceReport(
+                    subscriptionsChecked = storedSubs.size,
+                    scoutsChecked = storedScouts.size,
+                    negativePaidFixed = negativePaidFixed,
+                    debtMismatchFixed = debtMismatchFixed,
+                    negativeCreditFixed = negativeCreditFixed,
+                    overpayments = plan.overpayments
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(
+                Exception(
+                    "تتطلب هذه العملية اتصالاً مستقراً بالإنترنت. تم إيقاف الصيانة لحماية البيانات، وأي تغييرات تم تطبيقها مسبقاً آمنة ويمكنك إعادة تشغيل العملية بأمان.",
+                    e
+                )
+            )
         }
     }
 

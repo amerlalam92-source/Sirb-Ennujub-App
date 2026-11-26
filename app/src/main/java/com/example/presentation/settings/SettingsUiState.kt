@@ -2,6 +2,7 @@ package com.example.presentation.settings
 
 import com.example.domain.auth.Leader
 import com.example.domain.evaluation.EvaluationCriteria
+import com.example.domain.finance.FinanceMaintenanceReport
 
 enum class FinanceField {
     PRESENT_AMOUNT,
@@ -52,6 +53,8 @@ data class SettingsUiState(
 
     // صيانة البيانات والحالات العامة
     val isRecalculatingAttendance: Boolean = false,
+    val isReconcilingFinance: Boolean = false,
+    val financeMaintenanceReport: FinanceMaintenanceReport? = null,
     val isLoading: Boolean = false,
     val isSaving: Boolean = false
 ) {

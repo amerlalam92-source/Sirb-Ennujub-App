@@ -54,7 +54,9 @@ interface FinanceRepository {
         amountToPay: Int,
         awaitServer: Boolean = true,
         onAsyncFailure: ((Throwable) -> Unit)? = null,
-        onServerResult: ((Result<Unit>) -> Unit)? = null
+        onServerResult: ((Result<Unit>) -> Unit)? = null,
+        auditTransaction: FinanceTransaction? = null,
+        creditDelta: Int = 0
     ): Result<Unit>
     suspend fun rollbackScoutDebts(
         scoutId: String,
@@ -77,5 +79,6 @@ interface FinanceRepository {
 
     // === Maintenance & Cascade Deletion (الصيانة والحذف المتتالي) ===
     suspend fun cleanupOrphanedRecords(): Result<Int>
+    suspend fun reconcileFinancialBalances(): Result<FinanceMaintenanceReport>
     suspend fun deleteCollectionsForActivity(activityId: String): Result<Unit>
 }

@@ -194,9 +194,17 @@ class AttendanceViewModel(
     private val cachedRequiredAmounts = mutableMapOf<SubscriptionStatus, Int>()
     private val scoutsWithReversibleTxs: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val failedSaveTasks = ConcurrentHashMap<String, SaveQueueItem.PersistScout>()
+    private data class RollbackTxStepKey(
+        val scoutKey: String,
+        val snapshot: FinanceSnapshot?,
+        val txId: String
+    )
+
     private val completedReverseStep = ConcurrentHashMap<String, FinanceSnapshot>()
+    private val completedUpsertSubStep = ConcurrentHashMap<String, FinanceSnapshot>()
     private val completedPayDebtStep = ConcurrentHashMap<String, FinanceSnapshot>()
     private val completedAddCreditStep = ConcurrentHashMap<String, FinanceSnapshot>()
+    private val completedRollbackTxSteps: MutableSet<RollbackTxStepKey> = ConcurrentHashMap.newKeySet()
     private val perScoutLocalJobs = ConcurrentHashMap<String, Job>()
     private var transactionsPreloaded = false
     private var currentSessionActivityId: String? = null
@@ -852,8 +860,10 @@ class AttendanceViewModel(
         scoutsWithReversibleTxs.removeAll { it.startsWith(prefix) }
         failedSaveTasks.keys.removeAll { it.startsWith(prefix) }
         completedReverseStep.keys.removeAll { it.startsWith(prefix) }
+        completedUpsertSubStep.keys.removeAll { it.startsWith(prefix) }
         completedPayDebtStep.keys.removeAll { it.startsWith(prefix) }
         completedAddCreditStep.keys.removeAll { it.startsWith(prefix) }
+        completedRollbackTxSteps.removeAll { it.scoutKey.startsWith(prefix) }
         perScoutLocalJobs.keys.removeAll { it.startsWith(prefix) }
         transactionsPreloaded = false
         sessionHadPendingSync = false
@@ -1321,6 +1331,7 @@ class AttendanceViewModel(
         activityId: String,
         scoutId: String,
         scoutName: String = "",
+        snapshot: FinanceSnapshot? = null,
         queueItem: SaveQueueItem.PersistScout? = null,
         collectServerConfirmation: ((CompletableDeferred<Result<Unit>>) -> Unit)? = null
     ): Result<Unit> {
@@ -1330,12 +1341,6 @@ class AttendanceViewModel(
             return Result.success(Unit)
         }
         val label = scoutName.ifBlank { queueItem?.scout?.fullName ?: scoutId }
-        val rollbackFailure = queueItem?.let {
-            makeAsyncFailureHandler(it, "تعذر التراجع عن سداد ديون الشبل $label")
-        }
-        val deductFailure = queueItem?.let {
-            makeAsyncFailureHandler(it, "تعذر خصم الرصيد المقدم للشبل $label")
-        }
         val updateTxFailure = queueItem?.let {
             makeAsyncFailureHandler(it, "تعذر تحديث سجل المعاملة السابقة للشبل $label")
         }
@@ -1352,9 +1357,23 @@ class AttendanceViewModel(
 
             for (tx in existingTxs) {
                 if (tx.isRolledBack) continue
+                val rollbackStepKey = RollbackTxStepKey(key, snapshot, tx.id)
                 when (tx.type) {
                     FinanceTransactionType.DEBT_PAYMENT -> {
-                        if (tx.amount > 0) {
+                        if (tx.amount > 0 && rollbackStepKey !in completedRollbackTxSteps) {
+                            // FieldValue.increment ليس متكرر الأثر (non-idempotent): نسجل علامة الإرسال قبل عودة الاستدعاء،
+                            // ولا تُحذف إلا عند فشل متزامن قبل الإرسال أو رفض غير مؤقت من الخادم (لأن المهلة أو UNAVAILABLE تبقي الكتابة في الكاش المحلي).
+                            completedRollbackTxSteps.add(rollbackStepKey)
+                            val rollbackFailure = queueItem?.let {
+                                makeAsyncFailureHandler(
+                                    item = it,
+                                    description = "تعذر التراجع عن سداد ديون الشبل $label",
+                                    onNonTransient = {
+                                        completedRollbackTxSteps.remove(rollbackStepKey)
+                                        completedReverseStep.remove(key)
+                                    }
+                                )
+                            }
                             val rollbackDeferred = CompletableDeferred<Result<Unit>>().also { trackedDeferreds.add(it) }
                             trackServerConfirmation(rollbackDeferred, collectServerConfirmation)
                             val rollbackResult = financeRepository.rollbackScoutDebts(
@@ -1363,12 +1382,19 @@ class AttendanceViewModel(
                                 excludeActivityId = activityId,
                                 awaitServer = false,
                                 onAsyncFailure = rollbackFailure,
-                                onServerResult = { res -> rollbackDeferred.complete(res) }
+                                onServerResult = { res ->
+                                    if (res.isFailure && !isRecoverableOfflineOrTransient(res.exceptionOrNull())) {
+                                        completedRollbackTxSteps.remove(rollbackStepKey)
+                                        completedReverseStep.remove(key)
+                                    }
+                                    rollbackDeferred.complete(res)
+                                }
                             )
-                            if (!rollbackDeferred.isCompleted && rollbackResult.isFailure) {
-                                rollbackDeferred.complete(rollbackResult)
-                            }
                             if (rollbackResult.isFailure) {
+                                completedRollbackTxSteps.remove(rollbackStepKey)
+                                if (!rollbackDeferred.isCompleted) {
+                                    rollbackDeferred.complete(rollbackResult)
+                                }
                                 return Result.failure(
                                     Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.")
                                 )
@@ -1376,7 +1402,19 @@ class AttendanceViewModel(
                         }
                     }
                     FinanceTransactionType.ADVANCE_PAYMENT -> {
-                        if (tx.amount > 0) {
+                        if (tx.amount > 0 && rollbackStepKey !in completedRollbackTxSteps) {
+                            // حراسة عدم تكرار خصم الرصيد المقدم بالطريقة نفسها: لا يُعاد الإرسال بعد المهلة أو UNAVAILABLE.
+                            completedRollbackTxSteps.add(rollbackStepKey)
+                            val deductFailure = queueItem?.let {
+                                makeAsyncFailureHandler(
+                                    item = it,
+                                    description = "تعذر خصم الرصيد المقدم للشبل $label",
+                                    onNonTransient = {
+                                        completedRollbackTxSteps.remove(rollbackStepKey)
+                                        completedReverseStep.remove(key)
+                                    }
+                                )
+                            }
                             val deductDeferred = CompletableDeferred<Result<Unit>>().also { trackedDeferreds.add(it) }
                             trackServerConfirmation(deductDeferred, collectServerConfirmation)
                             val deductResult = scoutRepository.deductCreditFromScout(
@@ -1384,12 +1422,19 @@ class AttendanceViewModel(
                                 amount = tx.amount,
                                 awaitServer = false,
                                 onAsyncFailure = deductFailure,
-                                onServerResult = { res -> deductDeferred.complete(res) }
+                                onServerResult = { res ->
+                                    if (res.isFailure && !isRecoverableOfflineOrTransient(res.exceptionOrNull())) {
+                                        completedRollbackTxSteps.remove(rollbackStepKey)
+                                        completedReverseStep.remove(key)
+                                    }
+                                    deductDeferred.complete(res)
+                                }
                             )
-                            if (!deductDeferred.isCompleted && deductResult.isFailure) {
-                                deductDeferred.complete(deductResult)
-                            }
                             if (deductResult.isFailure) {
+                                completedRollbackTxSteps.remove(rollbackStepKey)
+                                if (!deductDeferred.isCompleted) {
+                                    deductDeferred.complete(deductResult)
+                                }
                                 return Result.failure(
                                     Exception("فشل التراجع عن الدفعات السابقة. يرجى المحاولة مرة أخرى.")
                                 )
@@ -1428,7 +1473,7 @@ class AttendanceViewModel(
     }
 
     /**
-     * حفظ المعاملات والمدفوعات المالية للشبل في النشاط وقاعدة البيانات بطريقة خالية من التكرار (Idempotent)
+     * حفظ المعاملات والمدفوعات المالية للشبل في النشاط وقاعدة البيانات بطريقة محمية ضد تكرار عمليات FieldValue.increment
      */
     private suspend fun saveFinancePayment(
         scout: Scout,
@@ -1456,17 +1501,23 @@ class AttendanceViewModel(
         if (persistedFinanceSignature[key] == snapshot) return Result.success(Unit)
 
         val upsertSubFailure = queueItem?.let {
-            makeAsyncFailureHandler(it, "تعذر حفظ اشتراك الشبل ${scout.fullName}")
+            makeAsyncFailureHandler(
+                item = it,
+                description = "تعذر حفظ اشتراك الشبل ${scout.fullName}",
+                onNonTransient = { completedUpsertSubStep.remove(key) }
+            )
         }
         val payDebtFailure = queueItem?.let {
             makeAsyncFailureHandler(
                 item = it,
                 description = "تعذر تسجيل سداد ديون الشبل ${scout.fullName}",
-                onNonTransient = { completedPayDebtStep.remove(key) }
+                onNonTransient = {
+                    completedPayDebtStep.remove(key)
+                    if (overpaymentCredit > 0) {
+                        completedAddCreditStep.remove(key)
+                    }
+                }
             )
-        }
-        val upsertDebtTxFailure = queueItem?.let {
-            makeAsyncFailureHandler(it, "تعذر حفظ معاملة سداد ديون الشبل ${scout.fullName}")
         }
         val addCreditFailure = queueItem?.let {
             makeAsyncFailureHandler(
@@ -1487,6 +1538,7 @@ class AttendanceViewModel(
                     activityId = activity.id,
                     scoutId = scout.id,
                     scoutName = scout.fullName,
+                    snapshot = snapshot,
                     queueItem = queueItem,
                     collectServerConfirmation = collectServerConfirmation
                 )
@@ -1496,46 +1548,77 @@ class AttendanceViewModel(
                     return Result.failure(reverseResult.exceptionOrNull() ?: Exception(msg))
                 }
                 completedReverseStep[key] = snapshot
+                completedUpsertSubStep.remove(key)
                 completedPayDebtStep.remove(key)
                 completedAddCreditStep.remove(key)
             }
 
-            // 2. تحديث اشتراك النشاط الحالي أولاً حتى لا يتأثر سداد الديون السابقة به
-            val subStatus = SubscriptionStatus.fromKey(currentStatus.key)
-            val todaySub = FinanceSubscription(
-                id = "${activity.id}_${scout.id}",
-                scoutId = scout.id,
-                scoutFullName = scout.fullName,
-                activityId = activity.id,
-                activityTitle = activity.title.ifBlank { "نشاط كشفي" },
-                activityDate = activity.startDate,
-                attendanceStatus = subStatus,
-                requiredAmount = todayReq,
-                paidAmount = todayPaid,
-                debtAmount = (todayReq - todayPaid).coerceAtLeast(0),
-                unitId = activity.unitId,
-                updatedAt = System.currentTimeMillis()
-            )
-            val subDeferred = CompletableDeferred<Result<Unit>>().also { trackedDeferreds.add(it) }
-            trackServerConfirmation(subDeferred, collectServerConfirmation)
-            val subResult = financeRepository.upsertSubscription(
-                sub = todaySub,
-                awaitServer = false,
-                onAsyncFailure = upsertSubFailure,
-                onServerResult = { res -> subDeferred.complete(res) }
-            )
-            if (!subDeferred.isCompleted && subResult.isFailure) {
-                subDeferred.complete(subResult)
-            }
-            if (subResult.isFailure) {
-                val err = subResult.exceptionOrNull() ?: Exception("فشل حفظ اشتراك النشاط")
-                return Result.failure(err)
+            // 2. تحديث اشتراك النشاط الحالي أولاً (يستخدم FieldValue.increment عند تغيّر المدفوع)
+            if (completedUpsertSubStep[key] != snapshot) {
+                // تسجيل علامة الإرسال قبل الاستدعاء لأن التحديث التزايدي غير قابل للتكرار الآمن بعد المهلة أو UNAVAILABLE
+                completedUpsertSubStep[key] = snapshot
+                val subStatus = SubscriptionStatus.fromKey(currentStatus.key)
+                val todaySub = FinanceSubscription(
+                    id = "${activity.id}_${scout.id}",
+                    scoutId = scout.id,
+                    scoutFullName = scout.fullName,
+                    activityId = activity.id,
+                    activityTitle = activity.title.ifBlank { "نشاط كشفي" },
+                    activityDate = activity.startDate,
+                    attendanceStatus = subStatus,
+                    requiredAmount = todayReq,
+                    paidAmount = todayPaid,
+                    debtAmount = (todayReq - todayPaid).coerceAtLeast(0),
+                    unitId = activity.unitId,
+                    updatedAt = System.currentTimeMillis()
+                )
+                val subDeferred = CompletableDeferred<Result<Unit>>().also { trackedDeferreds.add(it) }
+                trackServerConfirmation(subDeferred, collectServerConfirmation)
+                val subResult = financeRepository.upsertSubscription(
+                    sub = todaySub,
+                    awaitServer = false,
+                    onAsyncFailure = upsertSubFailure,
+                    onServerResult = { res ->
+                        if (res.isFailure && !isRecoverableOfflineOrTransient(res.exceptionOrNull())) {
+                            completedUpsertSubStep.remove(key)
+                        }
+                        subDeferred.complete(res)
+                    }
+                )
+                if (subResult.isFailure) {
+                    completedUpsertSubStep.remove(key)
+                    if (!subDeferred.isCompleted) {
+                        subDeferred.complete(subResult)
+                    }
+                    val err = subResult.exceptionOrNull() ?: Exception("فشل حفظ اشتراك النشاط")
+                    return Result.failure(err)
+                }
             }
 
-            // 3. تطبيق سداد الديون السابقة بمعرّف حتمي لمنع التكرار عند إعادة المحاولة
+            // 3. تطبيق سداد الديون السابقة + معاملة DEBT_PAYMENT (+ الرصيد المقدم إن وجد) في WriteBatch واحد دون اتصال
             if (prevPaid > 0) {
                 scoutsWithReversibleTxs.add(key)
                 if (completedPayDebtStep[key] != snapshot) {
+                    // تسجيل علامات الإرسال قبل عودة الاستدعاء: التحديثات التزايدية (FieldValue.increment)
+                    // لا يُعاد إرسالها أبداً بعد المهلة أو UNAVAILABLE لأنها ما تزال في طابور SDK المحلي،
+                    // ولا يُسمح بإعادة المحاولة إلا عند الفشل المتزامن قبل الإرسال أو الرفض غير المؤقت من الخادم.
+                    completedPayDebtStep[key] = snapshot
+                    if (overpaymentCredit > 0) {
+                        completedAddCreditStep[key] = snapshot
+                    }
+                    val debtTxId = "${activity.id}_${scout.id}_${FinanceTransactionType.DEBT_PAYMENT.key}"
+                    val debtTx = FinanceTransaction(
+                        id = debtTxId,
+                        type = FinanceTransactionType.DEBT_PAYMENT,
+                        amount = prevPaid,
+                        date = activity.startDate,
+                        description = "سداد ديون سابقة",
+                        source = scout.fullName,
+                        scoutId = scout.id,
+                        relatedActivityId = activity.id,
+                        unitId = activity.unitId,
+                        isRolledBack = false
+                    )
                     val payDebtDeferred = CompletableDeferred<Result<Unit>>().also { trackedDeferreds.add(it) }
                     trackServerConfirmation(payDebtDeferred, collectServerConfirmation)
                     val payDebtResult = financeRepository.payScoutDebts(
@@ -1543,51 +1626,38 @@ class AttendanceViewModel(
                         amountToPay = prevPaid,
                         awaitServer = false,
                         onAsyncFailure = payDebtFailure,
-                        onServerResult = { res -> payDebtDeferred.complete(res) }
+                        onServerResult = { res ->
+                            if (res.isFailure && !isRecoverableOfflineOrTransient(res.exceptionOrNull())) {
+                                completedPayDebtStep.remove(key)
+                                if (overpaymentCredit > 0) {
+                                    completedAddCreditStep.remove(key)
+                                }
+                            }
+                            payDebtDeferred.complete(res)
+                        },
+                        auditTransaction = debtTx,
+                        creditDelta = overpaymentCredit
                     )
-                    if (!payDebtDeferred.isCompleted && payDebtResult.isFailure) {
-                        payDebtDeferred.complete(payDebtResult)
-                    }
                     if (payDebtResult.isFailure) {
+                        completedPayDebtStep.remove(key)
+                        if (overpaymentCredit > 0) {
+                            completedAddCreditStep.remove(key)
+                        }
+                        if (!payDebtDeferred.isCompleted) {
+                            payDebtDeferred.complete(payDebtResult)
+                        }
                         val err = payDebtResult.exceptionOrNull() ?: Exception("فشل تسجيل سداد الديون السابقة")
                         return Result.failure(err)
                     }
-                    completedPayDebtStep[key] = snapshot
-                }
-                val debtTxId = "${activity.id}_${scout.id}_${FinanceTransactionType.DEBT_PAYMENT.key}"
-                val debtTx = FinanceTransaction(
-                    id = debtTxId,
-                    type = FinanceTransactionType.DEBT_PAYMENT,
-                    amount = prevPaid,
-                    date = activity.startDate,
-                    description = "سداد ديون سابقة",
-                    source = scout.fullName,
-                    scoutId = scout.id,
-                    relatedActivityId = activity.id,
-                    unitId = activity.unitId,
-                    isRolledBack = false
-                )
-                val debtTxDeferred = CompletableDeferred<Result<Unit>>().also { trackedDeferreds.add(it) }
-                trackServerConfirmation(debtTxDeferred, collectServerConfirmation)
-                val debtTxResult = financeRepository.upsertTransaction(
-                    transaction = debtTx,
-                    awaitServer = false,
-                    onAsyncFailure = upsertDebtTxFailure,
-                    onServerResult = { res -> debtTxDeferred.complete(res) }
-                )
-                if (!debtTxDeferred.isCompleted && debtTxResult.isFailure) {
-                    debtTxDeferred.complete(debtTxResult)
-                }
-                if (debtTxResult.isFailure) {
-                    val err = debtTxResult.exceptionOrNull() ?: Exception("فشل حفظ معاملة سداد الديون")
-                    return Result.failure(err)
                 }
             }
 
-            // 4. تطبيق الدفعة المقدمة (الرصيد المقدم) بمعرّف حتمي لمنع التكرار عند إعادة المحاولة
+            // 4. تطبيق الدفعة المقدمة (الرصيد المقدم) إذا لم تُدمج مع سداد الديون، وحفظ معاملة ADVANCE_PAYMENT
             if (overpaymentCredit > 0) {
                 scoutsWithReversibleTxs.add(key)
-                if (completedAddCreditStep[key] != snapshot) {
+                if (prevPaid <= 0 && completedAddCreditStep[key] != snapshot) {
+                    // تسجيل علامة الإرسال قبل عودة الاستدعاء لمنع مضاعفة زيادة الرصيد بعد المهلة أو UNAVAILABLE
+                    completedAddCreditStep[key] = snapshot
                     val addCreditDeferred = CompletableDeferred<Result<Unit>>().also { trackedDeferreds.add(it) }
                     trackServerConfirmation(addCreditDeferred, collectServerConfirmation)
                     val addCreditResult = scoutRepository.addCreditToScout(
@@ -1595,16 +1665,21 @@ class AttendanceViewModel(
                         amount = overpaymentCredit,
                         awaitServer = false,
                         onAsyncFailure = addCreditFailure,
-                        onServerResult = { res -> addCreditDeferred.complete(res) }
+                        onServerResult = { res ->
+                            if (res.isFailure && !isRecoverableOfflineOrTransient(res.exceptionOrNull())) {
+                                completedAddCreditStep.remove(key)
+                            }
+                            addCreditDeferred.complete(res)
+                        }
                     )
-                    if (!addCreditDeferred.isCompleted && addCreditResult.isFailure) {
-                        addCreditDeferred.complete(addCreditResult)
-                    }
                     if (addCreditResult.isFailure) {
+                        completedAddCreditStep.remove(key)
+                        if (!addCreditDeferred.isCompleted) {
+                            addCreditDeferred.complete(addCreditResult)
+                        }
                         val err = addCreditResult.exceptionOrNull() ?: Exception("فشل تحديث الرصيد المقدم")
                         return Result.failure(err)
                     }
-                    completedAddCreditStep[key] = snapshot
                 }
                 val advanceTxId = "${activity.id}_${scout.id}_${FinanceTransactionType.ADVANCE_PAYMENT.key}"
                 val advanceTx = FinanceTransaction(

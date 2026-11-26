@@ -197,10 +197,10 @@ class ScoutRepositoryImpl(
             safeOnServerResult?.invoke(Result.failure(err))
             return Result.failure(err)
         }
-        val newBalance = (scout.creditBalance + amount).coerceAtLeast(0)
-        val result = dataSource.updateCreditBalance(
+        val approxNewBalance = (scout.creditBalance + amount).coerceAtLeast(0)
+        val result = dataSource.adjustCreditBalance(
             id = scoutId,
-            newBalance = newBalance,
+            delta = amount,
             updatedBy = currentUserId,
             awaitServer = awaitServer,
             onAsyncFailure = onAsyncFailure,
@@ -215,7 +215,7 @@ class ScoutRepositoryImpl(
                     targetType = "scout",
                     targetId = scoutId,
                     targetName = scout.fullName,
-                    details = "تحديث الرصيد المقدم: من ${scout.creditBalance} دج إلى $newBalance دج",
+                    details = "تحديث الرصيد المقدم: من ${scout.creditBalance} دج إلى $approxNewBalance دج",
                     unitId = scout.unitId ?: authRepository.getCurrentLeader()?.unitId
                 )
             } catch (e: CancellationException) {
@@ -250,14 +250,20 @@ class ScoutRepositoryImpl(
             safeOnServerResult?.invoke(Result.failure(err))
             return Result.failure(err)
         }
-        val newBalance = (scout.creditBalance - amount).coerceAtLeast(0)
-        if (newBalance == scout.creditBalance) {
+        if (scout.creditBalance <= 0) {
             safeOnServerResult?.invoke(Result.success(Unit))
             return Result.success(Unit)
         }
-        val result = dataSource.updateCreditBalance(
+        val cappedDeduction = minOf(amount, scout.creditBalance)
+        if (cappedDeduction <= 0) {
+            safeOnServerResult?.invoke(Result.success(Unit))
+            return Result.success(Unit)
+        }
+        val delta = -cappedDeduction
+        val approxNewBalance = scout.creditBalance - cappedDeduction
+        val result = dataSource.adjustCreditBalance(
             id = scoutId,
-            newBalance = newBalance,
+            delta = delta,
             updatedBy = currentUserId,
             awaitServer = awaitServer,
             onAsyncFailure = onAsyncFailure,
@@ -272,7 +278,7 @@ class ScoutRepositoryImpl(
                     targetType = "scout",
                     targetId = scoutId,
                     targetName = scout.fullName,
-                    details = "خصم من الرصيد المقدم: من ${scout.creditBalance} دج إلى $newBalance دج",
+                    details = "خصم من الرصيد المقدم: من ${scout.creditBalance} دج إلى $approxNewBalance دج",
                     unitId = scout.unitId ?: authRepository.getCurrentLeader()?.unitId
                 )
             } catch (e: CancellationException) {

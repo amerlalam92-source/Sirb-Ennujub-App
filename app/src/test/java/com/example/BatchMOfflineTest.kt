@@ -25,6 +25,7 @@ import com.example.domain.attendance.usecases.ObservePointsSettingsUseCase
 import com.example.domain.attendance.usecases.SaveAttendanceBatchUseCase
 import com.example.domain.auth.AuthRepository
 import com.example.domain.auth.Leader
+import com.example.domain.finance.FinanceMaintenanceReport
 import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.FinanceSettings
 import com.example.domain.finance.FinanceSubscription
@@ -770,7 +771,9 @@ class BatchMOfflineTest {
             amountToPay: Int,
             awaitServer: Boolean,
             onAsyncFailure: ((Throwable) -> Unit)?,
-            onServerResult: ((Result<Unit>) -> Unit)?
+            onServerResult: ((Result<Unit>) -> Unit)?,
+            auditTransaction: FinanceTransaction?,
+            creditDelta: Int
         ): Result<Unit> {
             onAsyncFailure?.let { capturedAsyncFailureCallbacks.add(it) }
             onServerResult?.invoke(Result.success(Unit))
@@ -809,5 +812,7 @@ class BatchMOfflineTest {
         override fun observeTotalOutstandingDebt(): Flow<Int> = flowOf(0)
         override suspend fun cleanupOrphanedRecords(): Result<Int> = Result.success(0)
         override suspend fun deleteCollectionsForActivity(activityId: String): Result<Unit> = Result.success(Unit)
+        override suspend fun reconcileFinancialBalances(): Result<FinanceMaintenanceReport> =
+            Result.success(FinanceMaintenanceReport(0, 0, 0, 0, 0, emptyList()))
     }
 }

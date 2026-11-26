@@ -24,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.RestartAlt
@@ -35,6 +36,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -550,6 +552,41 @@ fun MainLeaderSettingsScreen(
                             }
                             Text("إصلاح حالة الحضور للأنشطة")
                         }
+
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                        )
+
+                        Text(
+                            text = "فحص كافة الاشتراكات وأرصدة الأشبال من الخادم لتصحيح القيم السالبة ومطابقة الديون المشتقة وعرض أي مبالغ مدفوعة بالزيادة دون تعديلها تلقائياً",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        OutlinedButton(
+                            onClick = { viewModel.reconcileFinancialBalances() },
+                            enabled = isMainLeader && !uiState.isReconcilingFinance,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("reconcile_finance_balances_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (uiState.isReconcilingFinance) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.AccountBalanceWallet,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+                            Text("فحص وتصحيح الأرصدة المالية")
+                        }
                     }
                 }
             }
@@ -592,6 +629,87 @@ fun MainLeaderSettingsScreen(
                     modifier = Modifier.testTag("cancel_reset_default_terms_button")
                 ) {
                     Text(stringResource(id = R.string.cancel_action))
+                }
+            }
+        )
+    }
+
+    uiState.financeMaintenanceReport?.let { report ->
+        AppAlertDialog(
+            onDismissRequest = { viewModel.dismissFinanceMaintenanceReport() },
+            title = {
+                Text(
+                    text = "نتائج فحص وتصحيح الأرصدة المالية",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "الاشتراكات المفحوصة: ${report.subscriptionsChecked}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "الأشبال المفحوصون: ${report.scoutsChecked}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "تصحيح المدفوعات السالبة: ${report.negativePaidFixed}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "تصحيح عدم تطابق الديون: ${report.debtMismatchFixed}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "تصحيح الأرصدة المقدمة السالبة: ${report.negativeCreditFixed}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    if (report.overpayments.isNotEmpty()) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        Text(
+                            text = "تنبيه: مبالغ مدفوعة تتجاوز المطلوب (${report.overpayments.size}) — لم يتم تعديلها تلقائياً:",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        val displayedOverpayments = report.overpayments.take(10)
+                        displayedOverpayments.forEach { item ->
+                            Text(
+                                text = "• ${item.scoutName} (${item.activityTitle}): زيادة ${item.excessAmount} دج",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (report.overpayments.size > 10) {
+                            Text(
+                                text = "و ${report.overpayments.size - 10} أخرى",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "لا توجد مدفوعات زائدة تتجاوز المبلغ المطلوب.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { viewModel.dismissFinanceMaintenanceReport() },
+                    modifier = Modifier.testTag("dismiss_finance_maintenance_report_button")
+                ) {
+                    Text(
+                        text = "حسناً",
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         )

@@ -13,6 +13,7 @@ import com.example.data.firestore.safeString
 import com.example.data.firestore.safeStringList
 import com.example.domain.scout.Scout
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import java.util.Calendar
 import kotlinx.coroutines.CancellationException
@@ -31,6 +32,24 @@ class ScoutFirestoreDataSource(
 ) {
     companion object {
         const val COLLECTION_SCOUTS = "scouts"
+
+        internal fun clampCreditBalance(rawBalance: Int): Int = rawBalance.coerceAtLeast(0)
+
+        internal fun buildAdjustCreditBalanceUpdateMap(
+            delta: Int,
+            updatedAt: Long = System.currentTimeMillis(),
+            updatedBy: String = "",
+            incrementFactory: (Long) -> Any = FieldValue::increment
+        ): Map<String, Any> {
+            val updates = mutableMapOf<String, Any>(
+                "creditBalance" to incrementFactory(delta.toLong()),
+                "updatedAt" to updatedAt
+            )
+            if (updatedBy.isNotBlank()) {
+                updates["updatedBy"] = updatedBy
+            }
+            return updates
+        }
     }
 
     private val collection
@@ -244,6 +263,54 @@ class ScoutFirestoreDataSource(
     }
 
     /**
+     * تعديل الرصيد المقدم للشبل تزايدياً باستخدام FieldValue.increment لتجنب فقدان التحديثات المتزامنة
+     */
+    suspend fun adjustCreditBalance(
+        id: String,
+        delta: Int,
+        updatedBy: String = "",
+        awaitServer: Boolean = true,
+        onAsyncFailure: ((Throwable) -> Unit)? = null,
+        onServerResult: ((Result<Unit>) -> Unit)? = null
+    ): Result<Unit> {
+        val safeOnServerResult = singleShotResultCallback(onServerResult)
+        if (id.isBlank()) {
+            val err = IllegalArgumentException("معرف الشبل مفقود")
+            safeOnServerResult?.invoke(Result.failure(err))
+            return Result.failure(err)
+        }
+        if (delta == 0) {
+            safeOnServerResult?.invoke(Result.success(Unit))
+            return Result.success(Unit)
+        }
+        return try {
+            val updates = buildAdjustCreditBalanceUpdateMap(
+                delta = delta,
+                updatedAt = System.currentTimeMillis(),
+                updatedBy = updatedBy
+            )
+            val task = collection.document(id).update(updates)
+            if (awaitServer) {
+                task.await()
+                safeOnServerResult?.invoke(Result.success(Unit))
+            } else {
+                task.attachServerResultListeners(
+                    logTag = "ScoutFirestoreDS",
+                    failureMessage = "Async failure adjusting credit balance for $id",
+                    onAsyncFailure = onAsyncFailure,
+                    onServerResult = safeOnServerResult
+                )
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            safeOnServerResult?.invoke(Result.failure(e))
+            Result.failure(e)
+        }
+    }
+
+    /**
      * التحقق الصارم من صحة بيانات الشبل وفق قواعد السرب
      */
     private fun validateScout(scout: Scout): Result<Unit> {
@@ -339,7 +406,7 @@ class ScoutFirestoreDataSource(
                 joinYear = joinYear,
                 status = doc.safeString("status", Scout.STATUS_ACTIVE),
                 notes = doc.safeString("notes"),
-                creditBalance = doc.safeInt("creditBalance", 0),
+                creditBalance = clampCreditBalance(doc.safeInt("creditBalance", 0)),
                 unitId = doc.safeNullableString("unitId"),
                 createdAt = doc.safeLong("createdAt", System.currentTimeMillis()),
                 updatedAt = doc.safeLong("updatedAt", System.currentTimeMillis()),

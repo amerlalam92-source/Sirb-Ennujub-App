@@ -14,9 +14,11 @@ import com.example.domain.finance.FinanceSettings
 import com.example.domain.finance.FinanceSubscription
 import com.example.domain.finance.FinanceTransaction
 import com.example.domain.finance.FinanceTransactionType
+import com.example.domain.finance.SubscriptionPaidDelta
 import com.example.domain.finance.SubscriptionStatus
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import kotlinx.coroutines.CancellationException
@@ -36,6 +38,65 @@ class FinanceFirestoreDataSource(
         const val COLLECTION_SUBSCRIPTIONS = "finance_subscriptions"
         const val COLLECTION_SETTINGS = "finance_settings"
         const val DOC_SETTINGS_DEFAULTS = "defaults"
+
+        internal fun deriveSubscriptionAmounts(requiredAmount: Int, rawPaidAmount: Int): Pair<Int, Int> {
+            val paid = rawPaidAmount.coerceAtLeast(0)
+            val debt = (requiredAmount - paid).coerceAtLeast(0)
+            return paid to debt
+        }
+
+        internal fun buildSubscriptionPaidDeltaUpdateMap(
+            delta: SubscriptionPaidDelta,
+            incrementFactory: (Long) -> Any = FieldValue::increment
+        ): Map<String, Any> {
+            val map = mutableMapOf<String, Any>(
+                "paidAmount" to incrementFactory(delta.paidDelta.toLong()),
+                "updatedAt" to delta.updatedAt
+            )
+            if (delta.recordedAt != null && delta.recordedAt > 0L) {
+                map["recordedAt"] = delta.recordedAt
+            }
+            if (!delta.recordedBy.isNullOrBlank()) {
+                map["recordedBy"] = delta.recordedBy
+            }
+            if (!delta.recordedByName.isNullOrBlank()) {
+                map["recordedByName"] = delta.recordedByName
+            }
+            if (!delta.unitId.isNullOrBlank()) {
+                map["unitId"] = delta.unitId
+            }
+            return map
+        }
+
+        internal fun buildExistingSubscriptionUpdateMap(
+            prepared: FinanceSubscription,
+            existing: FinanceSubscription,
+            paidDelta: Int,
+            incrementFactory: (Long) -> Any = FieldValue::increment
+        ): Map<String, Any?> {
+            val map = mutableMapOf<String, Any?>(
+                "attendanceStatus" to prepared.attendanceStatus.key,
+                "requiredAmount" to prepared.requiredAmount,
+                "notes" to prepared.notes,
+                "activityTitle" to prepared.activityTitle,
+                "activityDate" to prepared.activityDate,
+                "scoutFullName" to prepared.scoutFullName,
+                "updatedAt" to prepared.updatedAt
+            )
+            if (existing.unitId.isNullOrBlank() && !prepared.unitId.isNullOrBlank()) {
+                map["unitId"] = prepared.unitId
+            }
+            if (existing.recordedBy.isBlank() && prepared.recordedBy.isNotBlank()) {
+                map["recordedBy"] = prepared.recordedBy
+            }
+            if (existing.recordedByName.isBlank() && prepared.recordedByName.isNotBlank()) {
+                map["recordedByName"] = prepared.recordedByName
+            }
+            if (paidDelta != 0) {
+                map["paidAmount"] = incrementFactory(paidDelta.toLong())
+            }
+            return map
+        }
     }
 
     private val transactionsCollection
@@ -426,9 +487,7 @@ class FinanceFirestoreDataSource(
                 ?: SubscriptionStatus.PRESENT.key
             val status = SubscriptionStatus.fromKey(statusKey)
             val req = doc.safeInt("requiredAmount", 0)
-            val paid = doc.safeInt("paidAmount", 0)
-            val computedDebt = (req - paid).coerceAtLeast(0)
-            val debt = doc.safeNullableInt("debtAmount") ?: computedDebt
+            val (paid, debt) = deriveSubscriptionAmounts(req, doc.safeInt("paidAmount", 0))
 
             val actDate = doc.safeLong("activityDate", 0L)
             val recAt = doc.safeLong("recordedAt", System.currentTimeMillis())

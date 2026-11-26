@@ -558,6 +558,35 @@ class SettingsViewModel(
         }
     }
 
+    fun reconcileFinancialBalances() {
+        if (!_isMainLeader.value) {
+            viewModelScope.launch {
+                _events.emit(SettingsEvent.ShowMessage("هذه العملية متاحة للقائد الرئيسي فقط"))
+            }
+            return
+        }
+        if (_uiState.value.isReconcilingFinance) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isReconcilingFinance = true) }
+            val result = financeRepository.reconcileFinancialBalances()
+            _uiState.update { it.copy(isReconcilingFinance = false) }
+            result.onSuccess { report ->
+                _uiState.update { it.copy(financeMaintenanceReport = report) }
+            }.onFailure { e ->
+                _events.emit(
+                    SettingsEvent.ShowMessage(
+                        e.message ?: "فشل فحص وتصحيح الأرصدة المالية: تتطلب هذه العملية اتصالاً مستقراً بالإنترنت، ويمكنك إعادة المحاولة بأمان."
+                    )
+                )
+            }
+        }
+    }
+
+    fun dismissFinanceMaintenanceReport() {
+        _uiState.update { it.copy(financeMaintenanceReport = null) }
+    }
+
     class Factory(
         private val observePointsSettingsUseCase: ObservePointsSettingsUseCase,
         private val updatePointsSettingsUseCase: UpdatePointsSettingsUseCase,

@@ -16,6 +16,7 @@ import com.example.domain.attendance.ScoutStatistics
 import com.example.domain.attendance.usecases.GetAttendanceForActivityUseCase
 import com.example.domain.attendance.usecases.ObservePointsSettingsUseCase
 import com.example.domain.attendance.usecases.SaveAttendanceBatchUseCase
+import com.example.domain.finance.FinanceMaintenanceReport
 import com.example.domain.finance.FinanceRepository
 import com.example.domain.finance.FinanceSettings
 import com.example.domain.finance.FinanceSubscription
@@ -319,9 +320,9 @@ class BatchLOfflineTest {
 
             assertTrue(completed)
             // Idempotency: even though upsertTransaction failed once and retried in the Channel,
-            // payScoutDebts and addCreditToScout ran ONCE each!
+            // payScoutDebts and credit delta ran ONCE each!
             assertEquals(1, fakeFinanceRepo.payScoutDebtsCalls.get())
-            assertEquals(1, fakeScoutRepo.addCreditCalls.get())
+            assertEquals(1, fakeFinanceRepo.creditDeltaCalls.get() + fakeScoutRepo.addCreditCalls.get())
 
             // Deterministic IDs guarantee single document overwrite in Firestore (never duplicate documents)
             assertEquals(setOf("act1_s1"), fakeFinanceRepo.upsertedSubscriptions.map { it.id }.toSet())
@@ -471,6 +472,7 @@ class BatchLOfflineTest {
         private val subsFlow = MutableStateFlow(existingSubs)
         private val txFlow = MutableStateFlow<List<FinanceTransaction>>(emptyList())
         val payScoutDebtsCalls = AtomicInteger(0)
+        val creditDeltaCalls = AtomicInteger(0)
         val upsertedSubscriptions = CopyOnWriteArrayList<FinanceSubscription>()
         val upsertedTransactions = CopyOnWriteArrayList<FinanceTransaction>()
         var failNextTransactionUpsertCalls = 0
@@ -550,9 +552,17 @@ class BatchLOfflineTest {
             amountToPay: Int,
             awaitServer: Boolean,
             onAsyncFailure: ((Throwable) -> Unit)?,
-            onServerResult: ((Result<Unit>) -> Unit)?
+            onServerResult: ((Result<Unit>) -> Unit)?,
+            auditTransaction: FinanceTransaction?,
+            creditDelta: Int
         ): Result<Unit> {
             payScoutDebtsCalls.incrementAndGet()
+            if (auditTransaction != null) {
+                upsertedTransactions.add(auditTransaction)
+            }
+            if (creditDelta > 0) {
+                creditDeltaCalls.incrementAndGet()
+            }
             onServerResult?.invoke(Result.success(Unit))
             return Result.success(Unit)
         }
@@ -588,5 +598,7 @@ class BatchLOfflineTest {
         override fun observeTotalOutstandingDebt(): Flow<Int> = flowOf(0)
         override suspend fun cleanupOrphanedRecords(): Result<Int> = Result.success(0)
         override suspend fun deleteCollectionsForActivity(activityId: String): Result<Unit> = Result.success(Unit)
+        override suspend fun reconcileFinancialBalances(): Result<FinanceMaintenanceReport> =
+            Result.success(FinanceMaintenanceReport(0, 0, 0, 0, 0, emptyList()))
     }
 }
